@@ -31,7 +31,7 @@ from pathlib import Path
 import modal
 
 # ── Config ──────────────────────────────────────────────────────────────────
-LORA_R2_KEY    = "lora/yishunagain_v1.safetensors"
+LORA_R2_KEY    = "lora/yishunagain_v2.safetensors"
 R2_ART_PREFIX  = "pixel-art"
 R2_PUBLIC_BASE = "https://assets.yishunagain.com"
 BASE_MODEL     = "stabilityai/stable-diffusion-xl-base-1.0"
@@ -122,7 +122,7 @@ class PixelArtGenerator:
         os.environ["TRANSFORMERS_CACHE"] = "/cache/huggingface"
 
         # Download LoRA weights from R2 to /tmp
-        lora_local = "/tmp/yishunagain_v1.safetensors"
+        lora_local = "/tmp/yishunagain_v2.safetensors"
         if not Path(lora_local).exists():
             bucket = os.environ["CF_R2_BUCKET_NAME"]
             print(f"[load] Downloading LoRA from R2: {LORA_R2_KEY}")

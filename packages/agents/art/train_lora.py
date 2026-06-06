@@ -34,17 +34,17 @@ from pathlib import Path
 import modal
 
 # ── Training config ──────────────────────────────────────────────────────────
-LOCAL_TRAIN_DIR    = r"D:\xDocs-yishun-again\yishunagain_training_pix"
+LOCAL_TRAIN_DIR    = r"C:\Projects\yishun-again\packages\agents\art\training_images"
 TRIGGER_WORD       = "yishunpixel"
-CAPTION_PREFIX     = "yishunpixel, 16-bit pixel art,"
+CAPTION_PREFIX     = "yishunpixel, HD-2D pixel art, Octopath Traveler style,"
 BASE_MODEL         = "stabilityai/stable-diffusion-xl-base-1.0"
-LORA_NAME          = "yishunagain_v1"
-R2_LORA_KEY        = "lora/yishunagain_v1.safetensors"
+LORA_NAME          = "yishunagain_v2"
+R2_LORA_KEY        = "lora/yishunagain_v2.safetensors"
 R2_PUBLIC_BASE     = "https://assets.yishunagain.com"
 MIN_EDGE           = 512
 NUM_REPEATS        = 10
 
-MAX_TRAIN_STEPS    = 1500
+MAX_TRAIN_STEPS    = 2000
 TRAIN_BATCH_SIZE   = 1
 LEARNING_RATE      = "1e-4"
 NETWORK_DIM        = 32
@@ -362,7 +362,7 @@ def upload_weights_to_r2() -> str:
 
 # ── Local entrypoint — orchestrates all 4 steps ──────────────────────────────
 @app.local_entrypoint()
-def main(skip_upload: bool = False, skip_caption: bool = False):
+def main(skip_upload: bool = False, skip_caption: bool = True):
     """
     Args:
         skip_upload:  --skip-upload   skip image upload (images already in volume)
@@ -398,9 +398,15 @@ def main(skip_upload: bool = False, skip_caption: bool = False):
                 img.save(buf, format="JPEG", quality=95)
             images_payload[f"{img_path.stem}.jpg"] = buf.getvalue()
             print(f"  queued {img_path.name} ({len(buf.getvalue()) // 1024} KB)")
+            # Also bundle the pre-written .txt caption if present
+            txt_path = img_path.with_suffix(".txt")
+            if txt_path.exists():
+                images_payload[f"{img_path.stem}.txt"] = txt_path.read_bytes()
 
+        n_imgs = sum(1 for k in images_payload if not k.endswith(".txt"))
+        n_caps = sum(1 for k in images_payload if k.endswith(".txt"))
         n = write_images_to_volume.remote(images_payload)
-        print(f"[step 1] {n} images written to volume 'yishun-training-data'")
+        print(f"[step 1] {n_imgs} images + {n_caps} captions written to volume 'yishun-training-data'")
 
     # ── Step 2: BLIP2 captioning ─────────────────────────────────────────
     if skip_caption:

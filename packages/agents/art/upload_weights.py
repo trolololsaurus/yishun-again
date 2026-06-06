@@ -23,8 +23,8 @@ from pathlib import Path
 
 import modal
 
-VOLUME_WEIGHTS_PATH = "/data/output/yishunagain_v1.safetensors"
-R2_LORA_KEY         = "lora/yishunagain_v1.safetensors"
+VOLUME_WEIGHTS_PATH = "/data/output/yishunagain_v2.safetensors"
+R2_LORA_KEY         = "lora/yishunagain_v2.safetensors"
 R2_PUBLIC_BASE      = "https://assets.yishunagain.com"
 
 app    = modal.App("yishun-upload-weights")
