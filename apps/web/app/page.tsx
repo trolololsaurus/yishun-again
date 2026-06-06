@@ -4,7 +4,7 @@ import { HomeClient }   from '@/components/HomeClient'
 import type { MapFeature, ChaosData } from '@/lib/types'
 import { computeChaosScore, chaosDescriptor } from '@/lib/utils'
 
-export const revalidate = 0  // dev: no cache; restore to 60 before deploy
+export const revalidate = 60  // 60-second ISR for production
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://yishunagain.com'
 
