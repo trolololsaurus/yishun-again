@@ -1,0 +1,53 @@
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Courier+Prime:wght@400;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg:             #0D0D0D;
+  --color-surface:        #1A1A1A;
+  --color-border:         #333333;
+  --color-accent-red:     #E74C3C;
+  --color-accent-yellow:  #F1C40F;
+  --color-text-primary:   #F5F5F5;
+  --color-text-secondary: #AAAAAA;
+  --color-heart:          #E74C3C;
+  --color-clown:          #F1C40F;
+  --color-dagger:         #8E44AD;
+}
+
+html {
+  font-size: 16px;  /* Tailwind rem base — do not change */
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+  font-family: 'Courier Prime', 'Courier New', monospace;
+  font-size: 14px;  /* 14px floor for all body text */
+}
+
+/* Scrollbar */
+::-webkit-scrollbar       { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--color-surface); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+
+/* Focus ring */
+*:focus-visible {
+  outline: 2px solid var(--color-accent-yellow);
+  outline-offset: 2px;
+}
+
+textarea, input, select {
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  font-family: 'Courier Prime', 'Courier New', monospace;
+  /* inherit 14px body size — no override */
+}
+
+textarea:focus, input:focus, select:focus {
+  outline: 1px solid var(--color-accent-yellow);
+  border-color: var(--color-accent-yellow);
+}

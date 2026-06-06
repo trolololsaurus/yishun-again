@@ -1,0 +1,218 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+Yishun Again is a satirical, semi-autonomous incident archive for Yishun, Singapore. An AI agent pipeline scrapes sources, drafts incident write-ups, and queues them for operator review in a private CMS (War Room). The operator approves, edits, or rejects each draft before it goes live.
+
+**Core constraint:** Every published incident must link to a verifiable source. No private individuals unless named in MSM or Reddit. No political content. Ever.
+
+Full spec: `YishunAgain_TechSpec_v1.4.md`
+
+---
+
+## Repository Structure
+
+```
+yishun-again/
+├── apps/
+│   ├── web/          # Next.js 14 (App Router) — public site, Vercel deploy
+│   └── war-room/     # Next.js 14 (App Router) — private operator CMS
+├── packages/
+│   ├── agents/       # FastAPI 0.110.x + Python 3.11 agent pipeline
+│   │   ├── scrapers/       # Per-source scraping agents (RSS-first)
+│   │   ├── filters/        # Stage 1 (Groq) + Stage 2 (Claude) filters
+│   │   ├── classifiers/    # Corroboration + severity scoring
+│   │   ├── writers/        # Incident draft generation
+│   │   ├── art/            # Pixel art prompt gen + Modal.run calls
+│   │   ├── cards/          # Share card generation
+│   │   └── orchestrator/   # LangGraph 0.1.x orchestrator
+│   ├── db/           # Supabase schema, migrations, types
+│   └── shared/       # Shared types, constants, utils
+└── infra/
+    ├── cloudbuild.yaml
+    └── cloudflare/
+```
+
+---
+
+## Common Commands
+
+### Frontend (`apps/web/`, `apps/war-room/`)
+
+```bash
+npm run dev         # Start dev server
+npm run build       # Production build
+npm run lint        # ESLint
+npm audit           # Dependency security check (run before deploy)
+```
+
+### Agents backend (`packages/agents/`)
+
+```bash
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8080   # Dev server
+pytest                                   # Run tests
+pytest tests/test_stage1.py             # Run single test file
+```
+
+### Deployment
+
+```bash
+# Frontend
+vercel deploy --prod
+
+# Agents backend (Cloud Run, Singapore region)
+gcloud run deploy yishun-agents --source . --region asia-southeast1 --platform managed
+```
+
+---
+
+## Build Order (Phase 1)
+
+Execute strictly in sequence — do not skip ahead:
+
+1. Supabase schema — all tables, indexes, RLS policies
+2. Cloudflare R2 bucket + `assets.yishunagain.com` domain
+3. FastAPI skeleton on Cloud Run — health check only
+4. Stage 1 filter (Groq) — unit test with sample content
+5. Stage 2 writer (Claude) — unit test with sample content
+6. Scraping agents — CNA + Mothership first
+7. War Room CMS — queue view + approve/reject flow
+8. Training signal logging
+9. Next.js frontend — map + Chaos Index (static mock data first)
+10. Wire frontend to Supabase
+11. Share card generation + UTM logging
+12. Art pipeline (Modal.run + LoRA)
+13. SEO meta tags, sitemap, schema markup
+14. Cloudflare Access for War Room
+15. Historical incident backfill
+16. Launch
+
+---
+
+## Tech Stack
+
+| Layer | Tool | Version |
+|---|---|---|
+| Frontend | Next.js App Router | 14.x |
+| Map | MapLibre GL JS | 3.x |
+| Database | Supabase (Postgres + REST) | Latest |
+| Image storage | Cloudflare R2 | — |
+| Admin auth | Cloudflare Access | Free tier |
+| Backend | FastAPI | 0.110.x / Python 3.11+ |
+| Agent hosting | Google Cloud Run | asia-southeast1 |
+| Stage 1 filter | Groq API | llama3-8b-8192 |
+| Stage 2 writer | Anthropic API | claude-haiku-4-5-20251001 (classify), claude-sonnet-4-6 (write) |
+| Orchestrator | LangGraph | 0.1.x |
+| Image gen | Modal.run | SDXL + custom LoRA |
+| Scheduling | APScheduler | 3.x (embedded in FastAPI) |
+| CSS | Tailwind CSS | 3.x |
+
+---
+
+## Agent Pipeline
+
+```
+Scrape Agent → Stage 1 Filter (Groq) → Stage 2 Writer (Claude) → Corroboration Agent → war_room_queue
+                                                                                              ↓
+                                                                               Operator reviews in War Room
+                                                                                              ↓
+                                                                               Approve → Art Agent → Publish
+```
+
+**Stage 1 (Groq):** Fast noise rejection. Pass threshold: confidence ≥ 0.4. Target 60–70% rejection of raw scrape volume.
+
+**Stage 2 (Claude):** Classification, draft writing, severity scoring, pixel art prompt generation. Returns JSON — see spec §4.3 for exact schema and system prompts.
+
+**EDMW treatment:** EDMW signal is never a quoted source. Three tiers:
+- EDMW only → publishable with 👎 "unverified" badge, hype_meter = 0
+- EDMW + MSM corroboration → standard incident, EDMW count shown as "Forum buzz"
+- MSM only → standard incident, no EDMW reference
+
+**Scraping:** RSS-first for CNA/Mothership. Reddit via public JSON API (`/search.json?q=yishun&sort=new`). HWZ HTML scraping — title + thread stats only, never quote content.
+
+---
+
+## Database
+
+Supabase, `public` schema. RLS enabled on all tables — public reads only, all writes via `SUPABASE_SECRET_KEY` from agents backend only.
+
+Key tables: `incidents`, `sources`, `war_room_queue`, `utm_events`, `training_signals`, `chaos_index_snapshots`
+
+Full schema with exact SQL: `YishunAgain_TechSpec_v1.4.md` §3.
+
+**Sources seed data** (18 sources) is in the spec — run as part of Step 1 migration.
+
+---
+
+## Security Constraints
+
+- **Never call Supabase directly from React components.** All DB access goes through Next.js API routes (`/api/*`). `SUPABASE_SECRET_KEY` is server-side only.
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` and `NEXT_PUBLIC_MAPLIBRE_STYLE` are the only env vars safe to expose to the browser.
+- All API route query params must be sanitised before hitting Supabase (slug: alphanumeric+hyphens only; ID: UUID regex).
+- Rate limit all `/api/*` routes (60 req/min per IP for Phase 1).
+- `next.config.js` must include the exact security headers block from spec §10b.2 (CSP, HSTS, X-Frame-Options, etc.).
+- War Room (`warroom.yishunagain.com`) is never accessible without Cloudflare Access auth. No bypass route.
+- `utm_events` stores no IP addresses, no cookies, no persistent user identifiers — only hashed user agent (SHA256[:16]) and Cloudflare geo headers.
+
+---
+
+## Legal Guardrails (Hardcoded — Never Remove)
+
+1. `source_urls` must contain ≥ 1 URL — database constraint enforces this.
+2. Sources with `type = 'signal'` (EDMW) are never included in `source_urls`.
+3. No personal information beyond what appears in public source URLs.
+4. If Stage 2 detects political content → set `confidence = 0`, flag `"[POLITICAL CONTENT DETECTED — REJECT]"`.
+
+---
+
+## Frontend Theme
+
+Dark pixel art retro tabloid. Two fonts only: `Press Start 2P` (headers, scores, logo) and `Courier Prime` (all body text). Three sizes max: 24–28px, 11–12px, 8–10px. Two weights: 400 and 700.
+
+CSS tokens are defined in spec §6.1. Key colours: bg `#0D0D0D`, accent red `#E74C3C`, accent yellow `#F1C40F`, dagger purple `#8E44AD`.
+
+Map: MapLibre GL JS with OpenFreeMap tiles (`NEXT_PUBLIC_MAPLIBRE_STYLE`). No Mapbox token required.
+
+Share cards: rendered via OG meta tags — no separate image generation. The pixel art image (already generated for incident page) doubles as the OG image.
+
+---
+
+## Chaos Index
+
+Computed on every new publish, stored in `chaos_index_snapshots`:
+- Dagger: `severity × 3.0`
+- Clown: `severity × 1.5`
+- Heart: `severity × -1.0`
+- Normalised to 0–100 (max theoretical: 300 raw points → 100)
+
+Descriptors: Quiet / Simmering / Elevated / Critical / Apocalyptic (thresholds: 0/20/40/60/80).
+
+---
+
+## Environment Variables
+
+Required env vars (never commit actual values):
+
+```
+SUPABASE_URL
+SUPABASE_PUBLISHABLE_KEY   # frontend-safe
+SUPABASE_SECRET_KEY        # server/agents only — bypasses RLS
+ANTHROPIC_API_KEY
+GROQ_API_KEY
+NEXT_PUBLIC_MAPLIBRE_STYLE
+CF_R2_ACCOUNT_ID, CF_R2_ACCESS_KEY_ID, CF_R2_SECRET_ACCESS_KEY, CF_R2_BUCKET_NAME
+MODAL_TOKEN_ID, MODAL_TOKEN_SECRET
+NEXT_PUBLIC_SITE_URL
+WAR_ROOM_URL
+```
+
+`SUPABASE_SECRET_KEY` and API keys go in Google Cloud Run env vars — never in `.env` files committed to the repo.
+
+---
+
+## What Is Not Being Built (Phase 1)
+
+No user accounts, comments, votes, TikTok pipeline, distribution orchestrator, monetisation, mobile app, admin user roles, or public API.
