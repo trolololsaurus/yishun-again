@@ -1,8 +1,6 @@
 """
 Yishun Again — SDXL pixel art generation via Modal.run
 =======================================================
-Requires the LoRA trained by train_lora.py to be uploaded to R2 first.
-
 Usage (test a single incident):
     modal run packages/agents/art/generate_pixel_art.py \\
         --title "Man argues with void deck chair" \\
@@ -20,8 +18,7 @@ Called from the agent pipeline (after War Room approval):
 Prerequisites
 -------------
 1.  modal token new
-2.  Modal secret "cloudflare-r2" (same one used by train_lora.py)
-3.  train_lora.py must have run successfully and uploaded weights to R2
+2.  Modal secret "cloudflare-r2"
 """
 
 import io
@@ -30,12 +27,10 @@ from pathlib import Path
 
 import modal
 
-# ── Config ──────────────────────────────────────────────────────────────────
-LORA_R2_KEY    = "lora/yishunagain_v2.safetensors"
+# ── Config ────────────────────────────────────────────────────────────────────
 R2_ART_PREFIX  = "pixel-art"
 R2_PUBLIC_BASE = "https://assets.yishunagain.com"
 BASE_MODEL     = "stabilityai/stable-diffusion-xl-base-1.0"
-TRIGGER_WORD   = "yishunpixel"
 
 NEGATIVE_PROMPT = (
     "photorealistic, 3d render, photograph, blurry, people faces, "
@@ -50,7 +45,7 @@ CLASSIFICATION_MOOD: dict[str, str] = {
     "custom": "dramatic Yishun HDB environment, cinematic lighting",
 }
 
-# ── Modal resources ──────────────────────────────────────────────────────────
+# ── Modal resources ───────────────────────────────────────────────────────────
 app         = modal.App("yishun-pixel-art-generator")
 model_cache = modal.Volume.from_name("yishun-hf-cache", create_if_missing=True)
 
@@ -85,8 +80,8 @@ def _build_prompt(title: str, classification: str, area_name: str | None) -> str
     location = area_name or "Yishun"
     mood     = CLASSIFICATION_MOOD.get(classification, CLASSIFICATION_MOOD["custom"])
     return (
-        f"{TRIGGER_WORD}, 16-bit pixel art, HDB void deck Singapore, {location}, "
-        f"{mood}, isometric view, 16-bit JRPG style, "
+        f"HD-2D pixel art, HDB void deck Singapore, {location}, "
+        f"{mood}, isometric view, JRPG style, "
         f"detailed pixel art scene, masterpiece"
     )
 
@@ -121,14 +116,6 @@ class PixelArtGenerator:
         os.environ["HF_HOME"]            = "/cache/huggingface"
         os.environ["TRANSFORMERS_CACHE"] = "/cache/huggingface"
 
-        # Download LoRA weights from R2 to /tmp
-        lora_local = "/tmp/yishunagain_v2.safetensors"
-        if not Path(lora_local).exists():
-            bucket = os.environ["CF_R2_BUCKET_NAME"]
-            print(f"[load] Downloading LoRA from R2: {LORA_R2_KEY}")
-            _r2_client().download_file(bucket, LORA_R2_KEY, lora_local)
-            print(f"[load] LoRA downloaded ({Path(lora_local).stat().st_size / 1e6:.1f} MB)")
-
         print(f"[load] Loading SDXL pipeline from {BASE_MODEL}…")
         self.pipe = StableDiffusionXLPipeline.from_pretrained(
             BASE_MODEL,
@@ -136,7 +123,9 @@ class PixelArtGenerator:
             variant="fp16",
             use_safetensors=True,
         )
-        self.pipe.load_lora_weights(lora_local)
+
+        # LoRA: replaced with CivitAI model — see PROMPT 2
+
         self.pipe.enable_xformers_memory_efficient_attention()
         self.pipe = self.pipe.to("cuda")
         print("[load] Pipeline ready.")
@@ -150,7 +139,6 @@ class PixelArtGenerator:
         slug: str,
         num_inference_steps: int = 30,
         guidance_scale: float = 7.5,
-        lora_scale: float = 0.85,
     ) -> str:
         """
         Generate pixel art for an incident and upload to R2.
@@ -169,7 +157,6 @@ class PixelArtGenerator:
                 guidance_scale=guidance_scale,
                 width=1024,
                 height=1024,
-                cross_attention_kwargs={"scale": lora_scale},
             )
 
         image = result.images[0]

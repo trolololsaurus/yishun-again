@@ -23,7 +23,5 @@ build/
 .DS_Store
 Thumbs.db
 
-# LoRA training data and model weights
-packages/agents/art/training_images/
-packages/agents/art/*.safetensors
-packages/agents/art/upload_v2.py
+# Model weights — never commit
+*.safetensors
