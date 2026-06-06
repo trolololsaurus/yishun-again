@@ -1,0 +1,43 @@
+# ── Core framework (spec: FastAPI 0.110.x) ─────────────────────────────────
+fastapi==0.110.3
+uvicorn[standard]==0.29.0
+
+# ── Config ─────────────────────────────────────────────────────────────────
+python-dotenv==1.0.1
+pydantic==2.7.1
+pydantic-settings==2.3.0
+
+# ── Scheduling (spec: APScheduler 3.x) ─────────────────────────────────────
+APScheduler==3.10.4
+
+# ── Agent orchestration ─────────────────────────────────────────────────────
+langgraph>=0.2.0
+
+# ── AI APIs ─────────────────────────────────────────────────────────────────
+# Stage 2 writer — claude-haiku-4-5-20251001 (classify) / claude-sonnet-4-6 (write)
+anthropic==0.40.0
+# Stage 1 filter — llama3-8b-8192 via Groq
+groq==0.9.0
+
+# ── HTTP + scraping ─────────────────────────────────────────────────────────
+httpx==0.27.0
+beautifulsoup4==4.12.3
+lxml==5.2.1
+# RSS-first for CNA / Mothership
+feedparser==6.0.11
+
+# ── Cloudflare R2 (S3-compatible API) ──────────────────────────────────────
+boto3==1.34.90
+
+# ── Art pipeline (Modal.run SDXL jobs) ─────────────────────────────────────
+modal>=1.4.3
+# Image resizing for training data upload (train_lora.py local step)
+Pillow>=10.3.0
+# Dataset config serialisation for kohya_ss
+toml>=0.10.2
+
+# ── Supabase (agent writes — secret key, bypasses RLS) ──────────────────────
+supabase==2.30.1
+
+# ── Observability ───────────────────────────────────────────────────────────
+structlog==24.1.0

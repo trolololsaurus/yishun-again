@@ -1,0 +1,82 @@
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Courier+Prime:wght@400;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Panzer Dragoon Saga — Midnight Command Centre */
+  --color-bg:           #0A0E1A;  /* deep midnight blue-black — page background */
+  --color-surface:      #0F1526;  /* dark navy — cards, dropdowns, panels */
+  --color-border:       #1E2D4A;  /* steel blue — all borders, dividers */
+  --color-amber:        #C07830;  /* amber — primary accent, logo, scores, links */
+  --color-amber-dim:    #805828;  /* dimmed amber — /100, metadata, subtle text */
+  --color-sienna:       #803018;  /* sienna — active states, hover backgrounds */
+
+  /* Classification colours */
+  --color-good-vibes:   #4ECDC4;  /* teal-cyan — GOOD VIBES ❤️ */
+  --color-absurdities:  #FFE66D;  /* bright yellow — ABSURDITIES 🤡 */
+  --color-dark-events:  #FF6B6B;  /* coral red — DARK EVENTS 💀 */
+
+  /* Text */
+  --color-text-primary:   #E8E8F0;  /* near-white with blue tint */
+  --color-text-secondary: #7A8BAA;  /* steel blue-grey — metadata, dates */
+  --color-text-dim:       #3D4F6A;  /* dim steel — disabled, very subtle */
+
+  /* Map */
+  --color-map-bg:       #070B14;  /* near-black blue — map placeholder */
+
+  /* Fonts */
+  --font-display: 'Press Start 2P', monospace;
+  --font-body:    'Courier Prime', 'Courier New', monospace;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;          /* one-page layout — never scroll the page itself */
+}
+
+html { font-size: 16px; }
+
+body {
+  background-color: var(--color-bg);   /* deep midnight blue-black */
+  color: var(--color-text-primary);
+  font-family: var(--font-body);
+  font-size: 16px;
+}
+
+/* MapLibre popup override — Panzer Dragoon Saga theme */
+.maplibregl-popup-content {
+  background: var(--color-surface) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  box-shadow: 4px 4px 0 var(--color-bg) !important;
+}
+.maplibregl-popup-tip { display: none !important; }
+.maplibregl-ctrl-attrib { font-size: 14px !important; }
+.maplibregl-ctrl-attrib a { color: var(--color-text-secondary) !important; }
+
+/* Thin vertical scrollbars only — never a horizontal scrollbar */
+::-webkit-scrollbar       { width: 6px; height: 0; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 0; }
+* { scrollbar-width: thin; scrollbar-color: var(--color-border) transparent; }
+
+*:focus-visible {
+  outline: 2px solid var(--color-amber);
+  outline-offset: 2px;
+}
+
+/* Death-free counter pulse animation (streak >= 100 days) */
+@keyframes pulse-green {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
+}
+.pulse-green { animation: pulse-green 2s ease-in-out infinite; }
+
+/* ATB bar fill animation */
+@keyframes atb-fill {
+  from { width: 0; }
+}
+.atb-bar { animation: atb-fill 0.6s ease-out forwards; }

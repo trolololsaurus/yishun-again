@@ -1,0 +1,20 @@
+# Never bundle local secrets into the image
+.env
+.env.*
+*.env
+
+# Python artefacts
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+
+# Dev / test files
+tests/
+.pytest_cache/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
