@@ -1,7 +1,7 @@
 """
 Historical backfill agent — spec §14c.
 
-Scrapes Google News (2015–2026) and Wikipedia (1990–2014) for historical
+Scrapes Google News (2015–2026) and Wikipedia (1980–2014) for historical
 Yishun incidents, runs each candidate through the standard Stage 1 → Stage 2
 → consolidation pipeline, then applies auto-publish tiers:
 
@@ -42,6 +42,8 @@ import feedparser
 import httpx
 from pathlib import Path
 from dotenv import load_dotenv
+
+from scrapers.groq_budget import GroqBudget
 
 # Explicit path so the module finds .env regardless of CWD
 # scrapers/backfill_agent.py → packages/agents/scrapers → packages/agents → packages → repo root
@@ -89,6 +91,7 @@ WIKI_CONFIDENCE_FLOOR = 0.60
 # Rate limiting
 GNEWS_RATE_LIMIT  = 1.5    # seconds between Google News RSS requests
 STAGE2_RATE_LIMIT = 1.5    # seconds between Stage 2 calls (Anthropic rate limits)
+WIKI_RATE_LIMIT   = 1.5    # seconds between Wikipedia API calls
 
 MAX_ITEMS_PER_RUN = 500    # hard cap — operator re-runs to get more
 
@@ -98,9 +101,40 @@ _BROWSER_UA = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 
-# Wikipedia scope: 1990–2014 (Google News covers 2015–2026)
-WIKI_YEAR_MIN = 1990
+# Identifies us honestly per the Wikimedia API User-Agent policy (distinct
+# from _BROWSER_UA, which Google News / link-validation calls keep using).
+WIKI_UA = "YishunAgain/1.0 (https://yishunagain.com; bot@yishunagain.com)"
+
+# Wikipedia scope: 1980–2014 (Google News covers 2015–2026)
+WIKI_YEAR_MIN = 1980
 WIKI_YEAR_MAX = 2014
+
+# External-link domains to drop from citation candidates — Wikipedia's own
+# infrastructure and sister projects, never a "real news source" (CHANGE 3).
+WIKI_EXTLINKS_BLOCKLIST = (
+    "wikipedia.org",
+    "wikimedia.org",
+    "wikidata.org",
+    "wiktionary.org",
+    "wikibooks.org",
+    "wikiquote.org",
+    "wikisource.org",
+    "wikinews.org",
+    "wikiversity.org",
+    "wikivoyage.org",
+    "mediawiki.org",
+)
+
+# Title keywords for filtering followed wikilinks (CHANGE 4) — keep only
+# links plausibly relevant to Yishun / Singapore crime incidents.
+WIKI_LINK_KEYWORDS = (
+    "yishun", "murder", "killing", "stabbing", "crime",
+    "manslaughter", "assault", "sentenced", "executed", "hanged",
+)
+
+# Hard cap on linked articles followed across the whole Wikipedia phase
+# (CHANGE 4) — prevents runaway crawling via chained wikilinks.
+WIKI_MAX_FOLLOWED_ARTICLES = 30
 
 
 # ── Cheap local pre-filter (runs before Groq — zero API cost) ────────────────
@@ -307,7 +341,7 @@ def _wiki_article_text(title: str) -> Optional[str]:
             WIKI_API_URL,
             params=params,
             timeout=15.0,
-            headers={"User-Agent": _BROWSER_UA},
+            headers={"User-Agent": WIKI_UA},
         )
         resp.raise_for_status()
         pages = resp.json().get("query", {}).get("pages", {})
@@ -332,7 +366,7 @@ def _wiki_search(query: str = "Yishun Singapore incident", max_results: int = 15
             WIKI_API_URL,
             params=params,
             timeout=15.0,
-            headers={"User-Agent": _BROWSER_UA},
+            headers={"User-Agent": WIKI_UA},
         )
         resp.raise_for_status()
         return resp.json().get("query", {}).get("search", [])
@@ -341,7 +375,92 @@ def _wiki_search(query: str = "Yishun Singapore incident", max_results: int = 15
     return []
 
 
-def _extract_wiki_candidates(text: str, article_title: str, seen_urls: set) -> list:
+def _wiki_external_links(title: str) -> list:
+    """
+    Fetch external links from a Wikipedia article via the MediaWiki API.
+    Returns a list of URL strings. Empty list on failure.
+
+    Uses: action=query, prop=extlinks, ellimit=50
+    Filters out: Wikipedia-internal URLs, Commons URLs, Wikidata URLs.
+    Keeps: .sg domains (CNA, ST, Mothership, AsiaOne, etc), BBC, Reuters,
+           AFP, Guardian. Anything that looks like a real news source.
+    """
+    params = {
+        "action":  "query",
+        "titles":  title,
+        "prop":    "extlinks",
+        "ellimit": 50,
+        "format":  "json",
+    }
+    links: list = []
+    try:
+        resp = httpx.get(
+            WIKI_API_URL,
+            params=params,
+            timeout=15.0,
+            headers={"User-Agent": WIKI_UA},
+        )
+        resp.raise_for_status()
+        pages = resp.json().get("query", {}).get("pages", {})
+        for page in pages.values():
+            for entry in page.get("extlinks", []):
+                url = entry.get("*", "")
+                if not url or not url.startswith(("http://", "https://")):
+                    continue
+                host = urllib.parse.urlparse(url).netloc.lower()
+                if any(blocked in host for blocked in WIKI_EXTLINKS_BLOCKLIST):
+                    continue
+                links.append(url)
+    except Exception as exc:
+        logger.warning("Wikipedia external links fetch error [%s]: %s", title, exc)
+    return links
+
+
+def _wiki_internal_links(title: str, max_links: int = 20) -> list:
+    """
+    Fetch internal wikilinks from a Wikipedia article via the MediaWiki API.
+    Returns a list of article titles (strings). Empty list on failure.
+
+    Uses: action=query, prop=links, pllimit=50
+    Filters: keep only links whose titles contain "Yishun" OR match known
+    Singapore crime/incident patterns (title contains any of: "murder",
+    "killing", "stabbing", "crime", "Singapore", "manslaughter", "assault",
+    "sentenced", "executed", "hanged").
+    Returns at most max_links titles.
+    """
+    params = {
+        "action":  "query",
+        "titles":  title,
+        "prop":    "links",
+        "pllimit": 50,
+        "format":  "json",
+    }
+    matched: list = []
+    try:
+        resp = httpx.get(
+            WIKI_API_URL,
+            params=params,
+            timeout=15.0,
+            headers={"User-Agent": WIKI_UA},
+        )
+        resp.raise_for_status()
+        pages = resp.json().get("query", {}).get("pages", {})
+        for page in pages.values():
+            for entry in page.get("links", []):
+                link_title = entry.get("title", "")
+                if not link_title:
+                    continue
+                lowered = link_title.lower()
+                if any(kw in lowered for kw in WIKI_LINK_KEYWORDS):
+                    matched.append(link_title)
+                    if len(matched) >= max_links:
+                        return matched
+    except Exception as exc:
+        logger.warning("Wikipedia internal links fetch error [%s]: %s", title, exc)
+    return matched
+
+
+def _extract_wiki_candidates(text: str, article_title: str, seen_urls: set, external_links: list) -> list:
     """
     Split Wikipedia article text into paragraphs, extract those mentioning Yishun
     with a year in the WIKI_YEAR_MIN–WIKI_YEAR_MAX range.
@@ -381,12 +500,13 @@ def _extract_wiki_candidates(text: str, article_title: str, seen_urls: set) -> l
         seen_urls.add(dedup_key)
 
         candidates.append({
-            "title":       title,
-            "content":     para[:3000],
-            "url":         wiki_url,
-            "source_name": "Wikipedia",
-            "source_type": "reference",
-            "date":        f"{year}-01-01",
+            "title":              title,
+            "content":            para[:3000],
+            "url":                wiki_url,
+            "source_name":        "Wikipedia",
+            "source_type":        "reference",
+            "date":               f"{year}-01-01",
+            "external_citations": external_links,
         })
 
     return candidates
@@ -394,13 +514,15 @@ def _extract_wiki_candidates(text: str, article_title: str, seen_urls: set) -> l
 
 def _scrape_wikipedia(seen_urls: set) -> list:
     """
-    Fetch Wikipedia content for historical Yishun incidents (1990–2014).
+    Fetch Wikipedia content for historical Yishun incidents (1980–2014).
     Returns list of candidate dicts.
     """
     from scrapers import content_matches_keywords
 
     all_candidates = []
     processed_article_urls: set = set()
+    fetched_titles: list = []     # titles successfully pulled in Steps 1–2 — wikilink seeds for Step 3
+    followed_count = 0            # CHANGE 4: global counter, capped at WIKI_MAX_FOLLOWED_ARTICLES
 
     # Step 1: spec-mandated known articles
     for article_title in WIKI_ARTICLES:
@@ -412,11 +534,15 @@ def _scrape_wikipedia(seen_urls: set) -> list:
         text = _wiki_article_text(article_title)
         if not text:
             continue
+        time.sleep(WIKI_RATE_LIMIT)
 
-        candidates = _extract_wiki_candidates(text, article_title, seen_urls)
+        external_links = _wiki_external_links(article_title)
+        time.sleep(WIKI_RATE_LIMIT)
+
+        candidates = _extract_wiki_candidates(text, article_title, seen_urls, external_links)
         logger.debug("Wikipedia [%s]: %d Yishun sections", article_title, len(candidates))
         all_candidates.extend(candidates)
-        time.sleep(GNEWS_RATE_LIMIT)
+        fetched_titles.append(article_title)
 
     # Step 2: search-discovered articles
     for result in _wiki_search(max_results=15):
@@ -431,12 +557,55 @@ def _scrape_wikipedia(seen_urls: set) -> list:
         text = _wiki_article_text(title)
         if not text or "yishun" not in text.lower():
             continue
+        time.sleep(WIKI_RATE_LIMIT)
 
-        candidates = _extract_wiki_candidates(text, title, seen_urls)
+        external_links = _wiki_external_links(title)
+        time.sleep(WIKI_RATE_LIMIT)
+
+        candidates = _extract_wiki_candidates(text, title, seen_urls, external_links)
         all_candidates.extend(candidates)
-        time.sleep(GNEWS_RATE_LIMIT)
+        fetched_titles.append(title)
 
-    logger.info("Wikipedia: %d candidate sections collected", len(all_candidates))
+    # Step 3: follow internal wikilinks from already-fetched articles (CHANGE 4).
+    # Bounded globally by WIKI_MAX_FOLLOWED_ARTICLES — counts every link we commit
+    # to following (whether or not its fetch succeeds) so the crawl truly cannot
+    # run away regardless of hit rate.
+    for seed_title in fetched_titles:
+        if followed_count >= WIKI_MAX_FOLLOWED_ARTICLES:
+            break
+
+        linked_titles = _wiki_internal_links(seed_title, max_links=20)
+        time.sleep(WIKI_RATE_LIMIT)
+
+        for link_title in linked_titles:
+            if followed_count >= WIKI_MAX_FOLLOWED_ARTICLES:
+                break
+
+            link_url = f"https://en.wikipedia.org/wiki/{link_title.replace(' ', '_')}"
+            if link_url in processed_article_urls:
+                continue
+            processed_article_urls.add(link_url)
+            followed_count += 1
+
+            link_text = _wiki_article_text(link_title)
+            if not link_text:
+                continue
+            time.sleep(WIKI_RATE_LIMIT)
+
+            link_external_links = _wiki_external_links(link_title)
+            time.sleep(WIKI_RATE_LIMIT)
+
+            link_candidates = _extract_wiki_candidates(link_text, link_title, seen_urls, link_external_links)
+            logger.debug(
+                "Wikipedia [linked: %s ← %s]: %d Yishun sections",
+                link_title, seed_title, len(link_candidates),
+            )
+            all_candidates.extend(link_candidates)
+
+    logger.info(
+        "Wikipedia: %d candidate sections collected (%d linked article(s) followed)",
+        len(all_candidates), followed_count,
+    )
     return all_candidates
 
 
@@ -559,7 +728,7 @@ def _parse_source_date_to_iso(source_date: str) -> Optional[str]:
         y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
         from datetime import date as _date
         _date(y, mo, d)   # validates calendar correctness
-        if not (1990 <= y <= 2026):
+        if not (1980 <= y <= 2026):
             return None
         return f"{y:04d}-{mo:02d}-{d:02d}T00:00:00+00:00"
     except ValueError:
@@ -1194,6 +1363,7 @@ def run_backfill(
     include_wikipedia: bool = True,
     dry_run: bool = False,
     limit: int = MAX_ITEMS_PER_RUN,
+    wikipedia_only: bool = False,
 ) -> dict:
     """
     Run the historical backfill.
@@ -1201,8 +1371,10 @@ def run_backfill(
     Args:
         start_year:        First year for Google News scrape (inclusive).
         end_year:          Last year for Google News scrape (inclusive, max 2026).
-        include_wikipedia: Also scrape Wikipedia for 1990–2014 incidents.
+        include_wikipedia: Also scrape Wikipedia for 1980–2014 incidents.
         dry_run:           Run Stage 1/2/consolidation but write nothing to Supabase.
+        wikipedia_only:    Skip Google News entirely and run only the Wikipedia
+                           phase, regardless of start_year/end_year/include_wikipedia.
 
     Returns:
         Stats dict with counts for all outcomes.
@@ -1212,8 +1384,9 @@ def run_backfill(
     from classifiers.corroboration import check_duplicate, get_supabase_client
     from classifiers.consolidation import check as consolidation_check
 
+    budget = GroqBudget()
+
     end_year  = min(end_year, 2026)
-    start_year = max(start_year, 2015)
 
     run_at = datetime.now(timezone.utc).isoformat()
     stats: dict = {
@@ -1254,31 +1427,32 @@ def run_backfill(
     seen_urls: set = set()
     all_candidates: list = []
 
-    logger.info(
-        "Backfill — collecting candidates: Google News %d–%d, %d keywords",
-        start_year, end_year, len(BACKFILL_KEYWORDS),
-    )
+    if not wikipedia_only:
+        logger.info(
+            "Backfill — collecting candidates: Google News %d–%d, %d keywords",
+            start_year, end_year, len(BACKFILL_KEYWORDS),
+        )
 
-    for year in range(start_year, end_year + 1):
-        for keyword in BACKFILL_KEYWORDS:
-            items = _scrape_gnews_year(keyword, year, seen_urls)
-            all_candidates.extend(items)
-            stats["scraped"] += len(items)
+        for year in range(start_year, end_year + 1):
+            for keyword in BACKFILL_KEYWORDS:
+                items = _scrape_gnews_year(keyword, year, seen_urls)
+                all_candidates.extend(items)
+                stats["scraped"] += len(items)
 
-            if stats["scraped"] >= cap:
-                stats["capped"] = True
-                logger.info(
-                    "Backfill: raw cap (%d) reached at year=%d keyword=%s",
-                    cap, year, keyword,
-                )
+                if stats["scraped"] >= cap:
+                    stats["capped"] = True
+                    logger.info(
+                        "Backfill: raw cap (%d) reached at year=%d keyword=%s",
+                        cap, year, keyword,
+                    )
+                    break
+                time.sleep(GNEWS_RATE_LIMIT)
+
+            if stats["capped"]:
                 break
-            time.sleep(GNEWS_RATE_LIMIT)
 
-        if stats["capped"]:
-            break
-
-    if include_wikipedia and not stats["capped"]:
-        logger.info("Backfill — collecting Wikipedia candidates (1990–2014)")
+    if (include_wikipedia or wikipedia_only) and not stats["capped"]:
+        logger.info("Backfill — collecting Wikipedia candidates (1980–2014)")
         wiki_items = _scrape_wikipedia(seen_urls)
         all_candidates.extend(wiki_items)
         stats["scraped"] += len(wiki_items)
@@ -1321,23 +1495,35 @@ def run_backfill(
             continue
 
         # ── Stage 1 ──────────────────────────────────────────────────────────
-        try:
-            s1 = filter_content(item)
-        except Exception as exc:
-            stats["errors"] += 1
-            if len(stats["error_details"]) < 100:
-                stats["error_details"].append({
-                    "phase": "stage1", "url": url[:120],
-                    "error": f"{type(exc).__name__}: {exc}",
-                })
-            logger.error("Stage 1 error [%s]: %s", url[:80], exc)
-            continue
+        # Wikipedia (reference) items bypass Stage 1 entirely — they're already
+        # spec-floored to WIKI_CONFIDENCE_FLOOR and never read like scraped noise.
+        # Bypassed items must NOT touch the Groq budget (CHANGE 5/6).
+        if is_wiki:
+            logger.info("Wikipedia item bypassing Stage 1: %s", item.get("title", "")[:60])
+        else:
+            try:
+                s1 = filter_content(item)
+            except Exception as exc:
+                stats["errors"] += 1
+                if len(stats["error_details"]) < 100:
+                    stats["error_details"].append({
+                        "phase": "stage1", "url": url[:120],
+                        "error": f"{type(exc).__name__}: {exc}",
+                    })
+                logger.error("Stage 1 error [%s]: %s", url[:80], exc)
+                continue
 
-        if not s1["passes"]:
-            stats["stage1_rejected"] += 1
-            continue
+            usage = s1.get("usage") or {}
+            budget.record(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
+            if budget.should_halt():
+                logger.warning("Groq budget halt — stopping candidate processing loop cleanly.")
+                break
 
-        stats["stage1_passed"] += 1
+            if not s1["passes"]:
+                stats["stage1_rejected"] += 1
+                continue
+
+            stats["stage1_passed"] += 1
 
         # ── Stage 2 ──────────────────────────────────────────────────────────
         try:
@@ -1468,6 +1654,16 @@ def run_backfill(
         stats["queued_for_review"], stats["updates_found"],
         stats["rejected"], stats["errors"],
     )
+
+    if wikipedia_only:
+        year_range = f"{WIKI_YEAR_MIN}-{WIKI_YEAR_MAX} (wikipedia-only)"
+    elif include_wikipedia:
+        year_range = f"{start_year}-{end_year} + wikipedia {WIKI_YEAR_MIN}-{WIKI_YEAR_MAX}"
+    else:
+        year_range = f"{start_year}-{end_year}"
+
+    budget.write_log(extra={"year_range": year_range, "limit": limit})
+
     return stats
 
 
@@ -1521,8 +1717,12 @@ if __name__ == "__main__":
             print(f"Error: {exc}")
         sys.exit(0)
 
-    dry_run = "--dry-run" in sys.argv
-    no_wiki = "--no-wikipedia" in sys.argv
+    dry_run   = "--dry-run" in sys.argv
+    no_wiki   = "--no-wikipedia" in sys.argv
+    wiki_only = "--wikipedia-only" in sys.argv
+
+    if wiki_only:
+        logger.info("Running Wikipedia-only mode (1980–2014)")
 
     start_year = 2015
     end_year   = 2026
@@ -1541,8 +1741,8 @@ if __name__ == "__main__":
 
     print(f"\n{'=' * 68}")
     print(f"Yishun Again — Historical Backfill {'DRY RUN' if dry_run else 'LIVE RUN'}")
-    print(f"  Google News:  {start_year}–{end_year}")
-    print(f"  Wikipedia:    {'yes (1990–2014)' if not no_wiki else 'no'}")
+    print(f"  Google News:  {'skipped (--wikipedia-only)' if wiki_only else f'{start_year}–{end_year}'}")
+    print(f"  Wikipedia:    {'yes (1980–2014)' if (not no_wiki or wiki_only) else 'no'}")
     print(f"  Limit:        {limit} items")
     print(f"  Auto-publish: confidence >= {TIER_AUTO_PUBLISH}")
     print(f"  Queue:        confidence {TIER_QUEUE}–{TIER_AUTO_PUBLISH - 0.01:.2f}")
@@ -1557,6 +1757,7 @@ if __name__ == "__main__":
         include_wikipedia  = not no_wiki,
         dry_run            = dry_run,
         limit              = limit,
+        wikipedia_only     = wiki_only,
     )
 
     print(f"\n{'=' * 68}")
@@ -1580,9 +1781,9 @@ if __name__ == "__main__":
     print(f"  Capped at {limit:<6}    {stats['capped']}")
 
     if stats.get("error_details"):
-        print(f"\n{'─' * 68}")
+        print(f"\n{'-' * 68}")
         print(f"ERROR BREAKDOWN ({len(stats['error_details'])} captured, cap=100):")
-        print(f"{'─' * 68}")
+        print(f"{'-' * 68}")
         # Summarise by type
         from collections import Counter
         type_counts: Counter = Counter(e["phase"] for e in stats["error_details"])
@@ -1597,9 +1798,9 @@ if __name__ == "__main__":
             print(f"  ... {len(stats['error_details']) - 20} more errors not shown.")
 
     if dry_run and stats["items"]:
-        print(f"\n{'─' * 68}")
+        print(f"\n{'-' * 68}")
         print(f"ITEMS SAMPLED ({len(stats['items'])} shown):")
-        print(f"{'─' * 68}")
+        print(f"{'-' * 68}")
         for i, it in enumerate(stats["items"][:30], 1):
             merged_tag = f"  [merged {it['merged_from']} articles]" if it.get("merged_from", 1) > 1 else ""
             print(

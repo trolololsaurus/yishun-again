@@ -159,6 +159,7 @@ def filter_content(content: dict) -> dict:
             "reason":      str,    # one-sentence explanation
             "passes":      bool,   # confidence >= PASS_THRESHOLD and is_relevant
             "override":    bool,   # True if incident-signal override fired
+            "usage":       dict,   # {prompt_tokens, completion_tokens} from the Groq response
         }
     """
     # Surface whether the override is active so the model sees it in the prompt
@@ -197,6 +198,10 @@ def filter_content(content: dict) -> dict:
     result = _parse_response(raw)
     result["passes"]   = result["is_relevant"] and result["confidence"] >= PASS_THRESHOLD
     result["override"] = override_active
+    result["usage"] = {
+        "prompt_tokens":     completion.usage.prompt_tokens,
+        "completion_tokens": completion.usage.completion_tokens,
+    }
 
     logger.info(
         "Stage 1 [%s] relevant=%s confidence=%.2f passes=%s%s | %s",
