@@ -9,7 +9,7 @@ interface Props {
 }
 
 export function LifecycleCard({ item, onProcessed }: Props) {
-  const rc      = item.raw_content as LifecycleNotificationContent
+  const rc      = item.raw_content as unknown as LifecycleNotificationContent
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState<string | null>(null)
 

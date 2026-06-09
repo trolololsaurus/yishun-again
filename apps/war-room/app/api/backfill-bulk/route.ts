@@ -89,7 +89,7 @@ export async function POST(request: Request) {
         original_classification: item.proposed_classification,
         original_severity:       item.proposed_severity,
         agent_confidence_was:    item.agent_confidence,
-      }).then(() => {}).catch(() => {})
+      }).then(() => {}, () => {})
     }
 
     return NextResponse.json({ updated: queue.length, errors: [] })
@@ -176,7 +176,7 @@ export async function POST(request: Request) {
       original_classification: item.proposed_classification,
       original_severity:       item.proposed_severity,
       agent_confidence_was:    item.agent_confidence,
-    }).then(() => {}).catch(() => {})
+    }).then(() => {}, () => {})
 
     updated++
   }

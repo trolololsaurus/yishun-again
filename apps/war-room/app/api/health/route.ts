@@ -39,7 +39,7 @@ export async function GET() {
 
   if (healthResult.error || queueResult.error) {
     console.error('GET /api/health:', healthResult.error)
-    return NextResponse.json({ error: healthResult.error.message }, { status: 500 })
+    return NextResponse.json({ error: healthResult.error?.message ?? 'Unknown error' }, { status: 500 })
   }
 
   const allRows = healthResult.data ?? []

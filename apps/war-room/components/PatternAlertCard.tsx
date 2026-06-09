@@ -23,7 +23,7 @@ interface Props {
 }
 
 export function PatternAlertCard({ item, relatedPreviews, siteUrl, onProcessed }: Props) {
-  const rc = item.raw_content as PatternAlertContent
+  const rc = item.raw_content as unknown as PatternAlertContent
 
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState<string | null>(null)

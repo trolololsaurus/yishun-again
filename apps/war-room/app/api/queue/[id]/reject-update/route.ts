@@ -11,7 +11,7 @@ export async function POST(
 
   const { data: item, error: fetchErr } = await supabase
     .from('war_room_queue')
-    .select('id,agent_confidence,proposed_summary,proposed_classification,proposed_severity')
+    .select('id,agent_confidence,proposed_summary,proposed_classification,proposed_severity,raw_content')
     .eq('id', id)
     .eq('status', 'update')
     .single()
