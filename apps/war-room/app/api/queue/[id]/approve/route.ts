@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { validateUUID, today, slugify } from '@/lib/utils'
+import { validateUUID, slugify } from '@/lib/utils'
 import type { ApproveBody, Classification } from '@/lib/types'
 
 export async function POST(
@@ -45,6 +45,13 @@ export async function POST(
   const sourceUrls  = (rc.source_urls as string[]) ?? [item.source_url]
   const slug        = (item.proposed_slug ?? (rc.slug as string) ?? slugify(title))
 
+  // Read incident_date from raw_content — set by scraper/backfill agent
+  // Falls back to today only if raw_content has no usable date
+  const sourceDate  = (rc.date || rc.incident_date) as string | undefined
+  const incidentDate = sourceDate && /^\d{4}-\d{2}-\d{2}/.test(sourceDate)
+    ? sourceDate.substring(0, 10)
+    : new Date().toISOString().substring(0, 10)
+
   // Build incident row
   const incident = {
     title,
@@ -71,7 +78,7 @@ export async function POST(
     is_milestone:        (rc.is_milestone as boolean)        ?? false,
     milestone_type:      (rc.milestone_type  as string | null) ?? null,
     milestone_value:     (rc.milestone_value as number | null) ?? null,
-    incident_date:       today(),
+    incident_date:       incidentDate,
     is_published:        true,
     published_at:        new Date().toISOString(),
   }
