@@ -1241,6 +1241,26 @@ def _merge_batch_group(group: list, role_assignments: list) -> dict:
     }
 
 
+def _shared_source_url(group_entries: list) -> Optional[str]:
+    """
+    Return a source URL shared by 2+ items in the group, or None.
+
+    Catches same-source duplicates (multiple Wikipedia paragraphs from one
+    article, or the same Google News article matched by different keyword
+    searches) that would otherwise be left to a Haiku same-incident judgment
+    that can be confused by differently-framed text from one source.
+    """
+    seen: set = set()
+    for entry in group_entries:
+        url = entry["item"].get("url", "")
+        if not url:
+            continue
+        if url in seen:
+            return url
+        seen.add(url)
+    return None
+
+
 def _dedup_batch(processed: list, stats: dict) -> list:
     """
     Intra-batch duplicate detection: group by location+date, then judge per group.
@@ -1248,11 +1268,14 @@ def _dedup_batch(processed: list, stats: dict) -> list:
     Algorithm:
       1. Group entries by (date <=7 days) AND (same block_number / area_name).
          Title-keyword overlap >= 3 used as fallback when Stage 2 found no location.
-      2. For each group of 2+: ONE Haiku call presenting all articles at once.
-         Returns {is_same, primary_index, role_assignments}.
-      3. If is_same=True: merge into one card with role-tagged source_timeline.
+      2. Within each group, force-merge items that share an identical source_url
+         (e.g. multiple Wikipedia paragraphs from the same article) -- skips the
+         Haiku call entirely for these.
+      3. For each remaining group of 2+: ONE Haiku call presenting all articles
+         at once. Returns {is_same, primary_index, role_assignments}.
+      4. If is_same=True: merge into one card with role-tagged source_timeline.
 
-    Haiku API calls = number of multi-item groups, not O(n^2) pairwise.
+    Haiku API calls = number of multi-item groups not resolved by step 2.
     """
     import os as _os
     import anthropic as _anthropic
@@ -1289,9 +1312,19 @@ def _dedup_batch(processed: list, stats: dict) -> list:
         if len(g) == 1:
             result.append(processed[g[0]])
 
-    # Step 3: judge and merge each multi-item group
+    # Step 3: force-merge same-source-URL groups, then judge the rest with Haiku
     for group_indices in multi_groups:
         group_entries = [processed[i] for i in group_indices]
+
+        shared_url = _shared_source_url(group_entries)
+        if shared_url:
+            n_articles = len(group_entries)
+            role_assignments = ["initial"] + ["update"] * (n_articles - 1)
+            merged = _merge_batch_group(group_entries, role_assignments)
+            stats["batch_merges"] += n_articles - 1
+            logger.info("Force-merged %d items sharing source_url: %s", n_articles, shared_url)
+            result.append(merged)
+            continue
 
         try:
             judgment = _judge_batch_group(client, group_entries)
