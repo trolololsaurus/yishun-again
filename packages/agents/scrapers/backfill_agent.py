@@ -735,21 +735,27 @@ def _parse_source_date_to_iso(source_date: str) -> Optional[str]:
         return None
 
 
-def _build_incident_row(draft: dict, item: dict) -> dict:
-    """Build an incidents table row for direct auto-publish."""
+def _build_incident_row(draft: dict, item: dict) -> Optional[dict]:
+    """
+    Build an incidents table row for direct auto-publish.
+
+    Returns None if the source date is missing/unparseable — the caller
+    must downgrade the item to the QUEUE tier instead of auto-publishing
+    with a fabricated incident_date.
+    """
     raw_date    = item.get("date", "")
     parsed_iso  = _parse_source_date_to_iso(raw_date)
 
     if parsed_iso is None:
-        published_at  = datetime.now(timezone.utc).isoformat()
-        incident_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         logger.warning(
-            "Backfill: source_date missing/unparseable %r for '%s' — published_at = NOW()",
+            "Backfill: source_date missing/unparseable %r for '%s' "
+            "— downgrading to QUEUE tier, operator must set date manually",
             raw_date, draft.get("title", "")[:60],
         )
-    else:
-        published_at  = parsed_iso
-        incident_date = parsed_iso[:10]   # "YYYY-MM-DD"
+        return None
+
+    published_at  = parsed_iso
+    incident_date = parsed_iso[:10]   # "YYYY-MM-DD"
 
     hype = 1 if item.get("source_type") == "reference" else draft.get("hype_meter", 0)
 
@@ -912,12 +918,38 @@ def _apply_tier(
 
     # ── AUTO-PUBLISH tier (confidence >= 0.70) ───────────────────────────────
     if confidence >= TIER_AUTO_PUBLISH:
+        date_ok = _parse_source_date_to_iso(item.get("date", "")) is not None
+
         if dry_run:
-            stats["auto_published"] += 1
-            stats["items"].append(_dry_run_entry(item, draft, "AUTO-PUBLISH"))
+            if date_ok:
+                stats["auto_published"] += 1
+                stats["items"].append(_dry_run_entry(item, draft, "AUTO-PUBLISH"))
+            else:
+                stats["queued_for_review"] += 1
+                stats["items"].append(_dry_run_entry(item, draft, "QUEUE (date fallback)"))
             return
 
         incident_row = _build_incident_row(draft, item)
+
+        if incident_row is None:
+            # Unparseable/missing date — downgrade to QUEUE for operator review.
+            # _build_queue_row sets raw_content._date_fallback = True automatically.
+            try:
+                row = _build_queue_row(item, draft, consolidation)
+                if link_validation:
+                    row["raw_content"]["link_validation"] = link_validation
+                supabase.table("war_room_queue").insert(row).execute()
+                stats["queued_for_review"] += 1
+                logger.info(
+                    "Backfill date-fallback QUEUE [conf=%.2f]: %s",
+                    confidence,
+                    draft.get("title", "")[:70],
+                )
+            except Exception as exc:
+                stats["errors"] += 1
+                logger.error("Backfill date-fallback queue insert failed: %s", exc)
+            return
+
         incident_row["slug"] = _make_unique_slug(incident_row["slug"], supabase)
 
         try:
