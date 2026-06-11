@@ -85,7 +85,7 @@ export default function IncidentsPage() {
               <td className="py-2">
                 <div className="flex gap-2">
                   <a
-                    href={`/incidents/${inc.slug}`}
+                    href={`https://yishunagain.com/incidents/${inc.slug}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-yellow hover:underline"
