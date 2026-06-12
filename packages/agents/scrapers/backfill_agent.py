@@ -107,7 +107,7 @@ WIKI_UA = "YishunAgain/1.0 (https://yishunagain.com; bot@yishunagain.com)"
 
 # Wikipedia scope: 1980–2014 (Google News covers 2015–2026)
 WIKI_YEAR_MIN = 1980
-WIKI_YEAR_MAX = 2014
+WIKI_YEAR_MAX = 2023
 
 # External-link domains to drop from citation candidates — Wikipedia's own
 # infrastructure and sister projects, never a "real news source" (CHANGE 3).
@@ -1420,112 +1420,31 @@ def _write_summary_notification(stats: dict, supabase) -> None:
         logger.warning("Could not write backfill summary notification: %s", exc)
 
 
-# ── Main runner ──────────────────────────────────────────────────────────────
+# ── Shared candidate pipeline ────────────────────────────────────────────────
 
-def run_backfill(
-    start_year: int = 2015,
-    end_year: int = 2026,
-    include_wikipedia: bool = True,
-    dry_run: bool = False,
-    limit: int = MAX_ITEMS_PER_RUN,
-    wikipedia_only: bool = False,
-) -> dict:
+def process_candidates(
+    all_candidates: list,
+    cap: int,
+    dry_run: bool,
+    supabase,
+    stats: dict,
+    budget: GroqBudget,
+) -> None:
     """
-    Run the historical backfill.
+    Run Stage 1 -> Stage 2 -> intra-batch dedup -> consolidation -> tier routing
+    for a list of raw candidate dicts (the standard backfill candidate format:
+    {title, content, url, source_name, source_type, date}).
 
-    Args:
-        start_year:        First year for Google News scrape (inclusive).
-        end_year:          Last year for Google News scrape (inclusive, max 2026).
-        include_wikipedia: Also scrape Wikipedia for 1980–2014 incidents.
-        dry_run:           Run Stage 1/2/consolidation but write nothing to Supabase.
-        wikipedia_only:    Skip Google News entirely and run only the Wikipedia
-                           phase, regardless of start_year/end_year/include_wikipedia.
+    Mutates `stats` in place and writes to `supabase` (when not dry_run) via
+    _apply_tier / _write_summary_notification (called separately by the caller).
 
-    Returns:
-        Stats dict with counts for all outcomes.
+    Shared by run_backfill() (Google News RSS / Wikipedia candidates) and
+    run_historical_search() (GDELT / Google web / Yahoo candidates).
     """
     from filters.stage1_filter import filter_content
     from filters.stage2_writer import write_stage2
-    from classifiers.corroboration import check_duplicate, get_supabase_client
+    from classifiers.corroboration import check_duplicate
     from classifiers.consolidation import check as consolidation_check
-
-    budget = GroqBudget()
-
-    end_year  = min(end_year, 2026)
-
-    run_at = datetime.now(timezone.utc).isoformat()
-    stats: dict = {
-        "run_at":             run_at,
-        "dry_run":            dry_run,
-        "scraped":            0,
-        "stage1_passed":      0,
-        "stage1_rejected":    0,
-        "stage2_processed":   0,
-        "stage2_errors":      0,
-        "duplicates_skipped": 0,
-        "prefiltered":        0,    # cheap local rejects before Groq call
-        "batch_merges":       0,    # same-incident items collapsed within the batch
-        "auto_published":     0,
-        "queued_for_review":  0,
-        "updates_found":      0,
-        "rejected":           0,
-        "errors":             0,
-        "capped":             False,
-        "items":              [],   # populated in dry_run for reporting
-        "error_details":      [],   # list of {phase, url, error} — capped at 100
-    }
-
-    # ── Supabase client (not needed in dry_run) ──────────────────────────────
-    supabase = None
-    if not dry_run:
-        try:
-            supabase = get_supabase_client()
-        except EnvironmentError as exc:
-            logger.error("Supabase not configured — cannot run live backfill: %s", exc)
-            stats["errors"] += 1
-            return stats
-
-    cap = max(1, int(limit))   # honour --limit / API limit parameter
-
-    # ── Phase 1: Collect all raw candidates ──────────────────────────────────
-
-    seen_urls: set = set()
-    all_candidates: list = []
-
-    if not wikipedia_only:
-        logger.info(
-            "Backfill — collecting candidates: Google News %d–%d, %d keywords",
-            start_year, end_year, len(BACKFILL_KEYWORDS),
-        )
-
-        for year in range(start_year, end_year + 1):
-            for keyword in BACKFILL_KEYWORDS:
-                items = _scrape_gnews_year(keyword, year, seen_urls)
-                all_candidates.extend(items)
-                stats["scraped"] += len(items)
-
-                if stats["scraped"] >= cap:
-                    stats["capped"] = True
-                    logger.info(
-                        "Backfill: raw cap (%d) reached at year=%d keyword=%s",
-                        cap, year, keyword,
-                    )
-                    break
-                time.sleep(GNEWS_RATE_LIMIT)
-
-            if stats["capped"]:
-                break
-
-    if (include_wikipedia or wikipedia_only) and not stats["capped"]:
-        logger.info("Backfill — collecting Wikipedia candidates (1980–2014)")
-        wiki_items = _scrape_wikipedia(seen_urls)
-        all_candidates.extend(wiki_items)
-        stats["scraped"] += len(wiki_items)
-
-    logger.info(
-        "Backfill — %d raw candidates collected (capped=%s)",
-        len(all_candidates), stats["capped"],
-    )
 
     # ── Phase 2a: Stage 1 → Stage 2 → collect ────────────────────────────────
     # Do NOT route to tiers yet — collect everything first so the intra-batch
@@ -1707,6 +1626,115 @@ def run_backfill(
             link_validation_flags = link_validation_flags,
         )
 
+
+# ── Main runner ──────────────────────────────────────────────────────────────
+
+def run_backfill(
+    start_year: int = 2015,
+    end_year: int = 2026,
+    include_wikipedia: bool = True,
+    dry_run: bool = False,
+    limit: int = MAX_ITEMS_PER_RUN,
+    wikipedia_only: bool = False,
+) -> dict:
+    """
+    Run the historical backfill.
+
+    Args:
+        start_year:        First year for Google News scrape (inclusive).
+        end_year:          Last year for Google News scrape (inclusive, max 2026).
+        include_wikipedia: Also scrape Wikipedia for 1980–2014 incidents.
+        dry_run:           Run Stage 1/2/consolidation but write nothing to Supabase.
+        wikipedia_only:    Skip Google News entirely and run only the Wikipedia
+                           phase, regardless of start_year/end_year/include_wikipedia.
+
+    Returns:
+        Stats dict with counts for all outcomes.
+    """
+    from classifiers.corroboration import get_supabase_client
+
+    budget = GroqBudget()
+
+    end_year  = min(end_year, 2026)
+
+    run_at = datetime.now(timezone.utc).isoformat()
+    stats: dict = {
+        "run_at":             run_at,
+        "dry_run":            dry_run,
+        "scraped":            0,
+        "stage1_passed":      0,
+        "stage1_rejected":    0,
+        "stage2_processed":   0,
+        "stage2_errors":      0,
+        "duplicates_skipped": 0,
+        "prefiltered":        0,    # cheap local rejects before Groq call
+        "batch_merges":       0,    # same-incident items collapsed within the batch
+        "auto_published":     0,
+        "queued_for_review":  0,
+        "updates_found":      0,
+        "rejected":           0,
+        "errors":             0,
+        "capped":             False,
+        "items":              [],   # populated in dry_run for reporting
+        "error_details":      [],   # list of {phase, url, error} — capped at 100
+    }
+
+    # ── Supabase client (not needed in dry_run) ──────────────────────────────
+    supabase = None
+    if not dry_run:
+        try:
+            supabase = get_supabase_client()
+        except EnvironmentError as exc:
+            logger.error("Supabase not configured — cannot run live backfill: %s", exc)
+            stats["errors"] += 1
+            return stats
+
+    cap = max(1, int(limit))   # honour --limit / API limit parameter
+
+    # ── Phase 1: Collect all raw candidates ──────────────────────────────────
+
+    seen_urls: set = set()
+    all_candidates: list = []
+
+    if not wikipedia_only:
+        logger.info(
+            "Backfill — collecting candidates: Google News %d–%d, %d keywords",
+            start_year, end_year, len(BACKFILL_KEYWORDS),
+        )
+
+        for year in range(start_year, end_year + 1):
+            for keyword in BACKFILL_KEYWORDS:
+                items = _scrape_gnews_year(keyword, year, seen_urls)
+                all_candidates.extend(items)
+                stats["scraped"] += len(items)
+
+                if stats["scraped"] >= cap:
+                    stats["capped"] = True
+                    logger.info(
+                        "Backfill: raw cap (%d) reached at year=%d keyword=%s",
+                        cap, year, keyword,
+                    )
+                    break
+                time.sleep(GNEWS_RATE_LIMIT)
+
+            if stats["capped"]:
+                break
+
+    if (include_wikipedia or wikipedia_only) and not stats["capped"]:
+        logger.info("Backfill — collecting Wikipedia candidates (1980–2014)")
+        wiki_items = _scrape_wikipedia(seen_urls)
+        all_candidates.extend(wiki_items)
+        stats["scraped"] += len(wiki_items)
+
+    logger.info(
+        "Backfill — %d raw candidates collected (capped=%s)",
+        len(all_candidates), stats["capped"],
+    )
+
+    # ── Phase 2: Stage 1 → Stage 2 → dedup → consolidation → tier routing ────
+
+    process_candidates(all_candidates, cap, dry_run, supabase, stats, budget)
+
     # ── Write War Room summary notification ───────────────────────────────────
     if not dry_run and supabase is not None:
         _write_summary_notification(stats, supabase)
@@ -1782,12 +1810,15 @@ if __name__ == "__main__":
             print(f"Error: {exc}")
         sys.exit(0)
 
-    dry_run   = "--dry-run" in sys.argv
-    no_wiki   = "--no-wikipedia" in sys.argv
-    wiki_only = "--wikipedia-only" in sys.argv
+    dry_run    = "--dry-run" in sys.argv
+    no_wiki    = "--no-wikipedia" in sys.argv
+    wiki_only  = "--wikipedia-only" in sys.argv
+    historical = "--historical-search" in sys.argv
 
     if wiki_only:
         logger.info("Running Wikipedia-only mode (1980–2014)")
+    if historical:
+        logger.info("Running historical search mode (GDELT + Google web + Yahoo)")
 
     start_year = 2015
     end_year   = 2026
@@ -1804,9 +1835,16 @@ if __name__ == "__main__":
             # --year=2015 is shorthand for --start-year=2015 --end-year=2015
             start_year = end_year = int(arg.split("=")[1])
 
+    if wiki_only:
+        gnews_label = "skipped (--wikipedia-only)"
+    elif historical:
+        gnews_label = f"historical search ({start_year}–{end_year})"
+    else:
+        gnews_label = "recent RSS (rolling window)"
+
     print(f"\n{'=' * 68}")
     print(f"Yishun Again — Historical Backfill {'DRY RUN' if dry_run else 'LIVE RUN'}")
-    print(f"  Google News:  {'skipped (--wikipedia-only)' if wiki_only else f'{start_year}–{end_year}'}")
+    print(f"  Google News:  {gnews_label}")
     print(f"  Wikipedia:    {'yes (1980–2014)' if (not no_wiki or wiki_only) else 'no'}")
     print(f"  Limit:        {limit} items")
     print(f"  Auto-publish: confidence >= {TIER_AUTO_PUBLISH}")
@@ -1816,14 +1854,24 @@ if __name__ == "__main__":
         print("  NOTE: DRY RUN — no writes to Supabase")
     print(f"{'=' * 68}\n")
 
-    stats = run_backfill(
-        start_year         = start_year,
-        end_year           = end_year,
-        include_wikipedia  = not no_wiki,
-        dry_run            = dry_run,
-        limit              = limit,
-        wikipedia_only     = wiki_only,
-    )
+    if historical:
+        from scrapers.historical_search_agent import run_historical_search
+        stats = run_historical_search(
+            start_year         = start_year,
+            end_year           = end_year,
+            include_wikipedia  = not no_wiki,
+            dry_run            = dry_run,
+            limit              = limit,
+        )
+    else:
+        stats = run_backfill(
+            start_year         = start_year,
+            end_year           = end_year,
+            include_wikipedia  = not no_wiki,
+            dry_run            = dry_run,
+            limit              = limit,
+            wikipedia_only     = wiki_only,
+        )
 
     print(f"\n{'=' * 68}")
     print("BACKFILL SUMMARY")
