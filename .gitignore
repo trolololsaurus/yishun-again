@@ -26,3 +26,10 @@ Thumbs.db
 
 # Model weights — never commit
 *.safetensors
+
+# Backfill run artifacts — local debugging only
+packages/agents/*.log
+packages/agents/scrapers/*.log
+packages/agents/**/*_backup.json
+packages/agents/**/groq_session_usage.json
+packages/agents/**/incidents_export.json

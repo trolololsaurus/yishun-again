@@ -1,6 +1,6 @@
 # YISHUN AGAIN — TECHNICAL SPECIFICATION
 ## For Coding Agents / Developers
-**Version:** 1.5 | **Phase:** 1 — Foundation Build
+**Version:** 1.9 | **Phase:** 1 — Foundation Build
 **Last Updated:** June 2026
 
 ### Changelog
@@ -8,7 +8,11 @@
 |---|---|---|
 | 1.0 | May 2026 | Initial spec |
 | 1.4 | May 2026 | Scraper health, milestone herald, EDMW tiers, War Room hybrid A+B view |
-| 1.5 | June 2026 | Incident consolidation model, developing stories, related incident linking, Step 16 backfill spec, LoRA training confirmed (yishunagain_v1.safetensors), Cloudflare Access middleware, R2 public domain confirmed |
+| 1.5 | June 2026 | Incident consolidation model, developing stories, related incident linking, Step 16 backfill spec, LoRA training confirmed, Cloudflare Access middleware, R2 public domain confirmed |
+| 1.6 | June 2026 | Developing story lifecycle (source roles, 180-day timeout), pattern detection agent, people_profiles schema, autonomy graduation tracker, dismiss reason taxonomy, recalibration system |
+| 1.7 | June 2026 | UI overhaul (one-page layout, game HUD, typography scale), classification display renames, death counter removed, hero incidents inserted, backfill agent built, geocoding agent, link validator, ISR revalidation, Chaos Index renamed, tech debt log |
+| 1.8 | June 2026 | Backfill scope expanded 1980–2025, Wikipedia promoted to primary discovery source, phased Google News batches, EDMW signal in backfill from 2015+, Reddit explicitly out of backfill scope, groq_budget.py added, wikipedia_discovery.py added, scrapers inventory table, pre-backfill checklist, backfill_agent.py year-range refactor documented |
+| 1.9 | June 2026 | **Forward-looking ingestion architecture (Option B):** new §4.9 ingestion layer (trigger-agnostic `run_ingestion_pass()` entrypoint, pluggable Source interface, GoogleNewsRSSSource adapter, RecencyFilter, FallbackLadder, IngestionReport) — detailed design in `docs/INGESTION_DESIGN.md`. New §3.7 `pipeline_state` + `pipeline_run_history` tables (watermark store). Corrected §11.2 trigger model (Cloud Scheduler→HTTP replaces broken in-process APScheduler under min-instances 0). §4.0b reconciliation note (spec-vs-filesystem drift documented). Manual historical backfill 2008–2025 completed; consolidation rulebook (`docs/CONSOLIDATION_RULES.md`) governs it. Data-quality audit pass (fabricated-date/URL detector) run; 3 wrong dates corrected. CULTURE content type (`classification='custom'`, `custom_label='CULTURE'`, 🌐) added for media/pop-culture mentions. |
 
 ---
 
@@ -273,6 +277,45 @@ CREATE TABLE chaos_index_snapshots (
 
 ---
 
+### 3.7 `pipeline_state` & `pipeline_run_history` tables (v1.9 — ingestion watermark)
+
+> Added for the §4.9 forward-looking ingestion layer. Prior to v1.9 there was **no** watermark
+> / "what's new since last run" mechanism anywhere in the system — every backfill run
+> re-scraped the full year range from scratch. These tables give the live ingestion pass a
+> persistent per-source watermark so each run processes only genuinely-new items.
+
+```sql
+-- One row per ingestion Source (Source.name is the key).
+CREATE TABLE pipeline_state (
+  source_name          TEXT PRIMARY KEY,          -- matches Source.name, e.g. 'google_news_rss'
+  last_run_at          TIMESTAMPTZ,               -- when this source last completed successfully
+  watermark            DATE,                      -- max published_at successfully ingested
+  last_status          TEXT NOT NULL DEFAULT 'never_run'
+                         CHECK (last_status IN ('never_run','ok','degraded','blocked','unavailable')),
+  last_reason          TEXT,                      -- failure detail when not 'ok'
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Append-only run history for observability (prune/caps as needed).
+CREATE TABLE pipeline_run_history (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ran_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  dry_run       BOOLEAN NOT NULL DEFAULT FALSE,
+  degraded      BOOLEAN NOT NULL DEFAULT FALSE,
+  total_queued  INTEGER NOT NULL DEFAULT 0,
+  report        JSONB NOT NULL               -- the full IngestionReport
+);
+```
+
+**Watermark write rule (critical):** `watermark` advances **only** on a source's successful
+pass, set to the max `published_at` actually ingested — never to `NOW()` (using "now" would skip
+items published-but-not-yet-indexed). A source that was blocked or unavailable keeps its old
+watermark so the next run re-attempts the same window; **no window is ever skipped because of a
+block.** See `docs/INGESTION_DESIGN.md` §6, §8.
+
+---
+
 ## 4. AGENT PIPELINE
 
 ### 4.1 Scrape Agent
@@ -317,6 +360,51 @@ https://www.reddit.com/r/singapore/search.json?q=yishun&sort=new&limit=25
 ```
 
 **HWZ EDMW:** HTML scraping only. Search for "yishun" in thread titles. Extract thread title, post count, view count only.
+
+### 4.0b Scrapers Inventory (v1.8 — confirmed against filesystem)
+
+> ⚠️ This table reflects the actual files in `packages/agents/scrapers/` as of June 2026.
+> The spec is authoritative — if a file is listed here, it exists. If not listed, build it.
+
+> 🔧 **v1.9 RECONCILIATION NOTE — this table has drifted from the filesystem. Verify against
+> real files before trusting it.** Confirmed deltas as of v1.9:
+> - `groq_budget.py` is marked "NOT YET BUILT" below but **exists** at `scrapers/groq_budget.py`.
+> - `wikipedia_discovery.py` is marked "NOT YET BUILT" but was **never built as a standalone
+>   file**; Wikipedia discovery logic lives **inline** in `backfill_agent.py` (`_scrape_wikipedia`).
+> - `scrape_agent.py` (named in §4.1) **does not exist**; the per-source `scrape_<source>.py`
+>   files below are the real implementation.
+> - The "Live pipeline" scrapers in this table poll feeds via **in-process APScheduler, which
+>   does not fire under `--min-instances 0`** (see corrected §11.2). The forward-looking live
+>   pipeline is superseded by the **§4.9 ingestion architecture**; treat these per-source
+>   scrapers as available source adapters to be wired behind the new `Source` interface, not as
+>   an independently-working live pipeline.
+> When this table and the filesystem disagree, **the filesystem wins** — update the table, don't
+> trust it blindly.
+
+| File | Purpose | Pipeline role | Notes |
+|---|---|---|---|
+| `backfill_agent.py` | Historical backfill via Google News + Wikipedia mode | Backfill only | 64KB. Has `--year`, `--limit`, `--dry-run`, `--year wiki`. Needs `--year-from`/`--year-to`/`--bypass-stage1` refactor. |
+| `scrape_cna.py` | CNA RSS scraper | Live pipeline | RSS-first |
+| `scrape_mothership.py` | Mothership RSS scraper | Live pipeline | RSS-first |
+| `scrape_straitstimes.py` | ST RSS scraper | Live pipeline | RSS-first |
+| `scrape_asiaone.py` | AsiaOne HTML scraper | Live pipeline | No public RSS — `/singapore` listing page |
+| `scrape_stomp.py` | Stomp HTML scraper | Live pipeline | |
+| `scrape_mustsharenews.py` | MustShareNews HTML scraper | Live pipeline | |
+| `scrape_theindependent.py` | The Independent SG HTML scraper | Live pipeline | |
+| `scrape_yahoo.py` | Yahoo News SG HTML scraper | Live pipeline | |
+| `scrape_zaobao.py` | Lianhe Zaobao HTML scraper | Live pipeline | `/news/singapore` — multilingual, keyword pre-filter in Chinese |
+| `scrape_beritaharian.py` | Berita Harian HTML scraper | Live pipeline | `/singapura` — Malay, keyword pre-filter |
+| `scrape_shinmin.py` | Shin Min Daily News HTML scraper | Live pipeline | Multilingual |
+| `scrape_tamilmurasu.py` | Tamil Murasu HTML scraper | Live pipeline | Multilingual |
+| `scrape_reddit.py` | Reddit JSON API scraper | Live pipeline | r/singapore + r/singaporeraw |
+| `scrape_edmw.py` | HWZ EDMW HTML scraper | Live pipeline + backfill signal (2015+) | Thread titles only. Signal, never source. |
+| `scrape_discovery.py` | Source discovery agent | Live pipeline (monthly) | Runs first Monday of month. Finds new source candidates. |
+| `wikipedia_discovery.py` | Wikipedia discovery agent | Backfill only | **NOT YET BUILT.** See §4.7. Bypasses Stage 1. |
+| `groq_budget.py` | Groq TPD token counter | Backfill utility | **NOT YET BUILT.** See §4.8. |
+
+**Confirmed absent (correctly):** `scrape_jom.py` — dropped in v1.4 (SSL issues + low Yishun relevance). `.pyc` in `__pycache__` is a harmless artifact from before removal.
+
+**Live pipeline scrapers are NOT used for historical backfill.** They poll current feeds and have no historical search capability. Google News (via `backfill_agent.py`) covers historical MSM content across all these sources. Do not attempt to use individual MSM scrapers for backfill.
 
 EDMW revised treatment (three tiers):
 - **EDMW only, no MSM corroboration** → publishable but flagged with 👎 "EDMW only — unverified" badge. Hype meter = 0. Lower priority in feed. Operator decides in War Room.
@@ -625,7 +713,7 @@ On incident detail page `/incidents/[slug]`:
 
 ### 4.6 Source Discovery Agent
 
-**File:** `packages/agents/scrapers/source_discovery.py`
+**File:** `packages/agents/scrapers/scrape_discovery.py`
 
 ```python
 # Runs: First Monday of every month via APScheduler
@@ -634,6 +722,147 @@ On incident detail page `/incidents/[slug]`:
 # Operator sees candidates in War Room under "New Sources" tab
 # Nothing is scraped until operator sets approved_by_operator = TRUE
 ```
+
+---
+
+### 4.7 Wikipedia Discovery Agent (v1.8 — new)
+
+**File:** `packages/agents/scrapers/wikipedia_discovery.py`
+
+**Role:** Primary discovery source for pre-2003 incidents. Secondary cross-reference for all eras. Runs BEFORE any Google News backfill batch. Results bypass Stage 1 (content is already editorially curated — no noise to reject).
+
+**NOT** a live pipeline agent. Backfill only. Run manually per session.
+
+```python
+# Entry point: https://en.wikipedia.org/wiki/Yishun
+# Strategy:
+#   1. Fetch Yishun article — extract all named incidents with dates
+#   2. Follow internal wikilinks to case-specific articles (depth: 2 hops max)
+#      Do NOT recurse beyond case articles into sub-links
+#   3. For each case article:
+#      - Extract: date, entity name, act/incident type, outcome
+#      - Extract all external citations (footnotes) → these become source_urls
+#      - Minimum 1 external citation required — skip if zero
+#   4. Package as structured incident candidate dict
+#   5. Pass directly to Stage 2 writer (BYPASS Stage 1)
+#   6. Results enter War Room queue tagged BACKFILL + WIKIPEDIA
+
+# CLI:
+# python -m scrapers.wikipedia_discovery --dry-run
+# python -m scrapers.wikipedia_discovery --limit 50
+# python -m scrapers.wikipedia_discovery (no args = full sweep)
+
+# Output format (same schema as backfill_agent.py candidates):
+# {
+#   "title": str,
+#   "source_urls": [str],          # from Wikipedia footnotes, min 1
+#   "incident_date": str,          # ISO date, best estimate from article
+#   "wikipedia_url": str,          # the case article URL, added as reference
+#   "source": "wikipedia",
+#   "bypass_stage1": True
+# }
+
+# Stage 2 prompt modifier for Wikipedia sourced items:
+# Add to prompt: "Source is a Wikipedia article. Extract verifiable incident
+# details only. Do NOT add facts not in the citations. If the external citations
+# are paywalled/dead, still use the citation URL as source_url — the article
+# reference is the verification record."
+```
+
+**Scope:** Finds landmark/named cases only. Volume expectation: 15–40 incidents across all eras. Does not surface minor/unnamed incidents — that is correct and expected.
+
+**EDMW note:** Wikipedia articles for Yishun incidents predate EDMW's relevance. Do not attempt EDMW cross-reference for Wikipedia-sourced incidents.
+
+---
+
+### 4.8 Groq Budget Middleware (v1.8 — new)
+
+**File:** `packages/agents/scrapers/groq_budget.py`
+
+Tracks cumulative Groq token usage within a single backfill session. Prevents mid-run failures from hitting the 500k TPD ceiling.
+
+```python
+# Usage: imported by backfill_agent.py, wraps every Stage 1 call
+
+SOFT_LIMIT = 450_000   # tokens — log warning, continue
+HARD_LIMIT = 500_000   # tokens — halt run, write summary, exit cleanly
+
+# Tracks: prompt_tokens + completion_tokens per call
+# Source: Groq API response.usage fields
+
+# On SOFT_LIMIT hit:
+#   - Log: "WARNING: Groq budget at 450k. Approaching daily limit."
+#   - Continue processing
+
+# On HARD_LIMIT hit:
+#   - Log: "HALT: Groq daily limit reached. Stopping run."
+#   - Write groq_session_usage.json with: tokens_used, items_processed,
+#     items_passed, items_rejected, timestamp, year_range
+#   - Exit cleanly (no partial writes, no corruption)
+
+# groq_session_usage.json written to: packages/agents/scrapers/groq_session_usage.json
+# Overwritten each run — check it after each batch to track daily consumption
+
+# Wikipedia runs: groq_budget is imported but bypass_stage1=True skips
+#   all Stage 1 calls, so zero tokens are consumed. Counter stays at 0.
+```
+
+---
+
+### 4.9 Forward-Looking Ingestion Architecture (v1.9 — Option B)
+
+> **Full engineering design:** `docs/INGESTION_DESIGN.md`. This section is the spec-level
+> summary and the authoritative pointer. The design doc is the detailed contract; if the two
+> disagree, reconcile deliberately and bump both.
+
+**Purpose.** The forward-looking ingestion layer autonomously discovers *new* Yishun incidents
+on an ongoing basis and queues them for operator review. It is distinct from historical backfill
+(`backfill_agent.py`, now complete) and from the per-source live scrapers in §4.0b (which, as
+built, never had a working trigger — see §11.2).
+
+**Package:** `packages/agents/ingestion/` (new). Layout in `INGESTION_DESIGN.md` §10.
+
+**The single entrypoint (drift-resistant seam):**
+```python
+run_ingestion_pass(sources: list[Source], now: datetime, *, dry_run=False) -> IngestionReport
+```
+Any trigger — Cloud Scheduler (recommended, see §11.2), a CLI command, a manual re-run, or a
+test harness — calls this identically. It owns no knowledge of how it was triggered. It is a
+pure function of `(sources, now)` + external state, **never raises to its caller**, and writes
+nothing when `dry_run=True`.
+
+**Flow per source (see INGESTION_DESIGN.md §2, §4):**
+1. read watermark from `pipeline_state` (§3.7)
+2. `source.fetch(since=watermark)` → `list[Candidate]`
+3. **RecencyFilter** — keep only items strictly newer than watermark (the source's date hints
+   are advisory; the orchestrator re-filters regardless, because Google News RSS was proven to
+   ignore date operators and return a relevance-ranked multi-year grab-bag)
+4. **Deduplicator** — reuse existing `check_duplicate(url)` (corroboration.py) against
+   `war_room_queue` + `incidents` by canonical URL
+5. **Stage 1 (Groq, budget-guarded via §4.8) → Stage 2 (Claude)** → proposed_* fields
+6. write `war_room_queue` rows (`status='pending'`) — terminates at the existing §3.5 contract
+7. advance watermark **only on success**, to max `published_at` ingested
+
+**Source interface (pluggability).** Every source implements a common `Source` protocol
+(`name`, `enabled`, `fetch(since)`); the first concrete adapter is `GoogleNewsRSSSource`
+(smoke-test-proven: **no `after:`/`before:` date operators** — they break the RSS feed — one
+`yishun {keyword}` query per keyword, parse `published_parsed`, resolve redirects, raise
+`SourceBlockedError` on 429/403/CAPTCHA markers). Future adapters (SerpAPI, Bing, wiring the
+existing MSM scrapers behind this interface) drop in with zero orchestrator changes.
+
+**FallbackLadder (no silent failure).** Transient error → one backoff → retry once → skip;
+bot-trap (`SourceBlockedError`) → skip immediately, **never retry into a ban**. Any skip marks
+the whole pass **DEGRADED**: healthy sources still queue their items, but a `DegradedRunReport`
+is surfaced to War Room and the blocked source's watermark is left unchanged so the next run
+re-attempts the same window. A zero-queue pass is only "healthy-quiet" if every source was
+NORMAL; a zero-queue pass caused by a block is DEGRADED and says so. (INGESTION_DESIGN.md §6–7.)
+
+**Corroboration & budget.** Honours §4.4 (min 1 MSM/Reddit source to auto-publish) and §4.8
+(Groq budget middleware wraps every Stage 1 call). No new corroboration logic.
+
+**Explicitly deferred (anti-scope-creep, INGESTION_DESIGN.md §9):** the trigger infrastructure
+itself (§11.2 — separate task), fuzzy/semantic dedup (URL-exact only in v1), additional source
+adapters, auto-disabling unhealthy sources, and the `people_profiles` entity system.
 
 ---
 
@@ -724,34 +953,93 @@ Shows all sources with `approved_by_operator = FALSE`. Operator can approve (add
 **Framework:** Next.js 14 App Router
 **Styling:** Tailwind CSS + custom pixel art theme
 
+### 6.0 Layout — One Page, No Scroll (v1.7)
 
-### 6.0 Responsive Design Requirements
+**Rule:** The entire site fits in one viewport. No page-level scrolling. Ever.
 
-**Approach:** Mobile-first. Build for 320px, enhance for 768px, enhance for 1024px+.
-
-**Breakpoints:**
-```css
-/* Mobile first — default styles target 320px+ */
-/* Tablet */
-@media (min-width: 768px) { }
-/* Desktop */  
-@media (min-width: 1024px) { }
+```
+Header (72px fixed top — logo + nav)
+┌─────────────────────────────────────┬──────────────────┐
+│  MAP AREA (45vh)                    │  CHAOS SIDEBAR   │
+│                                     │  (fixed 280px)   │
+├─────────────────────────────────────┤                  │
+│  FILTER CHIPS (48px)                │  Always visible  │
+├─────────────────────────────────────┤  Never collapses │
+│  INCIDENT FEED (flex-1, min-h-0)    │                  │
+│  Scrolls internally                 │                  │
+│  Page does NOT scroll               │                  │
+└─────────────────────────────────────┴──────────────────┘
 ```
 
-**Layout behaviour per breakpoint:**
+```css
+html, body { height: 100%; overflow: hidden; }
+```
 
-| Component | Mobile (320px+) | Tablet (768px+) | Desktop (1024px+) |
-|---|---|---|---|
-| Map hero | Full width, 45vh. Shows sliver of feed below fold | Full width, 55vh | Full width, 60vh |
-| Nav | Hamburger menu, collapsed | Hamburger or full | Full horizontal nav |
-| Content grid | Single column — map → feed → chaos panel stacked | Two column | Two column (wider feed) |
-| Popup | Full-width bottom sheet style | Standard popup | Standard popup |
-| Filter chips | Horizontal scroll | Wrap | Wrap |
-| Chaos panel | Below feed | Right sidebar | Right sidebar |
+The incident feed uses `flex-1 min-h-0 overflow-y-auto` — fills remaining height, scrolls internally.
 
-**Touch targets:** All interactive elements minimum 48×48px on mobile. Applies to: nav items, filter chips, map markers, incident rows, share icon.
+### 6.0b Typography Scale (v1.7 — locked)
 
-**Map on mobile:** 45vh height ensures pins are visible AND a sliver of the incident feed is visible below the fold — signals scrollable content without instruction.
+**Two typefaces only:**
+- `Press Start 2P` — logo, section headers, badges, button labels, scores
+- `Courier Prime` — all body text, stats, dates, descriptions, summaries
+
+**Size scale:**
+| Element | Font | Size |
+|---|---|---|
+| Logo (YISHUN / AGAIN) | Press Start 2P | 26px |
+| Nav links | Press Start 2P | 14px |
+| Section headers | Press Start 2P | 11px |
+| Chaos score number | Press Start 2P | 48px |
+| "/100" | Press Start 2P | 20px |
+| Descriptor (QUIET etc) | Press Start 2P | 13px |
+| Stat counts | Press Start 2P | 20px |
+| Filter chip labels | Press Start 2P | 10px |
+| Badges | Press Start 2P | 9px |
+| Incident titles | Courier Prime bold | 16px |
+| Body text / summaries | Courier Prime | 16px |
+| Metadata (date, area) | Courier Prime | 13px |
+| Legal disclaimer | Courier Prime | 10px (exception) |
+
+**Rule:** No font size below 10px except legal disclaimer.
+
+### 6.0c Colour Palette (v1.7 — locked)
+
+```css
+:root {
+  --color-bg:        #183828;   /* deep teal — page background */
+  --color-surface:   #0f2018;   /* darker — cards, dropdowns */
+  --color-border:    #305830;   /* forest green — all borders */
+  --color-amber:     #C07830;   /* primary accent — logo, scores, links */
+  --color-sienna:    #803018;   /* active states */
+  --color-dim:       #805828;   /* dimmed amber — /100, metadata */
+  --color-heart:     #E87070;   /* GOOD VIBES count */
+  --color-clown:     #E8C070;   /* ABSURDITIES count */
+  --color-dagger:    #E87070;   /* DARK EVENTS count */
+  --font-display:    'Press Start 2P', monospace;
+  --font-body:       'Courier Prime', 'Courier New', monospace;
+}
+```
+
+### 6.0d Classification Display Names (v1.7 — locked)
+
+| DB value | Display label | Emoji |
+|---|---|---|
+| `heart` | GOOD VIBES | ❤️ |
+| `clown` | ABSURDITIES | 🤡 |
+| `dagger` | DARK EVENTS | 💀 |
+
+**Rule:** Never show raw DB values (`heart`, `clown`, `dagger`) in any UI.
+
+### 6.0e Tooltips (v1.7)
+
+All classification icons, severity diamonds, and hype meter icons must have hover tooltips via `title` attribute:
+- ❤️ → "Good Vibes — community wins and feel-good moments"
+- 🤡 → "Absurdities — baffling or inexplicably stupid behaviour"
+- 💀 → "Dark Events — crime, violence, serious incidents"
+- ⚡ → "Hype meter — number of mainstream media sources reporting this"
+- ◆ severity → "Severity N/5"
+
+Apply to: IncidentCard, incident detail page, Timeline, map popup.
 
 
 ### 6.1 Theme Tokens
@@ -976,20 +1264,24 @@ https://yishunagain.com/incidents/{slug}?utm_source=share&utm_medium=og
 
 ## 7. CHAOS INDEX COMPUTATION
 
+**Canonical name:** CHAOS INDEX (previously "Chaos Crystal", "Chaos Meter" — v1.7 final)
+
 **Compute on:** Every new incident published. Store snapshot in `chaos_index_snapshots`.
+**Filter by:** Selected year (not rolling window — window tabs removed in v1.7)
 
 ```python
-def compute_chaos_index(window_days: int = 30) -> float:
+def compute_chaos_index(year: int) -> float:
     """
     Weights:
-    - dagger: severity * 3.0
-    - clown: severity * 1.5
-    - heart:  severity * -1.0 (positive news reduces score)
+    - dagger (DARK EVENTS):  severity * 3.0
+    - clown  (ABSURDITIES):  severity * 1.5
+    - heart  (GOOD VIBES):   severity * -1.0 (positive news reduces score)
     
     Normalised to 0–100.
     Max theoretical score (all severity-5 daggers): 100
+    Filtered by EXTRACT(YEAR FROM incident_date) = year
     """
-    incidents = get_incidents_in_window(window_days)
+    incidents = get_incidents_for_year(year)
     
     raw_score = 0
     for inc in incidents:
@@ -1000,7 +1292,7 @@ def compute_chaos_index(window_days: int = 30) -> float:
         elif inc.classification == 'heart':
             raw_score -= inc.severity * 1.0
     
-    # Normalise: assume max 100 incidents at max weight in window
+    # Normalise: assume max 100 incidents at max weight in year
     normalised = min(100, max(0, (raw_score / 300) * 100))
     return round(normalised, 2)
 
@@ -1013,18 +1305,25 @@ def compute_hype_meter(source_urls: list, edmw_signal: bool) -> int:
     MSM_SOURCES = ["channelnewsasia", "straitstimes", "mothership", "stomp",
                    "mustsharenews", "theindependent", "zaobao", "shinmin",
                    "beritaharian", "tamilmurasu", "yahoo", "asiaone"]
-    # Note: Jom removed from source list (SSL issues + low Yishun incident relevance)
     msm_count = sum(1 for url in source_urls if any(s in url for s in MSM_SOURCES))
     return min(5, msm_count)
 
 DESCRIPTORS = {
-    (0, 20): "Quiet",
-    (20, 40): "Simmering",
-    (40, 60): "Elevated",
-    (60, 80): "Critical",
-    (80, 100): "Apocalyptic"
+    (0, 20):   "QUIET",
+    (20, 40):  "RESTLESS",
+    (40, 60):  "TENSE",
+    (60, 80):  "VOLATILE",
+    (80, 100): "CHAOS"
 }
 ```
+
+**Year rollover (automatic):**
+- Default year = current year (new Date().getFullYear())
+- On January 1 00:00 SGT: new year becomes default, previous year stats frozen
+- No data migration — stats always computed live from incidents table
+- chaos_index_snapshots table stores daily snapshots for historical reference
+
+**Removed in v1.7:** 30D / 90D / 1YR / ALL window tabs — score is always per-year
 
 ---
 
@@ -1642,6 +1941,31 @@ gcloud run deploy yishun-agents \
 # CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
 ```
 
+> 🔧 **v1.9 TRIGGER CORRECTION — the documented scheduling model does not work as built.**
+>
+> The deploy above uses `--min-instances 0`, which scales the container to **zero between HTTP
+> requests**. The live-pipeline scheduling described in §4.1/§4.6 relies on **in-process
+> APScheduler timers "embedded in FastAPI"** (§2 tech-stack table). These are mutually
+> incompatible: when the instance scales to zero, all in-process timers are killed. **Under this
+> deployment, no scheduled scrape can fire autonomously.** This was never reconciled in v1.4–1.8.
+>
+> **Required fix (separate deployment task — see `docs/INGESTION_DESIGN.md` §1):** replace
+> in-process scheduling with **Cloud Scheduler → authenticated HTTP push → a `/run/ingest`
+> endpoint** on this service. Cloud Scheduler (managed cron) issues a request on a schedule;
+> Cloud Run wakes, runs **one** `run_ingestion_pass()` (§4.9), writes to `war_room_queue`, and
+> scales back to zero. This is the standard serverless-cron pattern, costs negligibly, and
+> resolves the `min-instances 0` contradiction.
+>
+> The same pattern applies to the existing weekly `lifecycle.py` 180-day timeout sweep (§13b)
+> and the monthly source-discovery run (§4.6): all should be Cloud Scheduler → HTTP endpoints,
+> not in-process timers.
+>
+> **The §4.9 ingestion layer is deliberately trigger-agnostic** — `run_ingestion_pass()` can be
+> called by Cloud Scheduler, a CLI, or a test harness identically. This keeps the (rot-prone)
+> trigger infrastructure decoupled from the (verifiable) ingestion logic. Implementing the Cloud
+> Scheduler resources is a deployment task; it is **blocking for live autonomy** but not for the
+> ingestion code or for a manual/CLI launch.
+
 ### 11.3 Cloudflare Setup
 
 **Status: CONFIGURED ✅**
@@ -1718,99 +2042,318 @@ These are not features. They are non-negotiable constraints baked into the pipel
 
 ---
 
-## 14. BUILD ORDER (Phase 1)
+## 13b. DEVELOPING STORY LIFECYCLE (v1.6)
 
-Execute in this sequence. Do not skip ahead.
+### States
+```
+STATIC → DEVELOPING → CONCLUDED
+```
+
+- **STATIC:** Single source, update_count = 0. Never gets DEVELOPING badge.
+- **DEVELOPING:** update_count >= 1 AND latest_source_role NOT IN ('verdict', 'timeout'). Floats to top of public feed. Shows DEVELOPING badge (amber, Press Start 2P 9px).
+- **CONCLUDED:** latest_source_role = 'verdict' OR 'timeout'. Shows normally in feed. Source timeline still visible on detail page.
+
+### Source Role Values
+| Role | Meaning | Triggers |
+|---|---|---|
+| `initial` | First report of incident | Always on first insert |
+| `update` | New development, case ongoing | Agent detects continuation |
+| `verdict` | Court outcome or confirmed resolution | Triggers CONCLUDED state |
+| `correction` | Earlier report was wrong | Replaces earlier entry |
+| `follow_up` | Tangential development, same entity | Related but not core |
+| `timeout` | Auto-concluded after 180 days no updates | Weekly cron |
+
+### Role Assignment
+- Agent proposes role with confidence score
+- War Room shows role dropdown on every update review
+- Operator confirms or corrects
+- Corrections logged to training_signals (agent_role_proposed, operator_role_confirmed)
+
+### 180-Day Timeout
+- Weekly cron (Monday 00:00 SGT) — `packages/agents/classifiers/lifecycle.py`
+- Auto-concludes developing stories with no updates in 180 days
+- Sets: is_developing=FALSE, latest_source_role='timeout', conclusion_type='timeout'
+- Creates War Room AUTO-CONCLUDED notification for operator review
+- Operator can CONFIRM CLOSE or REOPEN
+
+### Chaos Index
+- Counts incident once regardless of update count
+- Map: pin reappears in month of latest update when is_developing=TRUE
+
+---
+
+## 13c. PATTERN DETECTION (v1.6)
+
+**File:** `packages/agents/classifiers/pattern_detection.py`
+
+Runs after every incident publish + daily batch at 06:00 SGT.
+
+Three pattern types:
+- **Entity:** Same named entity, 3+ separate incidents, 365-day window
+- **Crime type:** Same classification + severity, 3+ incidents, 90-day window, same area
+- **Location:** 5+ incidents, same area_name, 90-day window
+
+Deduplication: skips if same pattern_value alerted in last 30 days.
+
+War Room: PATTERN ALERT (orange badge). Actions: [LINK INCIDENTS] [NOTE FOR PROFILE] [DISMISS]
+
+---
+
+## 13d. AUTONOMY GRADUATION SYSTEM (v1.6)
+
+**File:** `packages/agents/classifiers/autonomy_tracker.py`
+
+Eight tracked signal categories with graduation thresholds:
+
+| Category | Min Samples | Max Error Rate | Unlocks |
+|---|---|---|---|
+| entity_dedup | 20 | 5% | Auto-dismiss same-entity-different-act links |
+| location_dedup | 20 | 5% | Auto-dismiss coincidental location links |
+| temporal_dedup | 15 | 8% | Auto-dismiss timeframe-only links |
+| entity_extraction | 25 | 3% | Trust agent entity matching |
+| confidence_threshold | 30 | 10% | Auto-approve high-confidence links |
+| role_assignment | 20 | 5% | Auto-assign source roles |
+| classification | 50 | 8% | Auto-classify without confirmation |
+| severity | 50 | 10% | Auto-assign severity |
+
+**Dismiss reason taxonomy (6 categories):**
+- SAME_ENTITY_DIFFERENT_ACT → autonomy_signal: entity_dedup
+- LOCATION_COINCIDENCE → autonomy_signal: location_dedup
+- TEMPORAL_COINCIDENCE → autonomy_signal: temporal_dedup
+- WRONG_ENTITY_MATCH → autonomy_signal: entity_extraction
+- INSUFFICIENT_EVIDENCE → autonomy_signal: confidence_threshold
+- OTHER → autonomy_signal: other
+
+War Room analytics page shows graduation status per category. Operator dismiss includes mandatory category selection + optional free text (max 200 chars).
+
+**Recalibration:** After 20 corrections of same type → writes calibration_log.json → Stage 2 Sonnet prompt injects top 3 known mistakes as negative examples.
+
+---
+
+## 14. BUILD ORDER (Phase 1)
 
 ```
 Step 1:  ✅ Supabase schema — all tables, indexes, RLS policies
-Step 2:  ✅ Cloudflare R2 bucket + domain (assets.yishunagain.com — live)
-Step 3:  ✅ FastAPI skeleton on Google Cloud Run — health check endpoint only
-Step 4:  ✅ Stage 1 filter (Groq llama-3.1-8b-instant) — 3/3 test cases passed
-Step 5:  ✅ Stage 2 writer (Claude Haiku classify + Sonnet draft) — confirmed working
-Step 6:  ✅ All scrapers built and tested (CNA, ST, Mothership, Stomp, MustShareNews,
-             TheIndependent, Yahoo, AsiaOne, Stomp, Zaobao, Shin Min, Berita Harian,
-             Tamil Murasu, Reddit, EDMW, source discovery agent)
+Step 2:  ✅ Cloudflare R2 + domain (assets.yishunagain.com live)
+Step 3:  ✅ FastAPI on Cloud Run — health check live
+Step 4:  ✅ Stage 1 filter (Groq llama-3.1-8b-instant)
+Step 5:  ✅ Stage 2 writer (Claude Haiku + Sonnet)
+Step 6:  ✅ All 14 scrapers built and tested
 Step 7:  ✅ War Room CMS — 4 pages + /health tab
-Step 8:  ✅ Pipeline dry run — 45 items scraped, 32 passed Stage 1
-Step 8a: ✅ Scraper health Phase A — scraper_health table + War Room /health tab
-Step 8b: ✅ Schema additions — deaths, injuries, is_milestone, milestone columns
-Step 8c: ✅ Milestone Herald Agent — streak detection + chaos record + deduplication
-Step 9:  ✅ LangGraph orchestrator — 6-node graph, confirmed working
-Step 10: ✅ Next.js public frontend — map (MapLibre + OpenFreeMap ✅), Chaos Panel,
-             incident feed, incident detail page, timeline, about page
-Step 11: ✅ Frontend wired to Supabase — test incident, pin on map confirmed
-Step 12: ✅ Share card + UTM logging — utm_events table populating correctly
-Step 13: ✅ Art pipeline — LoRA trained (yishunagain_v1.safetensors, 456.5MB),
-             uploaded to R2, generation confirmed working (~12s on A10G)
-Step 14: ✅ SEO — sitemap.ts, robots.ts, JSON-LD NewsArticle schema confirmed
-Step 15: ✅ Cloudflare Access middleware — War Room protected, /api/health exempt
-Step 16: ⏳ Historical backfill + hero incidents — see spec below
+Step 8:  ✅ Pipeline dry run confirmed
+Step 8a: ✅ Scraper health Phase A
+Step 8b: ✅ Schema additions (deaths, injuries, milestones)
+Step 8c: ✅ Milestone Herald Agent
+Step 9:  ✅ LangGraph orchestrator — 6-node graph
+Step 10: ✅ Next.js frontend — map, Chaos Panel, feed, detail pages
+Step 11: ✅ Frontend wired to Supabase — live data confirmed
+Step 12: ✅ Share card + UTM logging
+Step 13: ✅ Art pipeline — LoRA trained + deployed, generation ~12s
+Step 14: ✅ SEO — sitemap, robots.txt, JSON-LD
+Step 15: ✅ Cloudflare Access — War Room protected
+Step 16: ⏳ Historical backfill + hero incidents
+         ✅ Hero incidents SQL written (migration 005) — 8 incidents
+         ⚠️  Hero incidents NOT in DB — database was wiped clean. Re-insert before backfill.
+         ✅ Backfill agent built (backfill_agent.py) — intra-batch dedup, geocoding, link validator
+         ✅ Intra-batch dedup — dry-run tested, confirmed working
+         ⏳ wikipedia_discovery.py — NOT BUILT (see §4.7)
+         ⏳ groq_budget.py — NOT BUILT (see §4.8)
+         ⏳ backfill_agent.py refactor — --year-from/--year-to/--bypass-stage1 not yet added
+         ⏳ Wikipedia sweep (Step 16 Run 1)
+         ⏳ Google News 2003–2012 (Step 16 Run 2)
+         ⏳ Google News 2013–2022 (Step 16 Run 3)
+         ⏳ Google News 2023–2025 (Step 16 Run 4)
+         ⏳ War Room review of queued backfill items
 Step 17: ⏳ Launch ignition sequence
+
+v1.6 refactor: ✅ Lifecycle agent, pattern detection, autonomy tracker,
+               dismiss taxonomy, recalibration system
+v1.7 refactor: ✅ UI overhaul, death counter removed, classification
+               display renames, Chaos Index canonical name
+v1.8 refactor: ⏳ Backfill scope expansion, Wikipedia discovery agent,
+               Groq budget middleware, backfill_agent.py year-range refactor
+```
+
+## 14d. TECH DEBT LOG (v1.8)
+
+| Item | Severity | Status | Notes |
+|---|---|---|---|
+| Pin geocoding precision | Medium | Backlogged | Block 349 + Block 323 overlap on map — OneMap returns street centroid not block |
+| `revalidate = 0` on homepage | Medium | ✅ Fixed (commit c709b32) | Changed to 60 in apps/web/app/page.tsx |
+| `items_passed_s1` always 0 in scraper_health | Low | Backlogged | Stage 1 counts not passed back per-source |
+| `avr_loss=nan` in LoRA training | Low | Monitor | Logging quirk, generation works |
+| Wikipedia scraper untested live | Medium | ⏳ Pending | `--year wiki` mode exists in backfill_agent.py but quota killed dry run before it ran. Test before first Wikipedia sweep. |
+| Backfill intra-batch dedup untested live | Medium | ⏳ Pending | Dry-run confirmed working. Needs live test WITH hero incidents in DB. |
+| REVALIDATE_SECRET not in Vercel | Medium | ✅ Fixed | Added to Vercel env vars |
+| Map tiles style clashes with dark palette | Medium | Tomorrow | Replacing map entirely |
+| Groq free tier (500k TPD) | Medium | Managed | groq_budget.py (to be built) enforces 450k soft / 500k hard ceiling |
+| Hero incidents not in DB | High | ⚠️ Blocking backfill | DB wiped clean. Re-insert migration 005 before any backfill run. |
+| backfill_agent.py single-year only | High | ⚠️ Blocks year-range runs | --year YYYY needs refactor to --year-from/--year-to |
+| wikipedia_discovery.py not built | High | ⚠️ Blocks Wikipedia sweep | Build §4.7 or verify --year wiki mode in backfill_agent.py is functional |
+| groq_budget.py not built | High | ⚠️ Blocks Google News runs | Build §4.8 before any Google News batch |
+| scrape_jom.cpython-311.pyc in pycache | Low | Cosmetic | Artifact from before Jom scraper was dropped. Harmless. |
+| HWZ historical date filter untested | Low | Backlogged | Uncertain if HWZ search supports date range filtering. Test during 2015 batch. Do not block other runs waiting for this. |
+| Art direction unresolved | Medium | Paused | CivitAI model selection pending. Does not block backfill. |
+| warroom.yishunagain.com DNS | Medium | ⏳ Pending | War Room subdomain DNS not yet configured. |
+
+---
+
+## 14c. Step 16 — Historical Backfill Specification (v1.8)
+
+### Scope
+
+**Full backfill target:** 1980–2025. Yishun Town was established ~1983. Pre-1983 incidents are astronomically rare and handled only if Wikipedia surfaces them.
+
+**Source strategy by era:**
+
+| Era | Primary source | Secondary | EDMW signal |
+|---|---|---|---|
+| 1980–2002 | Wikipedia discovery agent only | Wikipedia citations → ST/CNA/BBC as `source_urls` | No |
+| 2003–2014 | Google News via `backfill_agent.py` | Wikipedia cross-ref via consolidation agent | No |
+| 2015–2025 | Google News via `backfill_agent.py` | Wikipedia cross-ref | Yes — if HWZ thread found, link it |
+| 2026–today | Live pipeline (existing) | Reddit scouring (live) | Yes |
+
+**Reddit is NOT used for historical backfill.** Pushshift is dead. Reddit's native API is lossy for pre-2015 content. Reddit remains in the live pipeline only.
+
+**NLB NewspaperSG is NOT used.** No public API. Post-1989 content requires on-site library terminal access. Not automatable. Drop it.
+
+---
+
+### Pre-Backfill Checklist — MUST complete before any run
+
+```
+☐ 1. Re-insert hero incidents — run migration 005 SQL
+      DB was wiped clean. Hero incidents MUST be in `incidents` table before
+      any backfill run. The consolidation agent checks incoming articles against
+      existing published incidents. Without hero incidents, the consolidation
+      agent has nothing to match against — you will get duplicate cards for
+      Kurt Tay, the cat killings, and the 1992 murders.
+
+☐ 2. Inspect backfill_agent.py Wikipedia mode
+      Run: python -m scrapers.backfill_agent --year wiki --dry-run --limit 5
+      Confirm Wikipedia mode fetches real content and outputs structured candidates.
+      If mode is a stub or broken → build wikipedia_discovery.py (§4.7) instead.
+
+☐ 3. Verify intra-batch dedup with hero incidents in DB
+      Run: python -m scrapers.backfill_agent --dry-run --limit 50 --year-from 2015 --year-to 2015
+      The Nov 2015 Yishun flat murder should appear as ONE consolidated card,
+      not 4 separate cards. Dedup was built and dry-run tested but never ran
+      with hero incidents present in the DB.
+
+☐ 4. Confirm groq_budget.py is built and wired into backfill_agent.py
+      Every Google News run must have the token ceiling enforced.
 ```
 
 ---
 
-## 14c. Step 16 — Historical Backfill Specification
+### Run Order
 
-### Scope
+```
+Step 0:  Pre-backfill checklist above — all 4 items green before proceeding
+Step 1:  Wikipedia sweep (zero Groq cost, all eras, bypass Stage 1)
+Step 2:  Google News 2003–2012 (sparse era, one run)
+Step 3:  Google News 2013–2022 (higher volume, monitor token counter)
+Step 4:  Google News 2023–2025 (overlaps old hardcoded range — dedup critical)
+```
 
-**Automated backfill:** Google News scraper, 2019–2024, Yishun keywords. Target: 50–200 incidents to seed the map before launch.
+---
 
-**Hero incidents:** 8 pre-written incidents inserted as SQL. These bypass the pipeline entirely and are inserted as fully approved, published incidents.
-
-### Backfill Agent
+### Backfill Agent — CLI Reference (v1.8)
 
 **File:** `packages/agents/scrapers/backfill_agent.py`
 
+```bash
+# Wikipedia sweep (bypasses Stage 1, zero Groq cost)
+python -m scrapers.backfill_agent --year wiki --limit 100
+
+# Google News — year range
+python -m scrapers.backfill_agent --year-from 2003 --year-to 2012 --limit 500
+python -m scrapers.backfill_agent --year-from 2013 --year-to 2022 --limit 500
+python -m scrapers.backfill_agent --year-from 2023 --year-to 2025 --limit 500
+
+# Dry run (no writes to DB, prints summary only)
+python -m scrapers.backfill_agent --year-from 2015 --year-to 2015 --dry-run --limit 50
+
+# Flags
+# --year wiki         → Wikipedia mode. Bypasses Stage 1. Uses internal Wikipedia
+#                       crawl logic (or wikipedia_discovery.py if standalone).
+# --year-from YYYY    → Start year for Google News range (replaces --year single)
+# --year-to YYYY      → End year for Google News range
+# --limit N           → Max articles to process per run (default 500)
+# --bypass-stage1     → Skip Stage 1 entirely, send direct to Stage 2
+#                       (used automatically when --year wiki)
+# --dry-run           → No DB writes. Print pipeline output only.
+```
+
+**Refactor required (v1.8):**
+- Replace `--year YYYY` (single year) with `--year-from` / `--year-to` (range)
+- Add `--bypass-stage1` flag
+- Wire in `groq_budget.py` — all Stage 1 calls must go through budget wrapper
+- Keep `--year wiki` and `--dry-run` unchanged
+
+---
+
+### Groq TPD Ceiling
+
+```
+Daily limit:       500,000 tokens (Groq free tier)
+Soft stop:         450,000 tokens — log warning, continue
+Hard stop:         500,000 tokens — halt cleanly, write groq_session_usage.json
+Avg cost/article:  ~700 tokens (Stage 1 prompt + completion)
+Max articles/day:  ~640 (at hard stop)
+After 60% rejection: ~256 incidents reach Stage 2 per day
+
+Wikipedia runs consume ZERO Groq tokens (Stage 1 bypassed).
+Stage 2 (Claude Haiku/Sonnet) runs on Anthropic API — separate budget, not Groq.
+```
+
+---
+
+### Google News Search URL
+
 ```python
-# Google News search approach:
-# Base URL: https://news.google.com/search?q=yishun+{keyword}&hl=en-SG&gl=SG&ceid=SG:en&tbm=nws&tbs=cdr:1,cd_min:{year}-01-01,cd_max:{year}-12-31
-# Loop: year 2019 → 2024, keyword per YISHUN_KEYWORDS list
-# De-duplicate by URL before sending to Stage 1
-# Rate limit: 1 request/second to avoid blocks
+# Base URL (unchanged from v1.7):
+BASE_URL = (
+    "https://news.google.com/search"
+    "?q=yishun+{keyword}"
+    "&hl=en-SG&gl=SG&ceid=SG:en"
+    "&tbm=nws"
+    "&tbs=cdr:1,cd_min:{year_from}-01-01,cd_max:{year_to}-12-31"
+)
 
-# Consolidation runs BEFORE War Room queue:
-# 1. Check if incoming article entity + act matches any EXISTING published incident
-# 2. If match found → create 'update' queue item pointing to existing incident
-# 3. If no match → standard pipeline (Stage 1 → Stage 2 → queue)
-# 4. Flag possible related incidents using incident_links table
-
-# Max items per backfill run: 500 (operator can re-run for more)
+# Loop: year range × YISHUN_KEYWORDS
+# Dedup by URL before Stage 1
+# Rate limit: 1 request/second
+# Max per run: --limit (default 500)
 ```
 
-### Hero Incidents — SQL Inserts
+---
 
-These are inserted directly to the `incidents` table with `is_published = TRUE`. No War Room review needed — operator pre-approves by running the SQL.
+### EDMW in Backfill (2015 onward)
 
-All 8 hero incidents follow the consolidation model:
-- Multi-report incidents (cat killings, Kurt Tay cases) use `source_timeline` JSONB
-- `is_developing = FALSE` for historical incidents (closed cases)
-- `first_reported_at` set to earliest known source date
+EDMW scraper (`scrape_edmw.py`) is a live pipeline agent with no reliable historical archive. During Google News backfill runs for 2015+, if the scraper finds an HWZ thread matching a candidate incident by keyword + approximate date, add the thread URL as an `edmw_signal` reference (never as `source_url`). This is best-effort — HWZ's search index depth is unknown and untested for historical content.
 
-**Hero incident #6 (Kurt Tay) — special consolidation treatment:**
+HWZ is lowest priority in backfill. Do not block any run waiting for EDMW signal resolution.
 
-This incident has multiple chapters spanning 2022–2026:
-- Kurt Tay void deck fight (Jul 2022) → 🤡 Clown, separate card (different act)
-- Kurt Tay intimate video case (Nov 2023 → Jan 2024 → Apr 2026) → 🗡️ Dagger, **one consolidated card**
-- Telegram group member (separate person) → 🗡️ Dagger, separate card, **linked** to Kurt Tay intimate video card
+---
 
-### War Room Additions for Step 16
+### Auto-Approve Tiers (unchanged from built version)
 
-New queue item type: `'backfill_batch'`
+| Confidence | Action |
+|---|---|
+| ≥ 0.70 | Auto-publish (no War Room review) |
+| 0.50–0.69 | Queue for War Room review |
+| < 0.50 | Silent reject (logged but not queued) |
 
-War Room shows a summary card:
-```
-BACKFILL COMPLETE — [date]
-Scraped: N articles | Passed Stage 1: N | Queued for review: N
-Updates to existing incidents: N
-Possible related incidents flagged: N
-```
+BACKFILL tag applied to all backfill queue items. Bulk approve available for ≥0.85.
 
-Operator reviews backfill queue same as regular queue, with additional:
-- **BACKFILL** tag on each item
-- Bulk approve option for high-confidence (≥0.85) items
-- Bulk reject option for low-confidence (<0.5) items
+---
+
+### Hero Incidents — SQL (migration 005)
+
+These 8 incidents bypass the pipeline entirely. `is_published = TRUE`. Run migration 005 before any backfill. See §14b for full incident list.
+
+**Critical:** Hero incidents must be in the DB before any Google News run so the consolidation agent can correctly merge incoming articles into existing cards rather than creating duplicates.
 
 ---
 

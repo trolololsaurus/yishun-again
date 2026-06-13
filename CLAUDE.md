@@ -8,7 +8,7 @@ Yishun Again is a satirical, semi-autonomous incident archive for Yishun, Singap
 
 **Core constraint:** Every published incident must link to a verifiable source. No private individuals unless named in MSM or Reddit. No political content. Ever.
 
-Full spec: `YishunAgain_TechSpec_v1.4.md`
+Full spec: `docs/YishunAgain_TechSpec_v1_9.md`
 
 ---
 
@@ -141,7 +141,7 @@ Supabase, `public` schema. RLS enabled on all tables — public reads only, all 
 
 Key tables: `incidents`, `sources`, `war_room_queue`, `utm_events`, `training_signals`, `chaos_index_snapshots`
 
-Full schema with exact SQL: `YishunAgain_TechSpec_v1.4.md` §3.
+Full schema with exact SQL: `docs/YishunAgain_TechSpec_v1_9.md` §3.
 
 **Sources seed data** (18 sources) is in the spec — run as part of Step 1 migration.
 
