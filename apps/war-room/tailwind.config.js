@@ -19,6 +19,8 @@ module.exports = {
         clown:   '#F1C40F',
         dagger:  '#8E44AD',
         green:   '#27AE60',
+        // CULTURE — custom_label='CULTURE' (pop-culture / media mentions)
+        culture: '#818CF8',
       },
       fontFamily: {
         display: ['"Press Start 2P"', 'monospace'],

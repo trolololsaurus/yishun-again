@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { CLASS_ICON, severityDiamonds, hypeMeter, CLASS_COLOR } from '@/lib/utils'
+import { classIcon, classLabel, classColor, severityDiamonds, hypeMeter } from '@/lib/utils'
 import type { Incident } from '@/lib/types'
 
 interface PageData { data: Incident[]; count: number; page: number; limit: number }
@@ -60,8 +60,8 @@ export default function IncidentsPage() {
         <tbody>
           {incidents.map(inc => (
             <tr key={inc.id} className="border-b border-border hover:bg-surface/50">
-              <td className={`py-2 pr-4 ${CLASS_COLOR[inc.classification]}`}>
-                {CLASS_ICON[inc.classification]} {inc.classification.toUpperCase()}
+              <td className={`py-2 pr-4 ${classColor(inc.classification, inc.custom_label)}`}>
+                {classIcon(inc.classification, inc.custom_label)} {classLabel(inc.classification, inc.custom_label)}
               </td>
               <td className="py-2 pr-4 text-text-primary max-w-xs truncate">
                 {inc.title}

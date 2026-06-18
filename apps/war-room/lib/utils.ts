@@ -21,6 +21,24 @@ export const CLASS_LABEL: Record<string, string> = {
   custom: 'CUSTOM',
 }
 
+// classification + custom_label aware variants — special-case
+// classification='custom' + custom_label='CULTURE' ("Yishun on the Map"),
+// otherwise fall back to the generic maps above.
+export function classIcon(cls: string, customLabel?: string | null): string {
+  if (cls === 'custom' && customLabel === 'CULTURE') return '🌐'
+  return CLASS_ICON[cls] ?? ''
+}
+
+export function classLabel(cls: string, customLabel?: string | null): string {
+  if (cls === 'custom' && customLabel === 'CULTURE') return 'YISHUN ON THE MAP'
+  return CLASS_LABEL[cls] ?? cls.toUpperCase()
+}
+
+export function classColor(cls: string, customLabel?: string | null): string {
+  if (cls === 'custom' && customLabel === 'CULTURE') return 'text-culture'
+  return CLASS_COLOR[cls] ?? ''
+}
+
 export function confidenceColor(conf: number | null): string {
   if (conf === null) return 'bg-border text-text-secondary'
   if (conf >= 0.85)  return 'bg-green text-bg'

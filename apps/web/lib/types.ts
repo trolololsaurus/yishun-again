@@ -20,6 +20,7 @@ export interface RelatedIncident {
   slug:           string
   title:          string
   classification: Classification
+  custom_label:   string | null
   incident_date:  string
   link_type:      'related' | 'follow_up' | 'same_location'
 }
@@ -31,6 +32,7 @@ export interface Incident {
   title:               string
   summary:             string
   classification:      Classification
+  custom_label:        string | null
   severity:            number
   block_number:        string | null
   area_name:           string | null
@@ -64,7 +66,7 @@ export interface Incident {
 // Lightweight type for the incident feed list rows
 export type IncidentRow = Pick<
   Incident,
-  'id' | 'slug' | 'title' | 'classification' | 'severity' | 'hype_meter'
+  'id' | 'slug' | 'title' | 'classification' | 'custom_label' | 'severity' | 'hype_meter'
   | 'published_at' | 'area_name' | 'is_milestone' | 'milestone_type'
   | 'is_developing' | 'update_count' | 'first_reported_at'
 >
@@ -78,6 +80,7 @@ export interface MapFeature {
     slug:           string
     title:          string
     classification: Classification
+    custom_label:   string | null
     severity:       number
     hype_meter:     number
   }
