@@ -18,10 +18,10 @@ const securityHeaders = [
         : "script-src 'self' 'unsafe-eval'",                            // MapLibre WebGL
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",  // MapLibre + Google Fonts
       "font-src 'self' https://fonts.gstatic.com",
-      "img-src 'self' data: blob: https://tiles.openfreemap.org https://tiles.stadiamaps.com https://*.stadiamaps.com https://assets.yishunagain.com",
+      "img-src 'self' data: blob: https://tiles.openfreemap.org https://tiles.stadiamaps.com https://*.stadiamaps.com https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com https://assets.yishunagain.com",
       isDev
-        ? "connect-src 'self' https://*.supabase.co https://tiles.openfreemap.org https://tiles.stadiamaps.com https://*.stadiamaps.com https://assets.yishunagain.com ws://localhost:3000 wss://localhost:3000"
-        : "connect-src 'self' https://*.supabase.co https://tiles.openfreemap.org https://tiles.stadiamaps.com https://*.stadiamaps.com https://assets.yishunagain.com",
+        ? "connect-src 'self' https://*.supabase.co https://tiles.openfreemap.org https://tiles.stadiamaps.com https://*.stadiamaps.com https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com https://assets.yishunagain.com ws://localhost:3000 wss://localhost:3000"
+        : "connect-src 'self' https://*.supabase.co https://tiles.openfreemap.org https://tiles.stadiamaps.com https://*.stadiamaps.com https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com https://assets.yishunagain.com",
       "worker-src blob:",
       "media-src 'self' https://videodelivery.net",
       "frame-ancestors 'none'",

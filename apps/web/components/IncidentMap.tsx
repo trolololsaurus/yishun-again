@@ -1,10 +1,12 @@
 'use client'
 
 import 'maplibre-gl/dist/maplibre-gl.css'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter }         from 'next/navigation'
 import type { FilterState, MapFeature } from '@/lib/types'
 import { PIN_COLOR, classIcon, classLabel, classTooltip, pinColor, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter } from '@/lib/utils'
+
+const MAP_STYLE = process.env.NEXT_PUBLIC_MAPLIBRE_STYLE ?? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 
 interface Props {
   features:     MapFeature[]
@@ -16,13 +18,17 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef       = useRef<any>(null)
   const popupRef     = useRef<any>(null)
+  const loadedRef    = useRef(false)
   const router       = useRouter()
+  const [mapStatus, setMapStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [errorMsg,  setErrorMsg]  = useState('')
 
   // Initialise MapLibre once
   useEffect(() => {
     if (!containerRef.current) return
     let destroyed = false
     let ro: ResizeObserver | null = null
+    let loadTimeout: ReturnType<typeof setTimeout>
 
     console.log('IncidentMap mount, container:', containerRef.current, 'dimensions:', containerRef.current?.offsetWidth, containerRef.current?.offsetHeight)
 
@@ -32,7 +38,7 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
 
       const map = new ml.Map({
         container: containerRef.current,
-        style:     process.env.NEXT_PUBLIC_MAPLIBRE_STYLE ?? 'https://tiles.stadiamaps.com/styles/alidade_smooth_dark.json',
+        style:     MAP_STYLE,
         center:    [103.8350, 1.4290],  // Yishun, Singapore
         zoom:      13.5,
         maxBounds: [[103.80, 1.40], [103.87, 1.46]],  // lock to Yishun — no panning to Malaysia
@@ -49,7 +55,28 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
       ro = new ResizeObserver(() => { if (!destroyed) map.resize() })
       ro.observe(containerRef.current!)
 
+      // Safety net: if neither 'load' nor 'error' fires within 12s, surface the error.
+      // MapLibre silently swallows some style-fetch failures (404, certain CORS errors)
+      // without emitting 'error', which would leave the loading overlay up forever.
+      loadTimeout = setTimeout(() => {
+        if (destroyed || loadedRef.current) return
+        console.error('[IncidentMap] load timed out after 12s, style URL:', MAP_STYLE)
+        setErrorMsg('Map timed out — tile provider unreachable')
+        setMapStatus('error')
+      }, 12_000)
+
+      map.on('error', (e: any) => {
+        clearTimeout(loadTimeout)
+        console.error('[IncidentMap] tile/style error:', e.error ?? e)
+        if (destroyed || loadedRef.current) return
+        setErrorMsg(e.error?.message ?? 'Tile source unavailable')
+        setMapStatus('error')
+      })
+
       map.on('load', () => {
+        clearTimeout(loadTimeout)
+        loadedRef.current = true
+        setMapStatus('ready')
         // Double-resize: once immediately, once after 200 ms to catch late flex/paint
         map.resize()
         setTimeout(() => { if (!destroyed) map.resize() }, 200)
@@ -137,6 +164,7 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
 
     return () => {
       destroyed = true
+      clearTimeout(loadTimeout)
       ro?.disconnect()
       mapRef.current?.remove()
       mapRef.current = null
@@ -189,11 +217,33 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
   }, [activeFilter])
 
   return (
-    <div
-      ref={containerRef}
-      className="w-full h-full"
-      style={{ width: '100%', height: '100%' }}
-      aria-label="Yishun incident map"
-    />
+    <div className="relative w-full h-full" style={{ width: '100%', height: '100%' }}>
+      <div
+        ref={containerRef}
+        className="w-full h-full"
+        aria-label="Yishun incident map"
+      />
+      {mapStatus === 'loading' && (
+        <div
+          className="absolute inset-0 flex items-center justify-center"
+          style={{ background: 'var(--color-map-bg)', fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--color-text-secondary)' }}
+        >
+          Loading map…
+        </div>
+      )}
+      {mapStatus === 'error' && (
+        <div
+          className="absolute inset-0 flex flex-col items-center justify-center gap-2"
+          style={{ background: 'var(--color-map-bg)' }}
+        >
+          <span style={{ fontFamily: 'var(--font-display)', fontSize: '11px', color: 'var(--color-dark-events)', letterSpacing: '0.1em' }}>
+            MAP UNAVAILABLE
+          </span>
+          <span style={{ fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+            {errorMsg}
+          </span>
+        </div>
+      )}
+    </div>
   )
 }
