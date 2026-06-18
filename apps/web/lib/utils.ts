@@ -16,9 +16,9 @@ export const CLASS_LABEL: Record<string, string> = {
 }
 
 // Icon + label, e.g. "❤️ GOOD VIBES"
-export function classDisplay(cls: string): string {
-  const icon = CLASS_ICON[cls] ?? ''
-  const label = CLASS_LABEL[cls] ?? cls.toUpperCase()
+export function classDisplay(cls: string, customLabel?: string | null): string {
+  const icon = classIcon(cls, customLabel)
+  const label = classLabel(cls, customLabel)
   return icon ? `${icon} ${label}` : label
 }
 
@@ -27,6 +27,36 @@ export const CLASS_TOOLTIP: Record<string, string> = {
   heart:  'Good Vibes — community wins and feel-good moments',
   clown:  'Absurdities — baffling or inexplicably stupid behaviour',
   dagger: 'Dark Events — crime, violence, serious incidents',
+}
+
+const CULTURE_TOOLTIP = 'Yishun on the Map — pop-culture and media mentions'
+
+// classification + custom_label aware variants — special-case
+// classification='custom' + custom_label='CULTURE' ("Yishun on the Map"),
+// otherwise fall back to the generic maps above.
+export function classIcon(cls: string, customLabel?: string | null): string {
+  if (cls === 'custom' && customLabel === 'CULTURE') return '🌐'
+  return CLASS_ICON[cls] ?? ''
+}
+
+export function classLabel(cls: string, customLabel?: string | null): string {
+  if (cls === 'custom' && customLabel === 'CULTURE') return 'YISHUN ON THE MAP'
+  return CLASS_LABEL[cls] ?? cls.toUpperCase()
+}
+
+export function classColor(cls: string, customLabel?: string | null): string {
+  if (cls === 'custom' && customLabel === 'CULTURE') return 'text-culture'
+  return CLASS_COLOR[cls] ?? ''
+}
+
+export function classTooltip(cls: string, customLabel?: string | null): string {
+  if (cls === 'custom' && customLabel === 'CULTURE') return CULTURE_TOOLTIP
+  return CLASS_TOOLTIP[cls] ?? ''
+}
+
+export function pinColor(cls: string, customLabel?: string | null): string {
+  if (cls === 'custom' && customLabel === 'CULTURE') return PIN_COLOR.culture
+  return PIN_COLOR[cls] ?? '#7A8BAA'
 }
 
 export const HYPE_TOOLTIP = 'Hype meter — number of mainstream media sources reporting this'
@@ -38,9 +68,10 @@ export function severityTooltip(sev: number | null): string {
 // Map pin colours — Panzer Dragoon classification palette
 // heart=teal-cyan (GOOD VIBES), clown=bright yellow (ABSURDITIES), dagger=coral red (DARK EVENTS)
 export const PIN_COLOR: Record<string, string> = {
-  heart:  '#4ECDC4',
-  clown:  '#FFE66D',
-  dagger: '#FF6B6B',
+  heart:   '#4ECDC4',
+  clown:   '#FFE66D',
+  dagger:  '#FF6B6B',
+  culture: '#A78BFA',
 }
 
 // Badge colors for classification chips / badges
@@ -61,7 +92,8 @@ export function hypeMeter(hype: number): string {
   return '⚡'.repeat(hype)
 }
 
-export function fmtDate(iso: string): string {
+export function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return '—'
   return new Date(iso).toLocaleDateString('en-SG', {
     timeZone: 'Asia/Singapore',
     day:  '2-digit',

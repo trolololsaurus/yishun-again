@@ -93,6 +93,7 @@ export interface Incident {
   title:               string
   summary:             string
   classification:      Classification
+  custom_label:        string | null
   severity:            number
   block_number:        string | null
   area_name:           string | null

@@ -1,0 +1,85 @@
+"""
+Shared war_room_queue row builder for the Historical agent (backfill_agent.py)
+and the forward/ingestion pipeline (mined from pipeline.py, INGESTION_DESIGN.md
+§10b step 4).
+
+Moved here unchanged from scrapers/backfill_agent.py's private _build_queue_row
+(INGESTION_DESIGN.md §10b step 2, §5.4). backfill_agent.py now calls
+build_queue_row() instead of defining its own copy.
+"""
+
+from consolidation.check import ConsolidationResult
+
+
+def build_queue_row(
+    item: dict,
+    draft: dict,
+    consolidation: ConsolidationResult | None = None,
+    is_update: bool = False,
+    date_missing: bool = False,
+    edmw_signal_count: int = 0,
+    include_related_incidents: bool = False,
+) -> dict:
+    """
+    Build a war_room_queue row for items going to operator review.
+
+    date_missing: caller's _parse_source_date_to_iso(item["date"]) result —
+    True if the source date is missing/unparseable, in which case
+    raw_content._date_fallback is set so the operator knows to set it manually.
+
+    edmw_signal_count: forum-signal corroboration count (spec §13 "Forum buzz").
+    Defaults to 0 — backfill items never carry EDMW signal counts; the forward
+    ingestion pipeline passes the actual count for source_type='signal' items.
+
+    include_related_incidents: if True and consolidation.related_incidents is
+    non-empty, write raw_content.agent_related_incidents for War Room rendering.
+    Defaults to False so backfill output is unchanged (consolidation_check()
+    can return related_incidents for backfill candidates too, but backfill
+    currently has no UI to surface them).
+    """
+    status = "update" if is_update else "pending"
+    update_target_id = None
+    agent_role = "initial"
+
+    if consolidation is not None:
+        update_target_id = consolidation.matched_incident_id
+        agent_role = consolidation.agent_role_proposed
+
+    row = {
+        "raw_content": {
+            **item,
+            **draft,
+            "_backfill":        True,
+            "_backfill_source": item.get("source_type", "msm"),
+            **({"_date_fallback": True} if date_missing else {}),
+        },
+        "source_url":              item["url"],
+        "source_type":             item.get("source_type", "msm"),
+        "proposed_title":          draft["title"],
+        "proposed_summary":        draft["summary"],
+        "proposed_classification": draft["classification"],
+        "proposed_severity":       draft["severity"],
+        "proposed_pixel_prompt":   draft.get("pixel_art_prompt", ""),
+        "proposed_slug":           draft.get("slug", ""),
+        "agent_confidence":        draft["confidence"],
+        "corroboration_count":     1,
+        "edmw_signal_count":       edmw_signal_count,
+        "status":                  status,
+    }
+    row["raw_content"]["agent_role_proposed"] = agent_role
+
+    if include_related_incidents and consolidation is not None and consolidation.related_incidents:
+        row["raw_content"]["agent_related_incidents"] = [
+            {
+                "incident_id": lnk.incident_id,
+                "confidence":  lnk.confidence,
+                "reason":      lnk.reason,
+                "link_type":   lnk.link_type,
+            }
+            for lnk in consolidation.related_incidents
+        ]
+
+    if update_target_id:
+        row["update_target_incident_id"] = update_target_id
+
+    return row

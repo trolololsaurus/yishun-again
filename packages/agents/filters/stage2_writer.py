@@ -233,7 +233,14 @@ def _compute_chaos_contribution(classification: str, severity: int) -> float:
 
 
 def _build_user_message(content: dict) -> str:
+    learning_context = content.get("learning_context", "")
+    learning_block = (
+        f"Recent operator patterns (advisory, do not override your judgment):\n"
+        f"{learning_context}\n\n"
+        if learning_context else ""
+    )
     return (
+        f"{learning_block}"
         f"Source: {content.get('source_name', 'unknown')}\n"
         f"URL: {content.get('url', '')}\n\n"
         f"Title: {content.get('title', '')}\n\n"

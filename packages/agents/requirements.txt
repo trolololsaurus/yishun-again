@@ -1,5 +1,5 @@
-# ── Core framework (spec: FastAPI 0.110.x) ─────────────────────────────────
-fastapi==0.110.3
+# ── Core framework (security bump: CVE-2024-47874 fixed in starlette 0.40) ──
+fastapi==0.115.14
 uvicorn[standard]==0.29.0
 
 # ── Config ─────────────────────────────────────────────────────────────────
@@ -11,7 +11,7 @@ pydantic-settings==2.3.0
 APScheduler==3.10.4
 
 # ── Agent orchestration ─────────────────────────────────────────────────────
-langgraph>=0.2.0
+langgraph==0.4.0
 
 # ── AI APIs ─────────────────────────────────────────────────────────────────
 # Stage 2 writer — claude-haiku-4-5-20251001 (classify) / claude-sonnet-4-6 (write)
@@ -22,7 +22,7 @@ groq==0.9.0
 # ── HTTP + scraping ─────────────────────────────────────────────────────────
 httpx==0.27.0
 beautifulsoup4==4.12.3
-lxml==5.2.1
+lxml==6.1.1
 # RSS-first for CNA / Mothership
 feedparser==6.0.11
 
@@ -30,7 +30,7 @@ feedparser==6.0.11
 boto3==1.34.90
 
 # ── Art pipeline (Modal.run SDXL jobs) ─────────────────────────────────────
-modal>=1.4.3
+modal==1.4.3
 # Image resizing for training data upload (train_lora.py local step)
 Pillow>=10.3.0
 # Dataset config serialisation for kohya_ss

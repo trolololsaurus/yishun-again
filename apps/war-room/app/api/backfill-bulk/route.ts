@@ -84,6 +84,7 @@ export async function POST(request: Request) {
       supabase.from('training_signals').insert({
         incident_id:             null,
         action:                  'reject',
+        decision:                'reject',
         reject_reason:           'noise',
         original_draft:          item.proposed_summary,
         original_classification: item.proposed_classification,
@@ -172,6 +173,7 @@ export async function POST(request: Request) {
     supabase.from('training_signals').insert({
       incident_id:             newIncident.id,
       action:                  'approve',
+      decision:                'approve',
       original_draft:          item.proposed_summary,
       original_classification: item.proposed_classification,
       original_severity:       item.proposed_severity,

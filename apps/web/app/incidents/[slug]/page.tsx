@@ -3,7 +3,7 @@ import { Suspense }      from 'react'
 import { notFound }      from 'next/navigation'
 import Link              from 'next/link'
 import { supabase }      from '@/lib/supabase'
-import { CLASS_ICON, CLASS_COLOR, CLASS_TOOLTIP, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, fmtDate, formatDuration, formatDurationGap } from '@/lib/utils'
+import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, fmtDate, formatDuration, formatDurationGap } from '@/lib/utils'
 import { ShareButton }   from './ShareButton'
 import { UTMLogger }     from '@/components/UTMLogger'
 import type { Incident, IncidentLink, RelatedIncident, SourceTimelineEntry } from '@/lib/types'
@@ -74,7 +74,7 @@ export default async function IncidentPage({ params }: Props) {
     )
     const { data: relatedData } = await supabase
       .from('incidents')
-      .select('id,slug,title,classification,incident_date')
+      .select('id,slug,title,classification,custom_label,incident_date')
       .in('id', relatedIds)
       .eq('is_published', true)
 
@@ -83,6 +83,7 @@ export default async function IncidentPage({ params }: Props) {
       slug:           r.slug,
       title:          r.title,
       classification: r.classification,
+      custom_label:   r.custom_label,
       incident_date:  r.incident_date,
       link_type:      linkRows.find(
         l => l.incident_a === r.id || l.incident_b === r.id
@@ -102,7 +103,7 @@ export default async function IncidentPage({ params }: Props) {
     '@type':       'NewsArticle',
     headline:      incident.title,
     description:   incident.summary.slice(0, 160),
-    datePublished: incident.published_at,
+    datePublished: incident.incident_date,
     url:           incidentUrl,
     image:         incident.pixel_art_url ?? `${siteUrl}/og-default.jpg`,
     publisher: {
@@ -138,10 +139,10 @@ export default async function IncidentPage({ params }: Props) {
       {/* Classification + severity + hype */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <span
-          className={`text-2xl ${CLASS_COLOR[incident.classification] ?? ''}`}
-          title={CLASS_TOOLTIP[incident.classification]}
+          className={`text-2xl ${classColor(incident.classification, incident.custom_label)}`}
+          title={classTooltip(incident.classification, incident.custom_label)}
         >
-          {CLASS_ICON[incident.classification]}
+          {classIcon(incident.classification, incident.custom_label)}
         </span>
         <span
           className="font-body text-text-secondary"
@@ -176,7 +177,7 @@ export default async function IncidentPage({ params }: Props) {
       {/* Meta */}
       <div className="flex gap-4 flex-wrap font-body text-text-secondary mb-6"
            style={{ fontSize: '14px' }}>
-        <span>{fmtDate(incident.published_at)}</span>
+        <span>{fmtDate(incident.incident_date)}</span>
         {incident.area_name && <span>{incident.area_name}</span>}
         {incident.block_number && <span>{incident.block_number}</span>}
         <span>Corroborated by {incident.corroboration_count} source{incident.corroboration_count !== 1 ? 's' : ''}</span>
@@ -324,9 +325,9 @@ export default async function IncidentPage({ params }: Props) {
                   href={`/incidents/${rel.slug}`}
                   className="flex items-center gap-3 px-3 py-2 border border-border hover:bg-surface transition-colors group"
                 >
-                  <span className={`text-base flex-none ${CLASS_COLOR[rel.classification] ?? ''}`}
-                        title={CLASS_TOOLTIP[rel.classification]}>
-                    {CLASS_ICON[rel.classification]}
+                  <span className={`text-base flex-none ${classColor(rel.classification, rel.custom_label)}`}
+                        title={classTooltip(rel.classification, rel.custom_label)}>
+                    {classIcon(rel.classification, rel.custom_label)}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="font-body font-bold text-text-primary group-hover:text-amber-lt transition-colors line-clamp-1"

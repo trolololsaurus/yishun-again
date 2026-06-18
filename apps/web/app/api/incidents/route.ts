@@ -19,14 +19,15 @@ export async function GET(req: Request) {
   let q = supabase
     .from('incidents')
     .select(
-      'id,slug,title,classification,severity,hype_meter,published_at,incident_date,' +
+      'id,slug,title,classification,custom_label,severity,hype_meter,published_at,incident_date,' +
       'area_name,is_milestone,milestone_type,milestone_value,' +
       'is_developing,update_count,first_reported_at,' +
       'source_timeline,latest_source_role'
     )
     .eq('is_published', true)
-    .order('is_developing', { ascending: false, nullsFirst: false })
-    .order('published_at', { ascending: false })
+    .order('is_developing',  { ascending: false, nullsFirst: false })
+    .order('incident_date',  { ascending: false, nullsFirst: false })
+    .order('id',             { ascending: false })
     .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1)
 
   if (cls)  q = q.eq('classification', cls)

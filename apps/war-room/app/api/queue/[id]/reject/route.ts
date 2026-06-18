@@ -53,6 +53,7 @@ export async function POST(
   await supabase.from('training_signals').insert({
     incident_id:             null,
     action:                  'reject',
+    decision:                'reject',
     reject_reason:           reason,
     original_draft:          item.proposed_summary,
     original_classification: item.proposed_classification,

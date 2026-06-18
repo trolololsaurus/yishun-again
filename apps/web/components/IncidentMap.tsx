@@ -4,7 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { useEffect, useRef } from 'react'
 import { useRouter }         from 'next/navigation'
 import type { FilterState, MapFeature } from '@/lib/types'
-import { PIN_COLOR, CLASS_LABEL, CLASS_TOOLTIP, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter } from '@/lib/utils'
+import { PIN_COLOR, classIcon, classLabel, classTooltip, pinColor, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter } from '@/lib/utils'
 
 interface Props {
   features:     MapFeature[]
@@ -77,11 +77,15 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
               15, 11,
             ],
             'circle-color': [
-              'match', ['get', 'classification'],
-              'heart',  PIN_COLOR.heart,
-              'clown',  PIN_COLOR.clown,
-              'dagger', PIN_COLOR.dagger,
-              '#7A8BAA',
+              'case',
+              ['all', ['==', ['get', 'classification'], 'custom'], ['==', ['get', 'custom_label'], 'CULTURE']],
+              PIN_COLOR.culture,
+              ['match', ['get', 'classification'],
+                'heart',  PIN_COLOR.heart,
+                'clown',  PIN_COLOR.clown,
+                'dagger', PIN_COLOR.dagger,
+                '#7A8BAA',
+              ],
             ],
             'circle-opacity':       0.92,
             'circle-stroke-width':  1.5,
@@ -98,17 +102,16 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
           map.getCanvas().style.cursor = 'pointer'
           const f = e.features[0]
           const coords = [...f.geometry.coordinates] as [number, number]
-          const { title, classification, severity, hype_meter } = f.properties
-          const icons: Record<string, string> = { heart: '❤️', clown: '🤡', dagger: '💀' }
+          const { title, classification, custom_label, severity, hype_meter } = f.properties
 
-          const classColor = PIN_COLOR[classification] ?? '#7A8BAA'
+          const markerColor = pinColor(classification, custom_label)
 
           popup
             .setLngLat(coords)
             .setHTML(
               `<div style="padding:10px;font-family:'Courier Prime',monospace;font-size:16px;color:#E8E8F0">` +
               `<div style="font-size:14px;color:#7A8BAA;margin-bottom:5px">` +
-              `<span style="color:${classColor}" title="${CLASS_TOOLTIP[classification] ?? ''}">${icons[classification] ?? ''} ${CLASS_LABEL[classification] ?? ''}</span>` +
+              `<span style="color:${markerColor}" title="${classTooltip(classification, custom_label)}">${classIcon(classification, custom_label)} ${classLabel(classification, custom_label)}</span>` +
               ` <span title="${severityTooltip(severity)}">${severityDiamonds(severity)}</span>` +
               (hype_meter > 0 ? ` <span title="${HYPE_TOOLTIP}">${hypeMeter(hype_meter)}</span>` : '') +
               `</div>` +

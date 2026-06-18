@@ -15,8 +15,13 @@ import sys
 
 from dotenv import load_dotenv
 from groq import Groq
+from scrapers.groq_budget import GroqMinuteRateLimiter
 
 load_dotenv(override=False)
+
+# Module-level singleton: shared across all filter_content() calls in this
+# process. Enforces the 6k TPM free-tier ceiling without any changes to callers.
+_rate_limiter = GroqMinuteRateLimiter()
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +187,8 @@ def filter_content(content: dict) -> dict:
         " [override]" if override_active else "",
     )
 
+    sleep_seconds = _rate_limiter.wait_if_needed(estimated_tokens=800)
+
     completion = client.chat.completions.create(
         model=MODEL,
         messages=[
@@ -190,6 +197,10 @@ def filter_content(content: dict) -> dict:
         ],
         temperature=0.1,   # low temperature → consistent JSON output
         max_tokens=256,
+    )
+
+    _rate_limiter.record(
+        completion.usage.prompt_tokens + completion.usage.completion_tokens
     )
 
     raw = completion.choices[0].message.content
@@ -202,6 +213,7 @@ def filter_content(content: dict) -> dict:
         "prompt_tokens":     completion.usage.prompt_tokens,
         "completion_tokens": completion.usage.completion_tokens,
     }
+    result["rate_limiter_sleep_seconds"] = sleep_seconds
 
     logger.info(
         "Stage 1 [%s] relevant=%s confidence=%.2f passes=%s%s | %s",

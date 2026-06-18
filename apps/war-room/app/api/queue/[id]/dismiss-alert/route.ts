@@ -62,6 +62,7 @@ export async function POST(
     await supabase.from('training_signals').insert({
       incident_id:      null,
       action:           'pattern_dismissed',
+      decision:         'reject',
       operator_changes: {
         dismiss_reason_category: category,
         dismiss_reason_detail:   (body.reason_detail as string) || null,
@@ -111,6 +112,7 @@ export async function POST(
   await supabase.from('training_signals').insert({
     incident_id:      null,
     action:           'pattern_dismissed',
+    decision:         'reject',
     operator_changes: {
       pattern_type:    rc.pattern_type,
       pattern_value:   rc.pattern_value,

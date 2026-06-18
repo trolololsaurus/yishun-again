@@ -1,14 +1,7 @@
 # YISHUN AGAIN — TECHNICAL SPECIFICATION
 ## For Coding Agents / Developers
-**Version:** 1.5 | **Phase:** 1 — Foundation Build
-**Last Updated:** June 2026
-
-### Changelog
-| Version | Date | Changes |
-|---|---|---|
-| 1.0 | May 2026 | Initial spec |
-| 1.4 | May 2026 | Scraper health, milestone herald, EDMW tiers, War Room hybrid A+B view |
-| 1.5 | June 2026 | Incident consolidation model, developing stories, related incident linking, Step 16 backfill spec, LoRA training confirmed (yishunagain_v1.safetensors), Cloudflare Access middleware, R2 public domain confirmed |
+**Version:** 1.0 | **Phase:** 1 — Foundation Build
+**Last Updated:** 2024
 
 ---
 
@@ -76,8 +69,8 @@ yishun-again/
 | Agent hosting | Google Cloud Run | — | Single shared-cpu-1x machine to start |
 | Stage 1 filter | Groq API | — | llama-3.1-8b-instant model |
 | Stage 2 writer | Anthropic API | — | claude-haiku-4-5-20251001 default, claude-sonnet-4-6 for quality tasks |
-| Orchestrator | LangGraph | 0.4.0 | Python |
-| Image gen | Modal.run | — | SDXL + LoRA yishunagain_v1 (trained, 456.5MB on R2) |
+| Orchestrator | LangGraph | 0.1.x | Python |
+| Image gen | Modal.run | — | SDXL + LoRA, async job |
 | Scheduling | APScheduler | 3.x | Embedded in FastAPI |
 | CSS | Tailwind CSS | 3.x | Pixel art + retro tabloid theme |
 
@@ -243,9 +236,7 @@ CREATE TABLE war_room_queue (
   agent_confidence DECIMAL(3,2),
   corroboration_count INTEGER DEFAULT 1,
   edmw_signal_count   INTEGER DEFAULT 0,
-  status          TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'escalated', 'update', 'update_approved', 'update_rejected')),
-  -- 'update' = new source report for an existing incident, pending operator review
-  update_target_incident_id UUID REFERENCES incidents(id), -- set when status = 'update'
+  status          TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'escalated')),
   processed_at    TIMESTAMPTZ,
   incident_id     UUID REFERENCES incidents(id)     -- set after approval
 );
@@ -457,173 +448,7 @@ Pixel art prompt guide:
 # Minimum to auto-publish: 1 MSM or Reddit source
 ```
 
-### 4.5 Incident Consolidation Agent
-
-**File:** `packages/agents/classifiers/consolidation.py`
-
-#### Overview
-
-Multiple news articles about the same real-world event must not create multiple separate incident cards. The consolidation agent identifies duplicates and related incidents before any item reaches the War Room queue.
-
-#### Grouping Rules
-
-**Rule 1 — Same card (developing story):**
-Same named entity + same core act, any time window → consolidate into one card.
-
-Examples:
-- Kurt Tay charged Nov 2023 + new charges Jan 2024 + sentenced Apr 2026 → **one card**, developing story
-- Cat killings Sep 2015 + more cats Jan 2016 + Lee Wai Leong charged → **one card**
-
-The card date always updates to the latest report. The narrative regenerates chronologically.
-
-**Rule 2 — Separate card, flagged as related:**
-Different entity + overlapping event → separate card, agent flags as "possible related incident".
-
-Example:
-- Kurt Tay intimate video case (main card)
-- Telegram group member who shared same video → separate card, flagged as related to Kurt Tay card
-- Agent flags: "possible related — shares entity [intimate video] + overlapping date window"
-- Operator confirms or rejects the link in War Room
-
-**Rule 3 — Separate card, no link:**
-Same entity + different act → separate card, no link.
-
-Examples:
-- Kurt Tay divorce → separate card, no link to intimate video case
-- Kurt Tay chased by security guard → separate card, no link
-
-#### Consolidation Logic
-
-```python
-# Matching criteria (all must pass):
-# 1. Entity overlap: same named person, organisation, or location unit (block-level)
-# 2. Act overlap: same category of incident (crime type, event type)
-# 3. Claude judgment call: Stage 2 agent explicitly asked to check for existing incidents
-#    matching entity + act before creating a new card
-
-# Time window:
-# - No hard cutoff for same-entity + same-act grouping
-# - Court cases and criminal proceedings consolidated regardless of time gap
-# - Separate incidents of same type (two different stabbings, different people) NOT consolidated
-
-# Related incident flagging:
-# - Different entity + shared victim, location unit, or event → flag as possible related
-# - Confidence score attached to flag (0.0–1.0)
-# - Confidence >= 0.75 → War Room shows prominent "possible related" banner
-# - Confidence < 0.75 → War Room shows subtle "might be related" hint
-```
-
-#### Schema Additions for Consolidation
-
-```sql
--- Add to incidents table
-ALTER TABLE incidents ADD COLUMN is_developing     BOOLEAN DEFAULT FALSE;
--- TRUE when incident has received updates after initial publication
-
-ALTER TABLE incidents ADD COLUMN update_count      INTEGER DEFAULT 0;
--- Increments each time a new source report is consolidated into this card
-
-ALTER TABLE incidents ADD COLUMN source_timeline   JSONB DEFAULT '[]';
--- Array of {date, headline, source_url, source_name} — chronological log of all reports
--- Example:
--- [
---   {"date": "2023-11-16", "headline": "Kurt Tay jailed for sharing intimate video", "source_url": "...", "source_name": "Straits Times"},
---   {"date": "2024-01-10", "headline": "Kurt Tay faces new charges", "source_url": "...", "source_name": "CNA"},
---   {"date": "2026-04-01", "headline": "Kurt Tay jailed and fined", "source_url": "...", "source_name": "Mothership"}
--- ]
-
-ALTER TABLE incidents ADD COLUMN first_reported_at DATE;
--- Date of earliest source report — separate from incident_date (which is always latest)
-```
-
-```sql
--- New table: incident_links
-CREATE TABLE incident_links (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  created_at      TIMESTAMPTZ DEFAULT NOW(),
-  incident_a      UUID NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
-  incident_b      UUID NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
-  link_type       TEXT NOT NULL CHECK (link_type IN ('related', 'follow_up', 'same_location')),
-  confidence      DECIMAL(3,2) NOT NULL,        -- agent confidence in the link
-  agent_reason    TEXT NOT NULL,                -- one-sentence explanation
-  confirmed_by_operator BOOLEAN DEFAULT FALSE,  -- FALSE = pending review, TRUE = confirmed
-  rejected_by_operator  BOOLEAN DEFAULT FALSE,  -- TRUE = operator dismissed
-  UNIQUE(incident_a, incident_b)
-);
-
-CREATE INDEX idx_links_incident_a ON incident_links(incident_a);
-CREATE INDEX idx_links_incident_b ON incident_links(incident_b);
-CREATE INDEX idx_links_pending ON incident_links(confirmed_by_operator, rejected_by_operator) 
-  WHERE confirmed_by_operator = FALSE AND rejected_by_operator = FALSE;
-```
-
-#### Developing Story — Card Behaviour
-
-When `is_developing = TRUE`:
-
-**Public feed:**
-- Card floats to top of incident list regardless of `incident_date`
-- **DEVELOPING** badge shown (amber, pixel art style)
-- Card date shows latest report date
-- Source timeline visible as expandable log: "N reports · First reported [date]"
-
-**Map:**
-- Pin reappears in the month/year of latest update
-- Historical pins for earlier reports retained but dimmed
-- Clicking any pin shows the single consolidated card
-
-**Narrative:**
-- Stage 2 agent regenerates summary chronologically on each update
-- New narrative reads as a developing story: "Initially reported as X, later confirmed Y, final outcome Z"
-- Pixel art image regenerates only if classification or severity changes — not on every update
-
-**Chaos Crystal:**
-- Incident counted once regardless of update count
-- chaos_contribution does not increase with updates
-
-#### War Room — Update Review Flow
-
-When the consolidation agent identifies a new report matching an existing incident:
-
-```
-New report arrives in scraper queue
-    ↓
-Consolidation agent: match found (Rule 1 — same entity + same act)
-    ↓
-War Room queue item created with status: 'update'
-Badge: "NEW UPDATE — [existing incident title]"
-Shows:
-  - Existing incident card (read-only preview)
-  - New source report (raw + proposed narrative update)
-  - Proposed new summary (chronological, updated)
-  - Source timeline with new entry appended
-    ↓
-Operator actions:
-  [CONFIRM UPDATE] → merges new source into existing incident, sets is_developing = TRUE
-  [REJECT UPDATE]  → discards new source, existing incident unchanged
-  [SPLIT INTO NEW] → creates new separate incident card instead
-```
-
-When agent flags a related incident (Rule 2):
-
-```
-New incident created (separate card)
-War Room shows: "POSSIBLE RELATED — [other incident title] (confidence: 0.85)"
-Agent reason: "Shares entity [intimate video case] with overlapping date window"
-Operator actions:
-  [CONFIRM LINK]   → creates incident_links row (confirmed_by_operator = TRUE)
-  [DISMISS]        → creates incident_links row (rejected_by_operator = TRUE)
-```
-
-#### Public — Related Incidents Display
-
-On incident detail page `/incidents/[slug]`:
-- "Related incidents" section at bottom
-- Shows only `confirmed_by_operator = TRUE` links
-- Each related incident: title + classification icon + date + one-line description
-- Bidirectional — if A links to B, B also shows A in its related section
-
-### 4.6 Source Discovery Agent
+### 4.5 Source Discovery Agent
 
 **File:** `packages/agents/scrapers/source_discovery.py`
 
@@ -651,12 +476,6 @@ On incident detail page `/incidents/[slug]`:
 
 Shows all `war_room_queue` entries with `status = 'pending'`, sorted by `created_at DESC`.
 
-**Queue item types and badges:**
-- Standard new incident — no badge
-- **MILESTONE** badge (amber) — milestone herald item
-- **NEW UPDATE** badge (cyan) — update to existing developing story
-- **POSSIBLE RELATED** banner — agent flagged link to another incident, pending confirmation
-
 **Default view (Option B — fast review):**
 - Confidence score badge — green ≥0.85, yellow ≥0.5, red <0.5
 - Classification icon + severity diamonds + hype meter ⚡
@@ -678,15 +497,10 @@ Shows all `war_room_queue` entries with `status = 'pending'`, sorted by `created
 - Confidence <0.85 → A view default, source auto-expanded
 - Operator can always toggle either direction manually
 
-**Actions (standard incident):**
+**Actions:**
 - **Approve** → publishes incident, logs training signal (action: 'approve')
 - **Edit & Approve** → saves all edited fields, logs training signal (action: 'edit_approve', operator_changes: JSON diff of every changed field — this is the primary training signal)
 - **Reject** → dropdown: noise / duplicate / unverified / too thin / legal risk → logs training signal (action: 'reject', reject_reason)
-
-**Actions (NEW UPDATE item):**
-- **Confirm Update** → merges new source into existing incident, sets is_developing = TRUE, regenerates narrative
-- **Reject Update** → discards new source, existing incident unchanged
-- **Split Into New** → creates new separate incident card instead of merging
 
 ### 5.2 Incident Management
 
@@ -1346,50 +1160,33 @@ Milestone items in War Room queue display:
 
 ### 9.1 Style Lock
 
-**Status: TRAINED AND DEPLOYED ✅**
+Train one SDXL LoRA on a curated set of 50–100 pixel art images with consistent style:
+- 16-bit JRPG aesthetic
+- HDB block environments
+- Dark, moody colour palette
+- No photorealism
 
-LoRA trained on 112 pixel art images (16-bit JRPG aesthetic, mixed characters and backgrounds).
-- **Trigger word:** `yishunpixel`
-- **Weights:** `https://assets.yishunagain.com/lora/yishunagain_v1.safetensors` (456.5 MB)
-- **Base model:** `stabilityai/stable-diffusion-xl-base-1.0`
-- **Training:** 1500 steps, lr=1e-4, network_dim=32, network_alpha=16, A10G GPU on Modal.run
-- **Generation time:** ~12 seconds on A10G (30 diffusion steps)
-- **Output size:** 1024×1024 → resized to 1200×630 for OG share card dimensions
-
-**Known issue:** `avr_loss=nan` during training — kohya_ss logging quirk, does not affect output quality. Generation confirmed working via test image.
-
-**Iteration plan (post-launch):**
-- Add HDB-specific training images (void decks, corridors, hawker centres) for more hyperlocal outputs
-- Retrain LoRA v2 with Singapore-specific environment prompts
-- Operator approval required before any retraining
+**LoRA training:** Run once on Modal.run. Store weights in Cloudflare R2. Never retrain without operator approval.
 
 ### 9.2 Image Generation Call
 
-**File:** `packages/agents/art/generate_pixel_art.py`
+**File:** `packages/agents/art/art_agent.py`
 
 ```python
-# Prompt construction:
-PROMPT_TEMPLATE = "yishunpixel, 16-bit pixel art, {scene_description}, HDB void deck, Singapore, {mood}, isometric, JRPG style, masterpiece"
-NEGATIVE_PROMPT = "photorealistic, 3d render, photograph, blurry, people faces, realistic"
+import modal
 
-# LoRA scale: 0.85 (confirmed working)
-# cross_attention_kwargs={"scale": 0.85} — diffusers 0.26.x API
+# Modal.run async job
+# Input: pixel_art_prompt from Stage 2 writer
+# Output: PNG stored to Cloudflare R2
+# Triggered: after operator approves incident in War Room
 
-# Output: uploaded to R2 at pixel-art/{slug}.png
-# Public URL: https://assets.yishunagain.com/pixel-art/{slug}.png
-
-# Generation triggered: after operator approves incident in War Room
-# Fire-and-forget: does not block War Room UI
-# On failure: incident publishes with placeholder, pixel_art_url set to None
-```
-
-**Classification → mood mapping:**
-```python
-MOOD_MAP = {
-    "dagger": "dark atmospheric lighting, crime scene, night time, ominous",
-    "clown":  "bright comedic lighting, chaotic scene, absurd elements",
-    "heart":  "warm golden lighting, community gathering, cheerful atmosphere"
-}
+async def generate_pixel_art(prompt: str, incident_id: str) -> str:
+    """
+    Returns Cloudflare R2 URL of generated image.
+    Full prompt = f"{prompt}, {LORA_TRIGGER_WORD}, masterpiece, detailed pixel art"
+    Negative prompt = "photorealistic, 3d render, photograph, blurry, people faces"
+    """
+    ...
 ```
 
 ---
@@ -1644,15 +1441,11 @@ gcloud run deploy yishun-agents \
 
 ### 11.3 Cloudflare Setup
 
-**Status: CONFIGURED ✅**
-
-1. ✅ Domain on Cloudflare (nameservers)
-2. ✅ R2 bucket: `yishun-assets` → custom domain `assets.yishunagain.com` → **live, 200 OK**
-3. ✅ Cloudflare Access: protecting `warroom.yishunagain.com` (operator email only)
-4. WAF rules: block non-SG traffic from War Room subdomain (optional hardening, post-launch)
-5. Page Rules: cache all `/incidents/*` pages aggressively (post-launch)
-
-**War Room middleware:** `apps/war-room/middleware.ts` — checks `cf-access-authenticated-user-email` header in production, bypasses in dev, `/api/health` always exempt. See `docs/WAR_ROOM_DEPLOY.md` for full setup guide.
+1. Add domain to Cloudflare (nameservers)
+2. Create R2 bucket: `yishun-assets` → public access → custom domain `assets.yishunagain.com`
+3. Cloudflare Access: protect `warroom.yishunagain.com` with email OTP (operator email only)
+4. WAF rules: block non-SG traffic from War Room subdomain (optional, extra protection)
+5. Page Rules: cache all `/incidents/*` pages aggressively (static content)
 
 ### 11.4 War Room (separate Vercel project or same repo)
 
@@ -1723,94 +1516,23 @@ These are not features. They are non-negotiable constraints baked into the pipel
 Execute in this sequence. Do not skip ahead.
 
 ```
-Step 1:  ✅ Supabase schema — all tables, indexes, RLS policies
-Step 2:  ✅ Cloudflare R2 bucket + domain (assets.yishunagain.com — live)
-Step 3:  ✅ FastAPI skeleton on Google Cloud Run — health check endpoint only
-Step 4:  ✅ Stage 1 filter (Groq llama-3.1-8b-instant) — 3/3 test cases passed
-Step 5:  ✅ Stage 2 writer (Claude Haiku classify + Sonnet draft) — confirmed working
-Step 6:  ✅ All scrapers built and tested (CNA, ST, Mothership, Stomp, MustShareNews,
-             TheIndependent, Yahoo, AsiaOne, Stomp, Zaobao, Shin Min, Berita Harian,
-             Tamil Murasu, Reddit, EDMW, source discovery agent)
-Step 7:  ✅ War Room CMS — 4 pages + /health tab
-Step 8:  ✅ Pipeline dry run — 45 items scraped, 32 passed Stage 1
-Step 8a: ✅ Scraper health Phase A — scraper_health table + War Room /health tab
-Step 8b: ✅ Schema additions — deaths, injuries, is_milestone, milestone columns
-Step 8c: ✅ Milestone Herald Agent — streak detection + chaos record + deduplication
-Step 9:  ✅ LangGraph orchestrator — 6-node graph, confirmed working
-Step 10: ✅ Next.js public frontend — map (MapLibre + OpenFreeMap ✅), Chaos Panel,
-             incident feed, incident detail page, timeline, about page
-Step 11: ✅ Frontend wired to Supabase — test incident, pin on map confirmed
-Step 12: ✅ Share card + UTM logging — utm_events table populating correctly
-Step 13: ✅ Art pipeline — LoRA trained (yishunagain_v1.safetensors, 456.5MB),
-             uploaded to R2, generation confirmed working (~12s on A10G)
-Step 14: ✅ SEO — sitemap.ts, robots.ts, JSON-LD NewsArticle schema confirmed
-Step 15: ✅ Cloudflare Access middleware — War Room protected, /api/health exempt
-Step 16: ⏳ Historical backfill + hero incidents — see spec below
-Step 17: ⏳ Launch ignition sequence
+Step 1:  Supabase schema — all tables, indexes, RLS policies
+Step 2:  Cloudflare R2 bucket + domain
+Step 3:  FastAPI skeleton on Google Cloud Run — health check endpoint only
+Step 4:  Stage 1 filter (Groq) — unit tested with sample content
+Step 5:  Stage 2 writer (Claude) — unit tested with sample content
+Step 6:  Scraping agents — CNA + Mothership first, then others
+Step 7:  War Room CMS — queue view + approve/reject flow
+Step 8:  Training signal logging — verify signals persist correctly
+Step 9:  Next.js frontend — map hero + Chaos Index (static mock data first)
+Step 10: Wire frontend to Supabase — live data
+Step 11: Share card generation + UTM logging
+Step 12: Art pipeline (Modal.run + LoRA) — generate test cards
+Step 13: SEO — meta tags, sitemap, schema markup
+Step 14: Cloudflare Access for War Room
+Step 15: Pre-load historical incidents (operator-assisted backfill)
+Step 16: Launch ignition sequence
 ```
-
----
-
-## 14c. Step 16 — Historical Backfill Specification
-
-### Scope
-
-**Automated backfill:** Google News scraper, 2019–2024, Yishun keywords. Target: 50–200 incidents to seed the map before launch.
-
-**Hero incidents:** 8 pre-written incidents inserted as SQL. These bypass the pipeline entirely and are inserted as fully approved, published incidents.
-
-### Backfill Agent
-
-**File:** `packages/agents/scrapers/backfill_agent.py`
-
-```python
-# Google News search approach:
-# Base URL: https://news.google.com/search?q=yishun+{keyword}&hl=en-SG&gl=SG&ceid=SG:en&tbm=nws&tbs=cdr:1,cd_min:{year}-01-01,cd_max:{year}-12-31
-# Loop: year 2019 → 2024, keyword per YISHUN_KEYWORDS list
-# De-duplicate by URL before sending to Stage 1
-# Rate limit: 1 request/second to avoid blocks
-
-# Consolidation runs BEFORE War Room queue:
-# 1. Check if incoming article entity + act matches any EXISTING published incident
-# 2. If match found → create 'update' queue item pointing to existing incident
-# 3. If no match → standard pipeline (Stage 1 → Stage 2 → queue)
-# 4. Flag possible related incidents using incident_links table
-
-# Max items per backfill run: 500 (operator can re-run for more)
-```
-
-### Hero Incidents — SQL Inserts
-
-These are inserted directly to the `incidents` table with `is_published = TRUE`. No War Room review needed — operator pre-approves by running the SQL.
-
-All 8 hero incidents follow the consolidation model:
-- Multi-report incidents (cat killings, Kurt Tay cases) use `source_timeline` JSONB
-- `is_developing = FALSE` for historical incidents (closed cases)
-- `first_reported_at` set to earliest known source date
-
-**Hero incident #6 (Kurt Tay) — special consolidation treatment:**
-
-This incident has multiple chapters spanning 2022–2026:
-- Kurt Tay void deck fight (Jul 2022) → 🤡 Clown, separate card (different act)
-- Kurt Tay intimate video case (Nov 2023 → Jan 2024 → Apr 2026) → 🗡️ Dagger, **one consolidated card**
-- Telegram group member (separate person) → 🗡️ Dagger, separate card, **linked** to Kurt Tay intimate video card
-
-### War Room Additions for Step 16
-
-New queue item type: `'backfill_batch'`
-
-War Room shows a summary card:
-```
-BACKFILL COMPLETE — [date]
-Scraped: N articles | Passed Stage 1: N | Queued for review: N
-Updates to existing incidents: N
-Possible related incidents flagged: N
-```
-
-Operator reviews backfill queue same as regular queue, with additional:
-- **BACKFILL** tag on each item
-- Bulk approve option for high-confidence (≥0.85) items
-- Bulk reject option for low-confidence (<0.5) items
 
 ---
 
