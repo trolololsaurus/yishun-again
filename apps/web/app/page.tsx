@@ -35,7 +35,7 @@ export default async function HomePage() {
     // Map markers — all incidents with coordinates
     supabase
       .from('incidents')
-      .select('id,slug,title,classification,severity,hype_meter,latitude,longitude')
+      .select('id,slug,title,classification,custom_label,severity,hype_meter,latitude,longitude')
       .eq('is_published', true)
       .not('latitude',  'is', null)
       .not('longitude', 'is', null),
@@ -43,10 +43,11 @@ export default async function HomePage() {
     // Feed — first page (developing stories float to top)
     supabase
       .from('incidents')
-      .select('id,slug,title,classification,severity,hype_meter,published_at,incident_date,area_name,is_milestone,milestone_type,milestone_value,is_developing,update_count,first_reported_at,source_timeline,latest_source_role')
+      .select('id,slug,title,classification,custom_label,severity,hype_meter,published_at,incident_date,area_name,is_milestone,milestone_type,milestone_value,is_developing,update_count,first_reported_at,source_timeline,latest_source_role')
       .eq('is_published', true)
       .order('is_developing', { ascending: false, nullsFirst: false })
-      .order('published_at',  { ascending: false })
+      .order('incident_date', { ascending: false, nullsFirst: false })
+      .order('id',            { ascending: false })
       .limit(20),
 
     // Current-year stats for Chaos Panel
@@ -80,6 +81,7 @@ export default async function HomePage() {
       slug:           inc.slug,
       title:          inc.title,
       classification: inc.classification as any,
+      custom_label:   inc.custom_label ?? null,
       severity:       inc.severity,
       hype_meter:     inc.hype_meter ?? 0,
     },

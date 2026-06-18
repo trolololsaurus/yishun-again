@@ -3,6 +3,7 @@ module.exports = {
   content: [
     './app/**/*.{ts,tsx}',
     './components/**/*.{ts,tsx}',
+    './lib/**/*.{ts,tsx}',
   ],
   theme: {
     extend: {
@@ -38,10 +39,13 @@ module.exports = {
         'good-vibes':  '#4ECDC4',
         'absurdities': '#FFE66D',
         'dark-events': '#FF6B6B',
+        // CULTURE — custom_label='CULTURE' (pop-culture / media mentions)
+        culture: '#A78BFA',
         // map pin colours
         'pin-heart':   '#4ECDC4',
         'pin-clown':   '#FFE66D',
         'pin-dagger':  '#FF6B6B',
+        'pin-culture': '#A78BFA',
       },
       fontFamily: {
         display: ['"Press Start 2P"', 'monospace'],

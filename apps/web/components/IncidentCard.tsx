@@ -1,10 +1,10 @@
 import Link from 'next/link'
-import { CLASS_ICON, CLASS_COLOR, CLASS_TOOLTIP, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, fmtDate, formatDuration } from '@/lib/utils'
+import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, fmtDate, formatDuration } from '@/lib/utils'
 import type { Incident } from '@/lib/types'
 
 interface Props {
   incident: Pick<Incident,
-    'slug' | 'title' | 'classification' | 'severity' | 'hype_meter'
+    'slug' | 'title' | 'classification' | 'custom_label' | 'severity' | 'hype_meter'
     | 'published_at' | 'incident_date' | 'area_name' | 'is_milestone'
     | 'is_developing' | 'update_count' | 'first_reported_at'
     | 'source_timeline' | 'latest_source_role'
@@ -14,7 +14,7 @@ interface Props {
 
 export function IncidentCard({ incident, style }: Props) {
   const {
-    slug, title, classification, severity, hype_meter, published_at, incident_date,
+    slug, title, classification, custom_label, severity, hype_meter, published_at, incident_date,
     area_name, is_milestone, is_developing, update_count, first_reported_at,
     source_timeline, latest_source_role,
   } = incident
@@ -46,10 +46,10 @@ export function IncidentCard({ incident, style }: Props) {
     >
       {/* Classification icon */}
       <span
-        className={`text-base flex-none mt-0.5 ${CLASS_COLOR[classification] ?? ''}`}
-        title={CLASS_TOOLTIP[classification]}
+        className={`text-base flex-none mt-0.5 ${classColor(classification, custom_label)}`}
+        title={classTooltip(classification, custom_label)}
       >
-        {CLASS_ICON[classification]}
+        {classIcon(classification, custom_label)}
       </span>
 
       <div className="min-w-0 flex-1">
@@ -87,7 +87,7 @@ export function IncidentCard({ incident, style }: Props) {
             </>
           ) : (
             <>
-              {!isVerdict && <span>{fmtDate(published_at)}</span>}
+              {!isVerdict && <span>{fmtDate(incident_date)}</span>}
               {area_name && <span className="truncate">{area_name}</span>}
             </>
           )}

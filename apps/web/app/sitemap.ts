@@ -6,13 +6,13 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://yishunagain.com'
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const { data: incidents } = await supabase
     .from('incidents')
-    .select('slug,published_at')
+    .select('slug,incident_date,published_at')
     .eq('is_published', true)
-    .order('published_at', { ascending: false })
+    .order('incident_date', { ascending: false, nullsFirst: false })
 
   const incidentRoutes: MetadataRoute.Sitemap = (incidents ?? []).map(inc => ({
     url:             `${SITE_URL}/incidents/${inc.slug}`,
-    lastModified:    new Date(inc.published_at),
+    lastModified:    new Date(inc.published_at ?? inc.incident_date),
     changeFrequency: 'weekly',
     priority:        0.8,
   }))
