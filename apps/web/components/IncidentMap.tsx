@@ -6,7 +6,7 @@ import { useRouter }         from 'next/navigation'
 import type { FilterState, MapFeature } from '@/lib/types'
 import { PIN_COLOR, classIcon, classLabel, classTooltip, pinColor, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter } from '@/lib/utils'
 
-const MAP_STYLE = process.env.NEXT_PUBLIC_MAPLIBRE_STYLE ?? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+const MAP_STYLE = process.env.NEXT_PUBLIC_MAPLIBRE_STYLE
 
 interface Props {
   features:     MapFeature[]
@@ -33,6 +33,12 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
     console.log('IncidentMap mount, container:', containerRef.current, 'dimensions:', containerRef.current?.offsetWidth, containerRef.current?.offsetHeight)
 
     ;(async () => {
+      if (!MAP_STYLE) {
+        setMapStatus('error')
+        setErrorMsg('NEXT_PUBLIC_MAPLIBRE_STYLE is not set')
+        return
+      }
+
       const ml = (await import('maplibre-gl')).default
       if (destroyed || !containerRef.current) return
 
