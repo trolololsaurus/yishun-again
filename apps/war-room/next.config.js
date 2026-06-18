@@ -21,7 +21,10 @@ const nextConfig = {
             // fonts.googleapis.com needed for Press Start 2P + Courier Prime.
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline'",   // Next.js inline scripts
+              // Next.js inline scripts; dev needs 'unsafe-eval' for webpack HMR/eval source maps
+              process.env.NODE_ENV === 'development'
+                ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+                : "script-src 'self' 'unsafe-inline'",
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' https://fonts.gstatic.com",
               "img-src 'self' data: https:",

@@ -130,6 +130,7 @@ export async function POST(
   await supabase.from('training_signals').insert({
     incident_id:             targetId,
     action,
+    decision:                action === 'edit_approve' ? 'approve_with_edits' : 'approve',
     original_draft:          item.proposed_summary,
     edited_draft:            updatedSummary || null,
     agent_confidence_was:    item.agent_confidence,

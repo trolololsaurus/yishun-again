@@ -74,6 +74,7 @@ export async function POST(
   await supabase.from('training_signals').insert({
     incident_id:      null,
     action:           'pattern_confirmed',
+    decision:         'approve',
     operator_changes: {
       pattern_type:    rc.pattern_type,
       pattern_value:   rc.pattern_value,
