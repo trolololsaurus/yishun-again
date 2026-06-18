@@ -9,7 +9,7 @@ export async function GET(request: Request) {
 
   const { data, error, count } = await supabase
     .from('incidents')
-    .select('id, title, classification, severity, is_published, published_at, slug, hype_meter, agent_confidence', { count: 'exact' })
+    .select('id, title, classification, custom_label, severity, is_published, published_at, slug, hype_meter, agent_confidence', { count: 'exact' })
     .order('published_at', { ascending: false })
     .range(from, from + limit - 1)
 
