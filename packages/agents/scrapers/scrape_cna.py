@@ -11,6 +11,7 @@ import json
 import logging
 import sys
 import time
+from datetime import date
 
 import feedparser
 
@@ -65,13 +66,22 @@ def scrape() -> list[dict]:
                 if not content_matches_keywords(f"{title} {content}"):
                     continue
 
+                published_at = None
+                pp = entry.get("published_parsed")
+                if pp:
+                    try:
+                        published_at = date(*pp[:3])
+                    except (TypeError, ValueError):
+                        pass
+
                 seen_urls.add(url)
                 results.append({
-                    "title":       title,
-                    "content":     content[:_CONTENT_LIMIT],
-                    "url":         url,
-                    "source_name": SOURCE_NAME,
-                    "source_type": SOURCE_TYPE,
+                    "title":        title,
+                    "content":      content[:_CONTENT_LIMIT],
+                    "url":          url,
+                    "source_name":  SOURCE_NAME,
+                    "source_type":  SOURCE_TYPE,
+                    "published_at": published_at,
                 })
 
         except Exception as exc:

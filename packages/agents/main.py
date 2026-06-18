@@ -1,3 +1,4 @@
+import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -7,11 +8,26 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
 
 load_dotenv(override=False)
+
+
+def _require_ops_token(x_ops_token: str = Header(..., alias="X-Ops-Token")) -> None:
+    """Shared-secret gate for all ops endpoints (B2 security fix).
+
+    Set OPS_TOKEN in the Cloud Run environment. Every caller (Cloud Scheduler,
+    manual curl) must pass X-Ops-Token: <token> or gets 401. If OPS_TOKEN is
+    not configured on the server the endpoint returns 503 rather than silently
+    allowing unauthenticated access.
+    """
+    token = os.getenv("OPS_TOKEN", "")
+    if not token:
+        raise HTTPException(status_code=503, detail="OPS_TOKEN not configured on server")
+    if not hmac.compare_digest(x_ops_token, token):
+        raise HTTPException(status_code=401, detail="Invalid X-Ops-Token")
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,16 +41,18 @@ logger = logging.getLogger("yishun-agents")
 # ---------------------------------------------------------------------------
 
 def _job_pipeline() -> None:
-    """Full scrape → LangGraph filter/draft/queue cycle."""
-    from scrapers import scrape_all
-    from orchestrator.orchestrator import run_graph
+    """Full ingestion pass — fetch -> Stage 1/2 -> consolidation -> war_room_queue."""
+    from datetime import datetime, timezone
+    from ingestion.orchestrator import run_ingestion_pass
+    from ingestion.sources import get_enabled_sources
     try:
-        items = scrape_all()
-        stats = run_graph(items, dry_run=False)
+        report = run_ingestion_pass(
+            get_enabled_sources(), now=datetime.now(timezone.utc), dry_run=False,
+        )
         logger.info(
-            "Graph pipeline: total=%d s1_pass=%d s1_rej=%d dupes=%d queued=%d errors=%d",
-            stats["total"], stats["s1_passed"], stats["s1_rejected"],
-            stats["duplicates"], stats["queued"], stats["errors"],
+            "Ingestion pass: total_queued=%d new=%d update=%d degraded=%s infra_error=%s",
+            report.total_queued, report.new_count, report.update_count,
+            report.degraded, report.infra_error,
         )
     except Exception as exc:
         logger.error("Pipeline job failed: %s", exc)
@@ -222,26 +240,33 @@ async def health():
 @app.post("/pipeline/run", tags=["ops"])
 async def trigger_pipeline(
     dry_run: bool = Query(False, description="Run without writing to Supabase"),
+    _: None = Depends(_require_ops_token),
 ):
     """
-    Manually trigger one full pipeline cycle via the LangGraph orchestrator.
+    Manually trigger one ingestion pass (ingestion/orchestrator.run_ingestion_pass).
     Set dry_run=true to see what would be queued without inserting anything.
     """
     import asyncio
-    from scrapers import scrape_all
-    from orchestrator.orchestrator import run_graph
+    from dataclasses import asdict
+    from datetime import datetime, timezone
+    from ingestion.orchestrator import run_ingestion_pass
+    from ingestion.sources import get_enabled_sources
 
     def _run():
-        items = scrape_all()
-        return run_graph(items, dry_run=dry_run)
+        return run_ingestion_pass(
+            get_enabled_sources(), now=datetime.now(timezone.utc), dry_run=dry_run,
+        )
 
     loop = asyncio.get_event_loop()
-    stats = await loop.run_in_executor(None, _run)
-    return stats
+    report = await loop.run_in_executor(None, _run)
+    result = asdict(report)
+    result["started_at"] = report.started_at.isoformat()
+    result["finished_at"] = report.finished_at.isoformat()
+    return result
 
 
 @app.post("/pattern/run", tags=["ops"])
-async def trigger_pattern_detection():
+async def trigger_pattern_detection(_: None = Depends(_require_ops_token)):
     """Manually trigger a full pattern detection sweep."""
     import asyncio
     from classifiers.pattern_detection import run as pattern_run
@@ -252,7 +277,7 @@ async def trigger_pattern_detection():
 
 
 @app.post("/recalibration/run", tags=["ops"])
-async def trigger_recalibration():
+async def trigger_recalibration(_: None = Depends(_require_ops_token)):
     """Manually trigger a recalibration check against all training signals."""
     import asyncio
     from classifiers.recalibration import check as recal_check
@@ -263,7 +288,7 @@ async def trigger_recalibration():
 
 
 @app.post("/lifecycle/run", tags=["ops"])
-async def trigger_lifecycle():
+async def trigger_lifecycle(_: None = Depends(_require_ops_token)):
     """
     Manually trigger the lifecycle timeout check.
     Equivalent to the weekly Monday cron — safe to run at any time.
@@ -276,62 +301,22 @@ async def trigger_lifecycle():
     return stats
 
 
-class BackfillRequest(BaseModel):
-    start_year:         int  = 2015
-    end_year:           int  = 2026
-    include_wikipedia:  bool = True
-    dry_run:            bool = False
-
-
 @app.post("/backfill/run", tags=["ops"])
-async def trigger_backfill(
-    body: BackfillRequest,
-    x_supabase_key: str = Header(
-        ...,
-        alias="X-Supabase-Key",
-        description="Must match SUPABASE_SECRET_KEY — prevents accidental triggers",
-    ),
-):
+async def trigger_backfill(_: None = Depends(_require_ops_token)):
     """
-    Run the historical backfill agent (spec §14c).
-
-    Protected: caller must supply the SUPABASE_SECRET_KEY in the
-    X-Supabase-Key header. This prevents the endpoint from being triggered
-    accidentally — a full backfill run is expensive and writes directly to
-    the incidents table.
-
-    Set dry_run=true to scrape and process through Stage 1/2 without writing
-    to Supabase. Useful for verifying coverage before a live run.
+    DEPRECATED (INGESTION_DESIGN.md §10b). The historical backfill agent
+    (scrapers.backfill_agent.run_backfill) is retired — historical incidents
+    have already been backfilled. The live forward pipeline is
+    run_ingestion_pass(), triggered via /pipeline/run or the scheduler.
     """
-    import asyncio
-
-    secret = os.getenv("SUPABASE_SECRET_KEY", "")
-    if not secret or x_supabase_key != secret:
-        raise HTTPException(status_code=401, detail="Invalid X-Supabase-Key")
-
-    if body.start_year < 2015 or body.end_year > 2026 or body.start_year > body.end_year:
-        raise HTTPException(
-            status_code=422,
-            detail="start_year must be 2015–2026 and <= end_year (max 2026)",
-        )
-
-    from scrapers.backfill_agent import run_backfill
-
-    loop = asyncio.get_event_loop()
-    stats = await loop.run_in_executor(
-        None,
-        lambda: run_backfill(
-            start_year        = body.start_year,
-            end_year          = body.end_year,
-            include_wikipedia = body.include_wikipedia,
-            dry_run           = body.dry_run,
-        ),
-    )
-    return stats
+    return {
+        "deprecated": True,
+        "detail": "Backfill is retired. Use /pipeline/run for the forward ingestion pipeline.",
+    }
 
 
 @app.post("/geocoding/backfill", tags=["ops"])
-async def trigger_geocoding_backfill():
+async def trigger_geocoding_backfill(_: None = Depends(_require_ops_token)):
     """
     Find all published incidents with NULL coordinates but a block_number or area_name,
     geocode each via the Singapore OneMap API, and update Supabase.
@@ -347,7 +332,7 @@ async def trigger_geocoding_backfill():
 
 
 @app.get("/autonomy/status", tags=["ops"])
-async def autonomy_status():
+async def autonomy_status(_: None = Depends(_require_ops_token)):
     """Per-category autonomy calibration data derived from training_signals."""
     import asyncio
     from classifiers.autonomy_tracker import get_autonomy_status
@@ -357,7 +342,7 @@ async def autonomy_status():
 
 
 @app.get("/autonomy/report", tags=["ops"], response_class=PlainTextResponse)
-async def autonomy_report():
+async def autonomy_report(_: None = Depends(_require_ops_token)):
     """Human-readable autonomy graduation report."""
     import asyncio
     from classifiers.autonomy_tracker import get_graduation_report

@@ -44,6 +44,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from scrapers.groq_budget import GroqBudget
+from scrapers._gnews_helpers import _gnews_source_name, _resolve_redirect
 
 # Explicit path so the module finds .env regardless of CWD
 # scrapers/backfill_agent.py → packages/agents/scrapers → packages/agents → packages → repo root
@@ -214,18 +215,8 @@ def _prefilter_is_noise(item: dict) -> bool:
 
 
 # ── Google News helpers ──────────────────────────────────────────────────────
-
-def _gnews_source_name(entry) -> str:
-    """Extract outlet name from a Google News RSS entry."""
-    source = getattr(entry, "source", None)
-    if source and hasattr(source, "title"):
-        return str(source.title)
-    # Fallback: Google News RSS appends " - Source Name" to the article title
-    title = entry.get("title", "")
-    if " - " in title:
-        return title.rsplit(" - ", 1)[-1].strip()
-    return "Google News"
-
+# _gnews_source_name, _resolve_redirect now live in scrapers/_gnews_helpers.py
+# (shared with ingestion/sources/google_news_rss.py) — imported above.
 
 def _gnews_pub_date(entry) -> Optional[str]:
     """Return ISO date string from feedparser's published_parsed, or None."""
@@ -236,25 +227,6 @@ def _gnews_pub_date(entry) -> Optional[str]:
         except Exception:
             pass
     return None
-
-
-def _resolve_redirect(raw_url: str) -> str:
-    """
-    Follow a Google News redirect URL to get the real article URL.
-    Times out quickly; returns raw_url on failure.
-    """
-    try:
-        resp = httpx.get(
-            raw_url,
-            follow_redirects=True,
-            timeout=8.0,
-            headers={"User-Agent": _BROWSER_UA},
-        )
-        final = str(resp.url)
-        # Reject if we ended up back on news.google.com (redirect failed)
-        return raw_url if "news.google.com" in final else final
-    except Exception:
-        return raw_url
 
 
 def _scrape_gnews_year(keyword: str, year: int, seen_urls: set) -> list:
@@ -807,46 +779,6 @@ def _build_incident_row(draft: dict, item: dict) -> Optional[dict]:
     }
 
 
-def _build_queue_row(item: dict, draft: dict, consolidation=None, is_update: bool = False) -> dict:
-    """Build a war_room_queue row for items going to operator review."""
-    status = "update" if is_update else "pending"
-    update_target_id = None
-    agent_role = "initial"
-
-    if consolidation is not None:
-        update_target_id = consolidation.matched_incident_id
-        agent_role = consolidation.agent_role_proposed
-
-    date_missing = not _parse_source_date_to_iso(item.get("date", ""))
-    row = {
-        "raw_content": {
-            **item,
-            **draft,
-            "_backfill":        True,
-            "_backfill_source": item.get("source_type", "msm"),
-            **({"_date_fallback": True} if date_missing else {}),
-        },
-        "source_url":              item["url"],
-        "source_type":             item.get("source_type", "msm"),
-        "proposed_title":          draft["title"],
-        "proposed_summary":        draft["summary"],
-        "proposed_classification": draft["classification"],
-        "proposed_severity":       draft["severity"],
-        "proposed_pixel_prompt":   draft.get("pixel_art_prompt", ""),
-        "proposed_slug":           draft.get("slug", ""),
-        "agent_confidence":        draft["confidence"],
-        "corroboration_count":     1,
-        "edmw_signal_count":       0,
-        "status":                  status,
-    }
-    row["raw_content"]["agent_role_proposed"] = agent_role
-
-    if update_target_id:
-        row["update_target_incident_id"] = update_target_id
-
-    return row
-
-
 # ── Confidence tier dispatcher ────────────────────────────────────────────────
 
 def _dry_run_entry(item: dict, draft: dict, tier: str) -> dict:
@@ -880,8 +812,11 @@ def _apply_tier(
     Route each candidate to the correct destination based on consolidation result
     and confidence tier (spec §14c).
     """
+    from consolidation.queue_row import build_queue_row
+
     link_validation_flags = link_validation_flags or {}
     link_validation       = link_validation or {}
+    date_missing          = not _parse_source_date_to_iso(item.get("date", ""))
 
     # Force to queue when ALL source URLs are dead/redirect (conf must be >= 0.85 to auto-pub)
     if link_validation_flags.get("_all_dead") and confidence < 0.85:
@@ -901,7 +836,7 @@ def _apply_tier(
             return
 
         try:
-            row = _build_queue_row(item, draft, consolidation, is_update=True)
+            row = build_queue_row(item, draft, consolidation, is_update=True, date_missing=date_missing)
             if link_validation:
                 row["raw_content"]["link_validation"] = link_validation
             supabase.table("war_room_queue").insert(row).execute()
@@ -933,9 +868,9 @@ def _apply_tier(
 
         if incident_row is None:
             # Unparseable/missing date — downgrade to QUEUE for operator review.
-            # _build_queue_row sets raw_content._date_fallback = True automatically.
+            # build_queue_row sets raw_content._date_fallback = True automatically.
             try:
-                row = _build_queue_row(item, draft, consolidation)
+                row = build_queue_row(item, draft, consolidation, date_missing=date_missing)
                 if link_validation:
                     row["raw_content"]["link_validation"] = link_validation
                 supabase.table("war_room_queue").insert(row).execute()
@@ -1001,7 +936,7 @@ def _apply_tier(
             return
 
         try:
-            row = _build_queue_row(item, draft, consolidation)
+            row = build_queue_row(item, draft, consolidation, date_missing=date_missing)
             if link_validation:
                 row["raw_content"]["link_validation"] = link_validation
             supabase.table("war_room_queue").insert(row).execute()
@@ -1444,7 +1379,7 @@ def process_candidates(
     from filters.stage1_filter import filter_content
     from filters.stage2_writer import write_stage2
     from classifiers.corroboration import check_duplicate
-    from classifiers.consolidation import check as consolidation_check
+    from consolidation.check import check as consolidation_check
 
     # ── Phase 2a: Stage 1 → Stage 2 → collect ────────────────────────────────
     # Do NOT route to tiers yet — collect everything first so the intra-batch
@@ -1636,6 +1571,7 @@ def run_backfill(
     dry_run: bool = False,
     limit: int = MAX_ITEMS_PER_RUN,
     wikipedia_only: bool = False,
+    force_deprecated: bool = False,
 ) -> dict:
     """
     Run the historical backfill.
@@ -1647,6 +1583,11 @@ def run_backfill(
         dry_run:           Run Stage 1/2/consolidation but write nothing to Supabase.
         wikipedia_only:    Skip Google News entirely and run only the Wikipedia
                            phase, regardless of start_year/end_year/include_wikipedia.
+        force_deprecated:  Required to run the "recent" Google News RSS path
+                           (wikipedia_only=False). DEPRECATED — see
+                           INGESTION_DESIGN.md §10b; this path is being replaced
+                           by ingestion/orchestrator.py::run_ingestion_pass().
+                           The wikipedia_only path is unaffected.
 
     Returns:
         Stats dict with counts for all outcomes.
@@ -1678,6 +1619,29 @@ def run_backfill(
         "items":              [],   # populated in dry_run for reporting
         "error_details":      [],   # list of {phase, url, error} — capped at 100
     }
+
+    # ── Deprecation guard ─────────────────────────────────────────────────────
+    # The "recent" Google News RSS path (wikipedia_only=False) is deprecated by
+    # INGESTION_DESIGN.md §10b in favour of ingestion/orchestrator.py::run_ingestion_pass().
+    # The wikipedia_only path remains valid for historical backfill.
+    if not wikipedia_only and not force_deprecated:
+        logger.warning(
+            "run_backfill(): the 'recent' Google News RSS path (wikipedia_only=False) "
+            "is DEPRECATED (INGESTION_DESIGN.md §10b) and will be replaced by "
+            "ingestion/orchestrator.py::run_ingestion_pass(). Refusing to run. "
+            "Pass force_deprecated=True (CLI: --force-deprecated) to run it anyway, "
+            "or use wikipedia_only=True / --historical-search for supported paths."
+        )
+        stats["errors"] = 1
+        stats["error_details"].append({
+            "phase": "deprecation_guard",
+            "url":   "",
+            "error": (
+                "run_backfill() 'recent' path is deprecated — pass "
+                "force_deprecated=True or use wikipedia_only=True / --historical-search"
+            ),
+        })
+        return stats
 
     # ── Supabase client (not needed in dry_run) ──────────────────────────────
     supabase = None
@@ -1810,15 +1774,16 @@ if __name__ == "__main__":
             print(f"Error: {exc}")
         sys.exit(0)
 
-    dry_run    = "--dry-run" in sys.argv
-    no_wiki    = "--no-wikipedia" in sys.argv
-    wiki_only  = "--wikipedia-only" in sys.argv
-    historical = "--historical-search" in sys.argv
+    dry_run          = "--dry-run" in sys.argv
+    no_wiki          = "--no-wikipedia" in sys.argv
+    wiki_only        = "--wikipedia-only" in sys.argv
+    historical       = "--historical-search" in sys.argv
+    force_deprecated = "--force-deprecated" in sys.argv
 
     if wiki_only:
-        logger.info("Running Wikipedia-only mode (1980–2014)")
+        logger.info("Running Wikipedia-only mode (%d–%d)", WIKI_YEAR_MIN, WIKI_YEAR_MAX)
     if historical:
-        logger.info("Running historical search mode (GDELT + Google web + Yahoo)")
+        logger.info("Running historical search mode (Google web + CNA Google site search)")
 
     start_year = 2015
     end_year   = 2026
@@ -1845,7 +1810,7 @@ if __name__ == "__main__":
     print(f"\n{'=' * 68}")
     print(f"Yishun Again — Historical Backfill {'DRY RUN' if dry_run else 'LIVE RUN'}")
     print(f"  Google News:  {gnews_label}")
-    print(f"  Wikipedia:    {'yes (1980–2014)' if (not no_wiki or wiki_only) else 'no'}")
+    print(f"  Wikipedia:    {f'yes ({WIKI_YEAR_MIN}–{WIKI_YEAR_MAX})' if (not no_wiki or wiki_only) else 'no'}")
     print(f"  Limit:        {limit} items")
     print(f"  Auto-publish: confidence >= {TIER_AUTO_PUBLISH}")
     print(f"  Queue:        confidence {TIER_QUEUE}–{TIER_AUTO_PUBLISH - 0.01:.2f}")
@@ -1871,6 +1836,7 @@ if __name__ == "__main__":
             dry_run            = dry_run,
             limit              = limit,
             wikipedia_only     = wiki_only,
+            force_deprecated   = force_deprecated,
         )
 
     print(f"\n{'=' * 68}")

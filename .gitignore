@@ -33,3 +33,8 @@ packages/agents/scrapers/*.log
 packages/agents/**/*_backup.json
 packages/agents/**/groq_session_usage.json
 packages/agents/**/incidents_export.json
+
+# One-off DB audit and cleanup scripts — kept locally as run-record, not product code
+packages/agents/audit_*.py
+packages/agents/ws0_*.py
+packages/agents/correction_pass_*.py

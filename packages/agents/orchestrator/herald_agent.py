@@ -1,7 +1,8 @@
 """
 Herald agent — milestone detection and queuing (spec §8c).
 
-Called from pipeline.py after every successful war_room_queue insert.
+Called from orchestrator/orchestrator.py's queue_insert/herald_check nodes (and
+backfill_agent.py's auto-publish path) after every successful insert.
 Checks all milestone thresholds against published incidents.
 
 Milestone posts  → queued in war_room_queue for operator review.
@@ -181,8 +182,11 @@ def _check_death_streak(
         .execute()
     )
 
-    if last_death_res.data:
-        last_death_date = date.fromisoformat(last_death_res.data[0]["published_at"][:10])
+    last_death_pub = (
+        last_death_res.data[0].get("published_at") if last_death_res.data else None
+    )
+    if last_death_pub:
+        last_death_date = date.fromisoformat(last_death_pub[:10])
         current_streak = (today - last_death_date).days
     else:
         # No confirmed deaths on record — streak from first published incident
@@ -194,10 +198,8 @@ def _check_death_streak(
             .limit(1)
             .execute()
         )
-        current_streak = (
-            (today - date.fromisoformat(first_res.data[0]["published_at"][:10])).days
-            if first_res.data else 0
-        )
+        first_pub = first_res.data[0].get("published_at") if first_res.data else None
+        current_streak = (today - date.fromisoformat(first_pub[:10])).days if first_pub else 0
 
     logger.debug("Herald: death-free streak = %d days (deaths_in_draft=%r)", current_streak, deaths)
 
