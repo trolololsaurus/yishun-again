@@ -1218,13 +1218,19 @@ When a year is selected in the Chaos Panel:
 
 ### 6.3 Homepage Layout
 
+> **Note:** the authoritative layout is §6.0 (One Page, No Scroll — map 45vh,
+> fixed 280px Chaos sidebar). The sketch below is the original concept and is
+> kept for context only. The map is **MapLibre GL JS + OpenFreeMap "Liberty"**
+> (`https://tiles.openfreemap.org/styles/liberty`) — there is no Mapbox and no
+> Mapbox token anywhere in this project.
+
 ```
 ┌─────────────────────────────────────────────────────┐
 │  YISHUN AGAIN    [pixel art logo]    Chaos Index: 73 │
 │  "Singapore's Most Cursed Estate — Documented."      │
 ├─────────────────────────────────────────────────────┤
 │                                                      │
-│         MAPBOX MAP (full width, 60vh)                │
+│      MapLibre + OpenFreeMap map (see §6.0: 45vh)     │
 │         Block-level markers, colour by classification│
 │         Click marker → incident popover              │
 │                                                      │

@@ -174,7 +174,7 @@ Dark pixel art retro tabloid. Two fonts only: `Press Start 2P` (headers, scores,
 
 CSS tokens are defined in spec §6.1. Key colours: bg `#0D0D0D`, accent red `#E74C3C`, accent yellow `#F1C40F`, dagger purple `#8E44AD`.
 
-Map: MapLibre GL JS with OpenFreeMap tiles (`NEXT_PUBLIC_MAPLIBRE_STYLE`). No Mapbox token required.
+Map: MapLibre GL JS with OpenFreeMap "Liberty" style (`https://tiles.openfreemap.org/styles/liberty`). Keyless — no Mapbox token, no Stadia/CartoDB. Configured via `NEXT_PUBLIC_MAPLIBRE_STYLE` with a hardcoded fallback to the same Liberty URL in `IncidentMap.tsx`, so the map loads even if the env var is unset. A set-but-wrong env var overrides the fallback, so the safest production posture is to leave it unset.
 
 Share cards: rendered via OG meta tags — no separate image generation. The pixel art image (already generated for incident page) doubles as the OG image.
 

@@ -13,15 +13,21 @@ const securityHeaders = [
     key: 'Content-Security-Policy',
     value: [
       "default-src 'self'",
-      isDev
-        ? "script-src 'self' 'unsafe-eval' 'unsafe-inline'"             // Next.js HMR inline scripts
-        : "script-src 'self' 'unsafe-eval'",                            // MapLibre WebGL
+      // 'unsafe-inline' is required in BOTH dev and prod: Next.js App Router emits
+      // inline <script> tags (the self.__next_f.push RSC hydration payload). Without
+      // it, real browsers block those inline scripts, React never hydrates, and all
+      // client components — including the dynamically-imported map — silently fail to
+      // mount (symptom: map stuck on "Loading map…"). The secure alternative is a
+      // per-request CSP nonce via middleware, but that forces dynamic rendering and
+      // would break this project's SSG + ISR (revalidate) model. 'unsafe-eval' is for
+      // MapLibre GL.
+      "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",  // MapLibre + Google Fonts
       "font-src 'self' https://fonts.gstatic.com",
-      "img-src 'self' data: blob: https://tiles.openfreemap.org https://tiles.stadiamaps.com https://*.stadiamaps.com https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com https://assets.yishunagain.com",
+      "img-src 'self' data: blob: https://tiles.openfreemap.org https://assets.yishunagain.com",
       isDev
-        ? "connect-src 'self' https://*.supabase.co https://tiles.openfreemap.org https://tiles.stadiamaps.com https://*.stadiamaps.com https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com https://assets.yishunagain.com ws://localhost:3000 wss://localhost:3000"
-        : "connect-src 'self' https://*.supabase.co https://tiles.openfreemap.org https://tiles.stadiamaps.com https://*.stadiamaps.com https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com https://assets.yishunagain.com",
+        ? "connect-src 'self' https://*.supabase.co https://tiles.openfreemap.org https://assets.yishunagain.com ws://localhost:3000 wss://localhost:3000"
+        : "connect-src 'self' https://*.supabase.co https://tiles.openfreemap.org https://assets.yishunagain.com",
       "worker-src blob:",
       "media-src 'self' https://videodelivery.net",
       "frame-ancestors 'none'",

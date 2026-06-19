@@ -6,7 +6,12 @@ import { useRouter }         from 'next/navigation'
 import type { FilterState, MapFeature } from '@/lib/types'
 import { PIN_COLOR, classIcon, classLabel, classTooltip, pinColor, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter } from '@/lib/utils'
 
-const MAP_STYLE = process.env.NEXT_PUBLIC_MAPLIBRE_STYLE
+// OpenFreeMap Liberty — keyless, served via Cloudflare CDN. The env var lets us
+// override per-environment, but the hardcoded fallback guarantees the map still
+// loads if the var is ever unset or blank, so it can never be a single point of
+// failure. `||` (not `??`) so an empty-string env var also falls back.
+const FALLBACK_MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty'
+const MAP_STYLE = process.env.NEXT_PUBLIC_MAPLIBRE_STYLE || FALLBACK_MAP_STYLE
 
 interface Props {
   features:     MapFeature[]
@@ -30,15 +35,7 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
     let ro: ResizeObserver | null = null
     let loadTimeout: ReturnType<typeof setTimeout>
 
-    console.log('IncidentMap mount, container:', containerRef.current, 'dimensions:', containerRef.current?.offsetWidth, containerRef.current?.offsetHeight)
-
     ;(async () => {
-      if (!MAP_STYLE) {
-        setMapStatus('error')
-        setErrorMsg('NEXT_PUBLIC_MAPLIBRE_STYLE is not set')
-        return
-      }
-
       const ml = (await import('maplibre-gl')).default
       if (destroyed || !containerRef.current) return
 
@@ -54,8 +51,6 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
 
       // Resize immediately after init — container may already have dimensions
       map.resize()
-
-      console.log('MapLibre map created, style:', map.getStyle())
 
       // ResizeObserver keeps canvas in sync whenever the container resizes
       ro = new ResizeObserver(() => { if (!destroyed) map.resize() })
@@ -87,9 +82,8 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
         map.resize()
         setTimeout(() => { if (!destroyed) map.resize() }, 200)
 
-        // No paint-property overrides — the Stadia Alidade Smooth Dark style
-        // handles its own colours correctly. Earlier teal/amber tints turned the
-        // roads green and made the map worse, so they were removed.
+        // No paint-property overrides — the OpenFreeMap Liberty style handles its
+        // own basemap colours. Only the incident-pin circle layer is added below.
 
         // GeoJSON source — all incident markers
         map.addSource('incidents', {
