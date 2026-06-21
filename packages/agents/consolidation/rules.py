@@ -11,6 +11,14 @@ import re
 # Fetch up to this many recent published incidents for comparison.
 CANDIDATE_FETCH_LIMIT = 50
 
+# Fetch up to this many recent UNPROCESSED war_room_queue items for comparison.
+# Catches duplicates that arrive across successive passes before any sibling is
+# approved/published — the published-only comparison can't see those (a second
+# report of the same event just becomes a second pending row). A same_incident
+# match against a queued item means the event is already awaiting review, so the
+# new candidate is a SKIP rather than a fresh duplicate row.
+QUEUE_FETCH_LIMIT = 50
+
 # Minimum token overlap for the keyword pre-filter before sending to Claude.
 # If fewer than this many candidate keywords overlap with a published incident,
 # skip the Claude call for that pair to save API cost.
