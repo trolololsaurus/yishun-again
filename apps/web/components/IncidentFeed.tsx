@@ -98,19 +98,10 @@ export function IncidentFeed({ initialItems, activeFilter, selectedYear }: Props
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 py-2 border-b border-border flex items-center justify-between">
+      <div className="px-4 py-2 border-b border-border">
         <span className="font-body text-text-secondary" style={{ fontSize: '14px' }}>
           {feedHeader}
         </span>
-        {selectedYear && (
-          <button
-            className="font-body text-amber-lt hover:underline"
-            onClick={() => {/* year reset is handled in HomeClient */}}
-            style={{ fontSize: '14px' }}
-          >
-            clear
-          </button>
-        )}
       </div>
 
       <div ref={containerRef} style={{ flex: 1, minHeight: 0 }}>
