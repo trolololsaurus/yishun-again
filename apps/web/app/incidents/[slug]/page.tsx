@@ -216,43 +216,73 @@ export default async function IncidentPage({ params }: Props) {
         </div>
       )}
 
-      {/* Source links */}
-      <div className="mb-6">
-        <div className="font-body text-text-secondary mb-2 uppercase" style={{ fontSize: '14px' }}>
-          Sources
-        </div>
-        <ul className="space-y-1">
-          {(incident.source_urls ?? []).map((url, i) => {
-            let domain = url
-            try { domain = new URL(url).hostname.replace(/^www\./, '') } catch {}
-            return (
-              <li key={i}>
-                <a
-                  href={url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-body text-amber-lt hover:underline break-all"
-                  style={{ fontSize: '14px' }}
-                >
-                  {domain}
-                </a>
-              </li>
-            )
-          })}
-        </ul>
-      </div>
+      {/* Source links — dated and sorted earliest-first */}
+      {(() => {
+        // Build url→date lookup from source_timeline
+        const urlDate = new Map<string, string>()
+        for (const entry of timeline) {
+          if (entry.source_url && !urlDate.has(entry.source_url)) {
+            urlDate.set(entry.source_url, entry.date)
+          }
+        }
+        // Sort: URLs with a known date go first (earliest), undated URLs at end
+        const sorted = [...(incident.source_urls ?? [])].sort((a, b) => {
+          const da = urlDate.get(a) ?? 'zzzz'
+          const db = urlDate.get(b) ?? 'zzzz'
+          return da.localeCompare(db)
+        })
+        return (
+          <div className="mb-6">
+            <div className="font-body text-text-secondary mb-2 uppercase" style={{ fontSize: '14px' }}>
+              Sources
+            </div>
+            <ul className="space-y-2">
+              {sorted.map((url, i) => {
+                let domain = url
+                try { domain = new URL(url).hostname.replace(/^www\./, '') } catch {}
+                const date = urlDate.get(url)
+                return (
+                  <li key={i} className="flex items-baseline gap-2">
+                    {date && (
+                      <span className="font-body text-text-secondary flex-none" style={{ fontSize: '12px' }}>
+                        {fmtDate(date)}
+                      </span>
+                    )}
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-body text-amber-lt hover:underline break-all"
+                      style={{ fontSize: '14px' }}
+                    >
+                      {domain}
+                    </a>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        )
+      })()}
 
       {/* Story timeline — visual horizontal layout, requires 2+ entries */}
       {timeline.length >= 2 && (() => {
         const ROLE_LABEL: Record<string, string> = {
-          initial:    'REPORTED',
-          update:     'UPDATE',
-          verdict:    'VERDICT',
-          correction: 'CORRECTED',
-          follow_up:  'FOLLOW UP',
+          initial:          'REPORTED',
+          update:           'UPDATE',
+          verdict:          'VERDICT',
+          sentencing:       'SENTENCED',
+          appeal:           'APPEAL',
+          appeal_dismissed: 'APPEAL DISMISSED',
+          correction:       'CORRECTED',
+          follow_up:        'FOLLOW UP',
         }
-        const showTotal =
-          incident.latest_source_role === 'verdict' && incident.first_reported_at != null
+        const TOTAL_ROLES = new Set(['verdict', 'sentencing', 'appeal', 'appeal_dismissed'])
+        const lastVerdictEntry = [...timeline].reverse().find(e => TOTAL_ROLES.has(e.role ?? ''))
+        const showTotal = lastVerdictEntry != null && incident.first_reported_at != null
+        const totalLabel = lastVerdictEntry?.role === 'sentencing' ? 'sentencing'
+                         : lastVerdictEntry?.role === 'appeal_dismissed' ? 'appeal'
+                         : 'verdict'
 
         return (
           <details className="mb-6 group" open>
@@ -302,10 +332,10 @@ export default async function IncidentPage({ params }: Props) {
               </div>
             </div>
 
-            {/* Total duration — verdict stories only */}
+            {/* Total duration — verdict/sentencing/appeal stories only */}
             {showTotal && (
               <div style={{ fontFamily: "'Courier Prime', monospace", fontSize: 13, color: 'var(--color-amber)', marginTop: 10 }}>
-                ⏱ Total: {formatDuration(new Date(incident.first_reported_at!), new Date(incident.incident_date))} from first report to verdict
+                ⏱ Total: {formatDuration(new Date(incident.first_reported_at!), new Date(lastVerdictEntry!.date))} from first report to {totalLabel}
               </div>
             )}
           </details>
