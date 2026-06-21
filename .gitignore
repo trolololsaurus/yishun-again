@@ -38,3 +38,8 @@ packages/agents/**/incidents_export.json
 packages/agents/audit_*.py
 packages/agents/ws0_*.py
 packages/agents/correction_pass_*.py
+packages/agents/dedup_*.py
+packages/agents/fix_*.py
+packages/agents/verify_*.py
+packages/agents/query_*.py
+packages/agents/probe_*.py
