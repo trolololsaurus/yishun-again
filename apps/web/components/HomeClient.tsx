@@ -39,6 +39,7 @@ export function HomeClient({ mapFeatures, initialFeed, chaosData }: Props) {
     counts:     chaosData.counts,
   })
   const [statsLoading, setStatsLoading] = useState(false)
+  const [statsError,   setStatsError]   = useState(false)
   const loadedYear = useRef(chaosData.year)
 
   useEffect(() => {
@@ -46,18 +47,25 @@ export function HomeClient({ mapFeatures, initialFeed, chaosData }: Props) {
     loadedYear.current = selectedYear
     setStatsLoading(true)
     fetch(`/api/chaos?year=${selectedYear}`)
-      .then(r => r.json())
+      .then(async r => {
+        if (!r.ok) throw new Error(`chaos API ${r.status}`)
+        return r.json()
+      })
       .then(d => {
-        // Ignore error payloads (e.g. 429 rate-limit) that lack counts —
-        // keep the previous good stats rather than crashing on undefined.
-        if (!d || !d.counts) return
+        if (!d || !d.counts) throw new Error('chaos API: malformed payload')
+        setStatsError(false)
         setYearStats({
           score:      d.score,
           descriptor: chaosDescriptor(d.score),
           counts:     d.counts,
         })
       })
-      .catch(() => { /* keep previous stats on network error */ })
+      .catch(err => {
+        // Surface the failure instead of silently keeping stale stats, so a
+        // broken year (or any chaos failure) is visible in the panel.
+        console.error('[ChaosPanel] stats fetch failed:', err)
+        setStatsError(true)
+      })
       .finally(() => setStatsLoading(false))
   }, [selectedYear])
 
@@ -96,6 +104,7 @@ export function HomeClient({ mapFeatures, initialFeed, chaosData }: Props) {
           descriptor={yearStats.descriptor}
           counts={yearStats.counts}
           loading={statsLoading}
+          error={statsError}
           selectedYear={selectedYear}
           availableYears={chaosData.availableYears}
           onYearChange={setSelectedYear}

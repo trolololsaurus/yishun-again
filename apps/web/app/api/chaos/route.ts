@@ -11,7 +11,14 @@ export async function GET(req: Request) {
 
   const url         = new URL(req.url)
   const currentYear = new Date().getFullYear()
-  const year        = sanitiseYear(url.searchParams.get('year')) ?? currentYear
+
+  // Absent year → current year (legitimate). Present-but-invalid → surface an
+  // error instead of silently defaulting, so a bad caller is caught loudly.
+  const yearParam = url.searchParams.get('year')
+  const year      = yearParam === null ? currentYear : sanitiseYear(yearParam)
+  if (year === null) {
+    return NextResponse.json({ error: `Invalid year: ${yearParam}` }, { status: 400 })
+  }
 
   const [yearRes, incidentDateRes] = await Promise.all([
     // Stats for the requested year — filter on incident_date (the real event date).

@@ -160,9 +160,13 @@ export function sanitiseUUID(raw: string | null | undefined): string | null {
     ? raw! : null
 }
 
+// Accept any 4-digit year. No hardcoded floor: the year dropdown is populated
+// from real incident_date values (incl. manual historical backfills predating
+// 1990), so any lower bound here silently drops valid years. A malformed value
+// returns null and each caller decides how to handle it (map → default to
+// current year; chaos → surface an error; incidents → unfiltered).
 export function sanitiseYear(raw: string | null | undefined): number | null {
-  const n = parseInt(raw ?? '', 10)
-  return n >= 1990 && n <= 2100 ? n : null
+  return /^\d{4}$/.test(raw ?? '') ? parseInt(raw as string, 10) : null
 }
 
 export function sanitisePage(raw: string | null | undefined): number {

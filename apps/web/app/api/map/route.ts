@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase }    from '@/lib/supabase'
+import { sanitiseYear } from '@/lib/utils'
 
 // Returns published incidents with coordinates as a GeoJSON FeatureCollection,
 // scoped to a single year. ?year=YYYY filters by incident_date; with no param
 // it defaults to the current year (not all-time).
 export async function GET(req: NextRequest) {
-  const yearParam = req.nextUrl.searchParams.get('year')
-  const year = /^\d{4}$/.test(yearParam ?? '')
-    ? Number(yearParam)
-    : new Date().getFullYear()
+  // Shared validator with /api/incidents and /api/chaos. Absent/invalid → current year.
+  const year = sanitiseYear(req.nextUrl.searchParams.get('year')) ?? new Date().getFullYear()
 
   const { data, error } = await supabase
     .from('incidents')

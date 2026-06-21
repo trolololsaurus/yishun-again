@@ -21,13 +21,14 @@ interface Props {
   descriptor:     string
   counts:         Counts
   loading:        boolean
+  error?:         boolean
   selectedYear:   number
   availableYears: number[]
   onYearChange:   (y: number) => void
 }
 
 export function ChaosPanel({
-  score, descriptor, counts, loading, selectedYear, availableYears, onYearChange,
+  score, descriptor, counts, loading, error, selectedYear, availableYears, onYearChange,
 }: Props) {
   // Defensive default — never crash if counts is momentarily absent.
   const c = counts ?? { heart: 0, clown: 0, dagger: 0, total: 0 }
@@ -64,41 +65,61 @@ export function ChaosPanel({
         </select>
       </div>
 
-      {/* ── Chaos Index ───────────────────────────────────────── */}
-      <div className="px-4 pt-4 pb-4" style={{ borderBottom: '1px solid var(--color-border)' }}>
-        <SectionHeader>Chaos Index</SectionHeader>
-
-        <div
-          className="text-center py-4 px-3"
-          style={{
-            background: 'var(--color-surface)',
-            border: '2px solid var(--color-border)',
-            boxShadow: 'inset 0 0 12px rgba(78, 205, 196, 0.08)',  // subtle teal cockpit glow
-          }}
-        >
-          <div className="leading-none mb-3">
-            <span className="font-display" style={{ fontSize: 48, color: 'var(--color-amber)' }}>{score}</span>
-            <span className="font-display" style={{ fontSize: 20, color: 'var(--color-amber-dim)' }}>/100</span>
-          </div>
-          <div className="font-display" style={{ fontSize: 13, color: 'var(--color-good-vibes)', letterSpacing: '0.1em' }}>
-            {descriptor.toUpperCase()}
+      {error ? (
+        /* ── Error state — surfaced loudly so a chaos failure is obvious ── */
+        <div className="px-4 pt-4 pb-4" style={{ borderBottom: '1px solid var(--color-border)' }}>
+          <SectionHeader>Chaos Index</SectionHeader>
+          <div
+            className="text-center py-4 px-3"
+            style={{ background: 'var(--color-surface)', border: '2px solid var(--color-dark-events)' }}
+          >
+            <div className="font-display mb-2" style={{ fontSize: 13, color: 'var(--color-dark-events)', letterSpacing: '0.1em' }}>
+              CHAOS DATA ERROR
+            </div>
+            <div className="font-body" style={{ fontSize: 13, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+              Could not load stats for {selectedYear}. Check the console / API.
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <>
+          {/* ── Chaos Index ───────────────────────────────────────── */}
+          <div className="px-4 pt-4 pb-4" style={{ borderBottom: '1px solid var(--color-border)' }}>
+            <SectionHeader>Chaos Index</SectionHeader>
 
-      {/* ── Incident Breakdown ────────────────────────────────── */}
-      <div className="px-4 pt-4 pb-4" style={{ borderBottom: '1px solid var(--color-border)' }}>
-        <SectionHeader>Incident Breakdown</SectionHeader>
-        <div className="font-body mb-3" style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
-          {selectedYear}
-        </div>
-        {breakdown.map(({ label, value, color }) => (
-          <div key={label} className="flex items-center justify-between mb-3">
-            <span className="font-display" style={{ fontSize: 10, color }}>{label}</span>
-            <span className="font-display" style={{ fontSize: 20, color }}>{value}</span>
+            <div
+              className="text-center py-4 px-3"
+              style={{
+                background: 'var(--color-surface)',
+                border: '2px solid var(--color-border)',
+                boxShadow: 'inset 0 0 12px rgba(78, 205, 196, 0.08)',  // subtle teal cockpit glow
+              }}
+            >
+              <div className="leading-none mb-3">
+                <span className="font-display" style={{ fontSize: 48, color: 'var(--color-amber)' }}>{score}</span>
+                <span className="font-display" style={{ fontSize: 20, color: 'var(--color-amber-dim)' }}>/100</span>
+              </div>
+              <div className="font-display" style={{ fontSize: 13, color: 'var(--color-good-vibes)', letterSpacing: '0.1em' }}>
+                {descriptor.toUpperCase()}
+              </div>
+            </div>
           </div>
-        ))}
-      </div>
+
+          {/* ── Incident Breakdown ────────────────────────────────── */}
+          <div className="px-4 pt-4 pb-4" style={{ borderBottom: '1px solid var(--color-border)' }}>
+            <SectionHeader>Incident Breakdown</SectionHeader>
+            <div className="font-body mb-3" style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
+              {selectedYear}
+            </div>
+            {breakdown.map(({ label, value, color }) => (
+              <div key={label} className="flex items-center justify-between mb-3">
+                <span className="font-display" style={{ fontSize: 10, color }}>{label}</span>
+                <span className="font-display" style={{ fontSize: 20, color }}>{value}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* ── Legal disclaimer (kept at 10px) ───────────────────── */}
       <div className="px-4 pt-3 pb-4 font-body" style={{ fontSize: 10, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>

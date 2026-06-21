@@ -181,12 +181,29 @@ approve-time). `fmtDate(null)` renders `—`, never epoch/1970.
 **Year selector** (in the sidebar Chaos Panel): defaults to current SGT year.
 Selecting a year sends `year` to `/api/incidents`, `/api/chaos`, and `/api/map`
 simultaneously — all three update together. Feed header shows
-"Showing incidents from [year] · [N] total" + reset.
+"Showing [year] · [N] loaded". The dropdown always has a year selected (there is
+no "all years" state), so there is **no reset/clear control** — it would be a
+no-op.
+
+**Year validation — single shared sanitiser.** All three routes use
+`sanitiseYear` (`lib/utils.ts`), which accepts any 4-digit year (no hardcoded
+floor — historical backfills predate 1990). Per-route handling of a missing /
+invalid value:
+- `/api/map` and `/api/incidents` (absent param) → default to current year /
+  unfiltered respectively.
+- `/api/chaos`: absent param → current year; **present-but-invalid → HTTP 400**.
+  The client surfaces this as a visible **"CHAOS DATA ERROR"** state in the Chaos
+  Panel (no silent fallback to stale/other-year numbers).
+
+> **Regression guard:** never reintroduce a per-route year regex or a numeric
+> floor in `sanitiseYear`. A floor (the old `>= 1990`) silently dropped valid
+> pre-1990 years on the feed and chaos counts while the map — which used its own
+> regex — kept working, producing a confusing "only the map filters" bug.
 
 **Chaos Index formula** (`lib/utils.ts`):
 ```
 raw = Σ (severity × weight)
-  dagger ×3.0 · clown ×1.5 · heart ×−1.0 · custom/culture ×0
+  dagger ×2.0 · clown ×1.0 · heart ×−1.0 · custom/culture ×0
 score = clamp(round(raw / 300 × 100), 0, 100)
 ```
 Descriptors: `<20` Quiet · `<40` Simmering · `<60` Elevated · `<80` Critical ·
