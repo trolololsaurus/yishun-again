@@ -34,28 +34,43 @@ const CULTURE_TOOLTIP = 'Yishun on the Map — pop-culture and media mentions'
 // classification + custom_label aware variants — special-case
 // classification='custom' + custom_label='CULTURE' ("Yishun on the Map"),
 // otherwise fall back to the generic maps above.
+const CUSTOM_ICON: Record<string, string> = {
+  CULTURE:       '🌐',
+  'UNSOLVED CRIME': '❓',
+}
+const CUSTOM_LABEL: Record<string, string> = {
+  CULTURE:       'YISHUN ON THE MAP',
+  'UNSOLVED CRIME': 'UNSOLVED CRIME',
+}
+const CUSTOM_TOOLTIP: Record<string, string> = {
+  CULTURE:       'Yishun on the Map — pop-culture and media mentions',
+  'UNSOLVED CRIME': 'Cold case — perpetrator never identified or convicted',
+}
+
 export function classIcon(cls: string, customLabel?: string | null): string {
-  if (cls === 'custom' && customLabel === 'CULTURE') return '🌐'
+  if (cls === 'custom' && customLabel) return CUSTOM_ICON[customLabel] ?? '📌'
   return CLASS_ICON[cls] ?? ''
 }
 
 export function classLabel(cls: string, customLabel?: string | null): string {
-  if (cls === 'custom' && customLabel === 'CULTURE') return 'YISHUN ON THE MAP'
+  if (cls === 'custom' && customLabel) return CUSTOM_LABEL[customLabel] ?? customLabel
   return CLASS_LABEL[cls] ?? cls.toUpperCase()
 }
 
 export function classColor(cls: string, customLabel?: string | null): string {
   if (cls === 'custom' && customLabel === 'CULTURE') return 'text-culture'
+  if (cls === 'custom') return 'text-text-secondary'
   return CLASS_COLOR[cls] ?? ''
 }
 
 export function classTooltip(cls: string, customLabel?: string | null): string {
-  if (cls === 'custom' && customLabel === 'CULTURE') return CULTURE_TOOLTIP
+  if (cls === 'custom' && customLabel) return CUSTOM_TOOLTIP[customLabel] ?? ''
   return CLASS_TOOLTIP[cls] ?? ''
 }
 
 export function pinColor(cls: string, customLabel?: string | null): string {
   if (cls === 'custom' && customLabel === 'CULTURE') return PIN_COLOR.culture
+  if (cls === 'custom') return '#7A8BAA'
   return PIN_COLOR[cls] ?? '#7A8BAA'
 }
 
