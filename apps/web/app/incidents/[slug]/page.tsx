@@ -3,7 +3,7 @@ import { Suspense }      from 'react'
 import { notFound }      from 'next/navigation'
 import Link              from 'next/link'
 import { supabase }      from '@/lib/supabase'
-import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, fmtDate, formatDuration, formatDurationGap } from '@/lib/utils'
+import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, fmtDate, formatDuration, formatDurationGap, lastVerdictEntry, verdictNoun } from '@/lib/utils'
 import { ShareButton }   from './ShareButton'
 import { UTMLogger }     from '@/components/UTMLogger'
 import type { Incident, IncidentLink, RelatedIncident, SourceTimelineEntry } from '@/lib/types'
@@ -277,12 +277,9 @@ export default async function IncidentPage({ params }: Props) {
           correction:       'CORRECTED',
           follow_up:        'FOLLOW UP',
         }
-        const TOTAL_ROLES = new Set(['verdict', 'sentencing', 'appeal', 'appeal_dismissed'])
-        const lastVerdictEntry = [...timeline].reverse().find(e => TOTAL_ROLES.has(e.role ?? ''))
-        const showTotal = lastVerdictEntry != null && incident.first_reported_at != null
-        const totalLabel = lastVerdictEntry?.role === 'sentencing' ? 'sentencing'
-                         : lastVerdictEntry?.role === 'appeal_dismissed' ? 'appeal'
-                         : 'verdict'
+        const concludeEntry = lastVerdictEntry(timeline)
+        const showTotal = concludeEntry != null && incident.first_reported_at != null
+        const totalLabel = verdictNoun(concludeEntry?.role)
 
         return (
           <details className="mb-6 group" open>
@@ -335,7 +332,7 @@ export default async function IncidentPage({ params }: Props) {
             {/* Total duration — verdict/sentencing/appeal stories only */}
             {showTotal && (
               <div style={{ fontFamily: "'Courier Prime', monospace", fontSize: 13, color: 'var(--color-amber)', marginTop: 10 }}>
-                ⏱ Total: {formatDuration(new Date(incident.first_reported_at!), new Date(lastVerdictEntry!.date))} from first report to {totalLabel}
+                ⏱ Total: {formatDuration(new Date(incident.first_reported_at!), new Date(concludeEntry!.date))} from first report to {totalLabel}
               </div>
             )}
           </details>

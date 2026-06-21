@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, fmtDate, formatDuration } from '@/lib/utils'
+import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, fmtDate, formatDuration, lastVerdictEntry, verdictNoun } from '@/lib/utils'
 import type { Incident } from '@/lib/types'
 
 interface Props {
@@ -19,18 +19,17 @@ export function IncidentCard({ incident, style }: Props) {
     source_timeline, latest_source_role,
   } = incident
 
-  // Duration line: only for concluded (verdict) stories with 2+ timeline entries
-  const showDuration =
-    latest_source_role === 'verdict' &&
-    Array.isArray(source_timeline) && source_timeline.length >= 2 &&
-    first_reported_at != null
+  // The real conclusion date lives in source_timeline (verdict/sentencing/
+  // appeal entry) — NOT incident_date, which is the event date and equals
+  // first_reported_at for most rows (the old "1 day to verdict" bug).
+  const vEntry      = lastVerdictEntry(source_timeline)
+  const verdictDate = vEntry?.date ?? incident_date
+  const isVerdict   = vEntry != null || latest_source_role === 'verdict'
 
   // Time from first report to verdict, e.g. "2 years 5 months to verdict"
-  const verdictDuration = showDuration
-    ? `${formatDuration(new Date(first_reported_at!), new Date(incident_date))} to verdict`
+  const verdictDuration = vEntry != null && first_reported_at != null
+    ? `${formatDuration(new Date(first_reported_at), new Date(verdictDate))} to ${verdictNoun(vEntry.role)}`
     : null
-
-  const isVerdict = latest_source_role === 'verdict'
 
   const reportCount = (update_count ?? 0) + 1
 
@@ -109,8 +108,8 @@ export function IncidentCard({ incident, style }: Props) {
                 <span style={{ color: '#3D4F6A' }}> · </span>
               </>
             )}
-            <span style={{ color: '#7A8BAA' }}>Verdict: </span>
-            <span style={{ color: '#4ECDC4' }}>{fmtDate(incident_date)}</span>
+            <span style={{ color: '#7A8BAA' }}>{vEntry ? `${verdictNoun(vEntry.role)[0].toUpperCase()}${verdictNoun(vEntry.role).slice(1)}` : 'Verdict'}: </span>
+            <span style={{ color: '#4ECDC4' }}>{fmtDate(verdictDate)}</span>
           </div>
         )}
       </div>
