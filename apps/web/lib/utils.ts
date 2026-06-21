@@ -1,4 +1,4 @@
-import type { Classification } from './types'
+import type { Classification, SourceTimelineEntry } from './types'
 
 export const CLASS_ICON: Record<string, string> = {
   heart:  '❤️',
@@ -146,6 +146,31 @@ export function formatDuration(start: Date, end: Date): string {
   if (years === 0) return `${months} month${months !== 1 ? 's' : ''}`
   if (months === 0) return `${years} year${years !== 1 ? 's' : ''}`
   return `${years} year${years !== 1 ? 's' : ''} ${months} month${months !== 1 ? 's' : ''}`
+}
+
+// Timeline roles that conclude a legal story (verdict / sentencing / appeal).
+// Shared by the detail-page timeline and the feed card so the "time to verdict"
+// duration is computed identically in both places.
+export const VERDICT_ROLES = new Set(['verdict', 'sentencing', 'appeal', 'appeal_dismissed'])
+
+// The last conclusion entry in a source_timeline (verdict/sentencing/appeal),
+// or null if the story has not concluded. This is the REAL verdict date —
+// incident_date is the event date and is wrong to use here.
+export function lastVerdictEntry(
+  timeline: SourceTimelineEntry[] | null | undefined
+): SourceTimelineEntry | null {
+  if (!Array.isArray(timeline)) return null
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    if (VERDICT_ROLES.has(timeline[i]?.role ?? '')) return timeline[i]
+  }
+  return null
+}
+
+// Noun for the conclusion, e.g. "to sentencing" / "to appeal" / "to verdict".
+export function verdictNoun(role: string | null | undefined): string {
+  if (role === 'sentencing') return 'sentencing'
+  if (role === 'appeal' || role === 'appeal_dismissed') return 'appeal'
+  return 'verdict'
 }
 
 export function chaosDescriptor(score: number): string {
