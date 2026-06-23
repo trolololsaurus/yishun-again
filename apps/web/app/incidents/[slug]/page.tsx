@@ -3,7 +3,7 @@ import { Suspense }      from 'react'
 import { notFound }      from 'next/navigation'
 import Link              from 'next/link'
 import { supabase }      from '@/lib/supabase'
-import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, fmtDate, formatDuration, formatDurationGap, lastVerdictEntry, verdictNoun } from '@/lib/utils'
+import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, fmtDate, formatDuration, formatDurationGap, lastVerdictEntry, verdictNoun, collapseTimelineByDate } from '@/lib/utils'
 import { ShareButton }   from './ShareButton'
 import { UTMLogger }     from '@/components/UTMLogger'
 import type { Incident, IncidentLink, RelatedIncident, SourceTimelineEntry } from '@/lib/types'
@@ -120,22 +120,6 @@ export default async function IncidentPage({ params }: Props) {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
 
-      {/* DEVELOPING banner */}
-      {incident.is_developing && (
-        <div className="mb-6 border border-amber bg-amber/10 px-4 py-3 flex items-center gap-3">
-          <span className="font-body font-bold text-amber uppercase tracking-widest"
-                style={{ fontSize: '11px' }}>
-            DEVELOPING STORY
-          </span>
-          <span className="font-body text-text-secondary" style={{ fontSize: '11px' }}>
-            {(incident.update_count ?? 0) + 1} report{(incident.update_count ?? 0) + 1 !== 1 ? 's' : ''}
-            {incident.first_reported_at && (
-              <> · First reported {fmtDate(incident.first_reported_at)}</>
-            )}
-          </span>
-        </div>
-      )}
-
       {/* Classification + severity + hype */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <span
@@ -151,13 +135,13 @@ export default async function IncidentPage({ params }: Props) {
         >
           {severityDiamonds(incident.severity)}
         </span>
-        {incident.hype_meter > 0 && (
+        {hypeFromSources(incident.corroboration_count) > 0 && (
           <span
             className="font-body text-amber-lt"
             style={{ fontSize: '14px' }}
             title={HYPE_TOOLTIP}
           >
-            {hypeMeter(incident.hype_meter)}
+            {hypeMeter(hypeFromSources(incident.corroboration_count))}
           </span>
         )}
         {incident.is_milestone && (
@@ -265,8 +249,11 @@ export default async function IncidentPage({ params }: Props) {
         )
       })()}
 
-      {/* Story timeline — visual horizontal layout, requires 2+ entries */}
-      {timeline.length >= 2 && (() => {
+      {/* Story timeline — visual horizontal layout. Same-date entries collapse
+          to one node; requires 2+ DISTINCT dates to render. */}
+      {(() => {
+        const nodes = collapseTimelineByDate(timeline)
+        if (nodes.length < 2) return null
         const ROLE_LABEL: Record<string, string> = {
           initial:          'REPORTED',
           update:           'UPDATE',
@@ -295,10 +282,10 @@ export default async function IncidentPage({ params }: Props) {
             {/* Horizontal node row */}
             <div style={{ overflowX: 'auto', paddingBottom: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', minWidth: 'max-content' }}>
-                {timeline.map((entry, i) => {
+                {nodes.map((entry, i) => {
                   const label  = ROLE_LABEL[entry.role ?? 'initial'] ?? 'UPDATE'
                   const gapStr = i > 0
-                    ? formatDurationGap(new Date(timeline[i - 1].date), new Date(entry.date))
+                    ? formatDurationGap(new Date(nodes[i - 1].date), new Date(entry.date))
                     : null
                   return (
                     <div key={i} style={{ display: 'flex', alignItems: 'center' }}>

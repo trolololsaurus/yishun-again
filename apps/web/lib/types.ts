@@ -66,7 +66,7 @@ export interface Incident {
 // Lightweight type for the incident feed list rows
 export type IncidentRow = Pick<
   Incident,
-  'id' | 'slug' | 'title' | 'classification' | 'custom_label' | 'severity' | 'hype_meter'
+  'id' | 'slug' | 'title' | 'classification' | 'custom_label' | 'severity' | 'corroboration_count'
   | 'published_at' | 'area_name' | 'is_milestone' | 'milestone_type'
   | 'is_developing' | 'update_count' | 'first_reported_at'
 >
@@ -82,7 +82,7 @@ export interface MapFeature {
     classification: Classification
     custom_label:   string | null
     severity:       number
-    hype_meter:     number
+    corroboration_count: number
   }
 }
 

@@ -6,7 +6,7 @@ import { classDisplay }   from '@/lib/utils'
 import type { FilterState, Incident } from '@/lib/types'
 
 type Row = Pick<Incident, 'id' | 'slug' | 'title' | 'classification' | 'custom_label' | 'severity'
-  | 'hype_meter' | 'published_at' | 'area_name' | 'is_milestone'
+  | 'corroboration_count' | 'published_at' | 'area_name' | 'is_milestone'
   | 'is_developing' | 'update_count' | 'first_reported_at'
   | 'incident_date' | 'source_timeline' | 'latest_source_role'>
 

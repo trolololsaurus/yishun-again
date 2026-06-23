@@ -1,10 +1,10 @@
 import Link from 'next/link'
-import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, fmtDate, formatDuration, lastVerdictEntry, verdictNoun } from '@/lib/utils'
+import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, fmtDate, formatDuration, lastVerdictEntry, verdictNoun } from '@/lib/utils'
 import type { Incident } from '@/lib/types'
 
 interface Props {
   incident: Pick<Incident,
-    'slug' | 'title' | 'classification' | 'custom_label' | 'severity' | 'hype_meter'
+    'slug' | 'title' | 'classification' | 'custom_label' | 'severity' | 'corroboration_count'
     | 'published_at' | 'incident_date' | 'area_name' | 'is_milestone'
     | 'is_developing' | 'update_count' | 'first_reported_at'
     | 'source_timeline' | 'latest_source_role'
@@ -14,10 +14,13 @@ interface Props {
 
 export function IncidentCard({ incident, style }: Props) {
   const {
-    slug, title, classification, custom_label, severity, hype_meter, published_at, incident_date,
+    slug, title, classification, custom_label, severity, corroboration_count, published_at, incident_date,
     area_name, is_milestone, is_developing, update_count, first_reported_at,
     source_timeline, latest_source_role,
   } = incident
+
+  // Lightning bolts grow with corroboration: 2 sources → ⚡, 3 → ⚡⚡, etc.
+  const lightning = hypeFromSources(corroboration_count)
 
   // The real conclusion date lives in source_timeline (verdict/sentencing/
   // appeal entry) — NOT incident_date, which is the event date and equals
@@ -53,12 +56,6 @@ export function IncidentCard({ incident, style }: Props) {
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 mb-1 flex-wrap">
-          {is_developing && (
-            <span className="font-display px-1.5 py-0.5"
-                  style={{ fontSize: 9, background: 'var(--color-amber-dim)', color: 'var(--color-amber)', letterSpacing: '0.05em' }}>
-              DEVELOPING
-            </span>
-          )}
           {is_milestone && (
             <span className="font-display border border-amber-lt/50 px-1.5 py-0.5 text-amber-lt"
                   style={{ fontSize: 9, letterSpacing: '0.05em' }}>
@@ -67,7 +64,7 @@ export function IncidentCard({ incident, style }: Props) {
           )}
           <span className="font-body text-text-secondary" style={{ fontSize: '14px' }}>
             <span title={severityTooltip(severity)}>{severityDiamonds(severity)}</span>
-            {hype_meter > 0 && <> <span title={HYPE_TOOLTIP}>{hypeMeter(hype_meter)}</span></>}
+            {lightning > 0 && <> <span title={HYPE_TOOLTIP}>{hypeMeter(lightning)}</span></>}
           </span>
         </div>
 

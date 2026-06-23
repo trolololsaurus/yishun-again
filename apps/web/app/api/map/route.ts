@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabase
     .from('incidents')
-    .select('id,slug,title,classification,custom_label,severity,hype_meter,latitude,longitude')
+    .select('id,slug,title,classification,custom_label,severity,corroboration_count,latitude,longitude')
     .eq('is_published', true)
     .not('latitude', 'is', null)
     .not('longitude', 'is', null)
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
       classification: inc.classification,
       custom_label:   inc.custom_label ?? null,
       severity:       inc.severity,
-      hype_meter:     inc.hype_meter ?? 0,
+      corroboration_count: inc.corroboration_count ?? 1,
     },
   }))
 
