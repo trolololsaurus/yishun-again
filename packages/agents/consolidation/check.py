@@ -193,7 +193,9 @@ def _fetch_recent_queue(supabase_client) -> list[dict]:
         out.append({
             "id":            row["id"],
             "title":         row.get("proposed_title") or (rc.get("title") if isinstance(rc, dict) else "") or "",
-            "summary":       row.get("proposed_summary") or "",
+            # QA M13: fall back to raw_content.summary when proposed_summary is empty
+            # (older rows), so queue-dedup isn't silently reduced to title-only matching.
+            "summary":       row.get("proposed_summary") or (rc.get("summary") if isinstance(rc, dict) else "") or "",
             "incident_date": (rc.get("date") if isinstance(rc, dict) else "") or "",
         })
     return out

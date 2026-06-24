@@ -4,7 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter }         from 'next/navigation'
 import type { FilterState, MapFeature } from '@/lib/types'
-import { PIN_COLOR, classIcon, classLabel, classTooltip, pinColor, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter } from '@/lib/utils'
+import { PIN_COLOR, classIcon, classLabel, classTooltip, pinColor, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources } from '@/lib/utils'
 
 // OpenFreeMap Liberty — keyless, served via Cloudflare CDN. The env var lets us
 // override per-environment, but the hardcoded fallback guarantees the map still
@@ -129,7 +129,8 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
           map.getCanvas().style.cursor = 'pointer'
           const f = e.features[0]
           const coords = [...f.geometry.coordinates] as [number, number]
-          const { title, classification, custom_label, severity, hype_meter } = f.properties
+          const { title, classification, custom_label, severity, corroboration_count } = f.properties
+          const lightning = hypeFromSources(corroboration_count)
 
           const markerColor = pinColor(classification, custom_label)
 
@@ -140,7 +141,7 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
               `<div style="font-size:14px;color:#7A8BAA;margin-bottom:5px">` +
               `<span style="color:${markerColor}" title="${classTooltip(classification, custom_label)}">${classIcon(classification, custom_label)} ${classLabel(classification, custom_label)}</span>` +
               ` <span title="${severityTooltip(severity)}">${severityDiamonds(severity)}</span>` +
-              (hype_meter > 0 ? ` <span title="${HYPE_TOOLTIP}">${hypeMeter(hype_meter)}</span>` : '') +
+              (lightning > 0 ? ` <span title="${HYPE_TOOLTIP}">${hypeMeter(lightning)}</span>` : '') +
               `</div>` +
               `<div style="font-weight:700;line-height:1.4;` +
               `display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">` +

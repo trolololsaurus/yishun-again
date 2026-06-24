@@ -209,10 +209,14 @@ def run_ingestion_pass(
                         continue
 
                     # ── Stage 2 ────────────────────────────────────────────
-                    edmw_signal_count = 1 if candidate.source_type == "edmw" else 0
+                    # Legal guardrail #2: an EDMW/signal URL is NEVER a quoted
+                    # source. EDMW candidates contribute only edmw_signal_count;
+                    # source_urls must stay empty until an MSM URL is attached.
+                    is_edmw = candidate.source_type == "edmw"
+                    edmw_signal_count = 1 if is_edmw else 0
                     stage2_input = {
                         **item,
-                        "source_urls": [candidate.url],
+                        "source_urls": [] if is_edmw else [candidate.url],
                         "edmw_signal_count": edmw_signal_count,
                     }
                     if signal_summary:
@@ -248,6 +252,7 @@ def run_ingestion_pass(
                         date_missing=is_dateless,
                         edmw_signal_count=edmw_signal_count,
                         include_related_incidents=True,
+                        is_backfill=False,   # QA H4 — live ingestion, not backfill
                     )
 
                     if not dry_run:

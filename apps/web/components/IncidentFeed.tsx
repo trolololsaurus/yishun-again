@@ -9,7 +9,7 @@ const ITEM_HEIGHT = 152  // extra 20px for verdict duration line on concluded in
 const PAGE_SIZE   = 20
 
 type Row = Pick<Incident, 'id' | 'slug' | 'title' | 'classification' | 'custom_label' | 'severity'
-  | 'hype_meter' | 'published_at' | 'incident_date' | 'area_name' | 'is_milestone'
+  | 'corroboration_count' | 'published_at' | 'incident_date' | 'area_name' | 'is_milestone'
   | 'is_developing' | 'update_count' | 'first_reported_at'
   | 'source_timeline' | 'latest_source_role'>
 

@@ -60,22 +60,34 @@ export async function POST(
     ? existing.source_timeline
     : []
 
+  // Date of the merged source — the candidate's REAL article date, never
+  // "today". Stamping new Date() corrupted incident_date (rows floated to the
+  // top of the feed dated today) and littered the timeline with merge-day
+  // stamps. Prefer the queue item's own date; fall back to the incident's
+  // existing date so a merge can never push the date into the future.
+  const existingDate = existing.incident_date ?? null
+  const newDate =
+    (rc.date as string) ||
+    (rc.published_at as string) ||
+    existingDate ||
+    existing.first_reported_at ||
+    null
+
   const newTimelineEntry = {
-    date:        new Date().toISOString().split('T')[0],
+    date:        newDate ?? existingDate,
     source_url:  newSourceUrl,
     source_name: sourceName,
     headline,
   }
   const mergedTimeline = [...existingTimeline, newTimelineEntry]
 
-  // Compute updated incident_date (latest) and first_reported_at (earliest)
-  const existingDate     = existing.incident_date ?? null
-  const newDate          = new Date().toISOString().split('T')[0]
-  const updatedDate      = existingDate && existingDate > newDate ? existingDate : newDate
+  // incident_date = latest known date, first_reported_at = earliest known date.
+  // Both clamp to real dates only — newDate is never "today".
+  const updatedDate      = existingDate && newDate && existingDate > newDate ? existingDate : (newDate ?? existingDate)
   const existingFirstDate = existing.first_reported_at ?? existingDate
-  const firstReportedAt  = existingFirstDate && existingFirstDate < (existingDate ?? newDate)
+  const firstReportedAt  = existingFirstDate && newDate && existingFirstDate < newDate
     ? existingFirstDate
-    : (existingDate ?? newDate)
+    : (existingFirstDate ?? newDate)
 
   const updates: Record<string, unknown> = {
     source_urls:      mergedUrls,
@@ -107,14 +119,17 @@ export async function POST(
 
   for (const link of agentRelated) {
     if (link.dismissed) continue
-    await supabase.from('incident_links').insert({
-      incident_a:   targetId,
-      incident_b:   link.incident_id,
-      link_type:    link.link_type ?? 'related',
-      confidence:   link.confidence,
-      agent_reason: link.reason ?? '',
-    }).select('id').limit(1)
-    // Ignore unique-constraint errors — may already exist
+    // QA M9: the operator just confirmed this update, so mark the link
+    // operator-confirmed (it was looking agent-suggested); capture the error.
+    const { error: linkErr } = await supabase.from('incident_links').insert({
+      incident_a:           targetId,
+      incident_b:           link.incident_id,
+      link_type:            link.link_type ?? 'related',
+      confidence:           link.confidence,
+      agent_reason:         link.reason ?? '',
+      confirmed_by_operator: true,
+    })
+    if (linkErr && linkErr.code !== '23505') console.error('confirm-update — incident_link insert:', linkErr)
   }
 
   // Update queue status

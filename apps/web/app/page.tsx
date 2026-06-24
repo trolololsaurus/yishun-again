@@ -32,18 +32,23 @@ export default async function HomePage() {
     { data: allRows },
     { data: incidentDateRows },
   ] = await Promise.all([
-    // Map markers — all incidents with coordinates
+    // Map markers — current-year incidents with coordinates. QA H5: scope to the
+    // current year so the initial SSR pins match the default year shown by the
+    // chaos panel + feed (the IncidentMap year effect also defaults to current
+    // year, so all-time pins on first paint then shrinking was a visible mismatch).
     supabase
       .from('incidents')
-      .select('id,slug,title,classification,custom_label,severity,hype_meter,latitude,longitude')
+      .select('id,slug,title,classification,custom_label,severity,corroboration_count,latitude,longitude')
       .eq('is_published', true)
       .not('latitude',  'is', null)
-      .not('longitude', 'is', null),
+      .not('longitude', 'is', null)
+      .gte('incident_date', `${currentYear}-01-01`)
+      .lt( 'incident_date', `${currentYear + 1}-01-01`),
 
     // Feed — first page (developing stories float to top)
     supabase
       .from('incidents')
-      .select('id,slug,title,classification,custom_label,severity,hype_meter,published_at,incident_date,area_name,is_milestone,milestone_type,milestone_value,is_developing,update_count,first_reported_at,source_timeline,latest_source_role')
+      .select('id,slug,title,classification,custom_label,severity,corroboration_count,published_at,incident_date,area_name,is_milestone,milestone_type,milestone_value,is_developing,update_count,first_reported_at,source_timeline,latest_source_role')
       .eq('is_published', true)
       .order('is_developing', { ascending: false, nullsFirst: false })
       .order('incident_date', { ascending: false, nullsFirst: false })
@@ -83,7 +88,7 @@ export default async function HomePage() {
       classification: inc.classification as any,
       custom_label:   inc.custom_label ?? null,
       severity:       inc.severity,
-      hype_meter:     inc.hype_meter ?? 0,
+      corroboration_count: inc.corroboration_count ?? 1,
     },
   }))
 
@@ -93,9 +98,12 @@ export default async function HomePage() {
 
   const counts = rows.reduce(
     (acc, r) => {
+      // QA M2: only count the three real classes (custom rows must not inflate total).
       const cls = r.classification as 'heart' | 'clown' | 'dagger'
-      acc[cls] = (acc[cls] ?? 0) + 1
-      acc.total += 1
+      if (cls === 'heart' || cls === 'clown' || cls === 'dagger') {
+        acc[cls] += 1
+        acc.total += 1
+      }
       return acc
     },
     { heart: 0, clown: 0, dagger: 0, total: 0 }
@@ -118,7 +126,9 @@ export default async function HomePage() {
   // ── Available years for dropdown ───────────────────────────────────────────
   const yearSet = new Set(
     (incidentDateRows ?? [])
-      .map(r => new Date(r.incident_date).getFullYear())
+      // QA L5: parse the year from the YYYY-MM-DD string directly — new Date()
+      // parses as UTC, so a Jan-1 SGT date would roll back to the prior year.
+      .map(r => parseInt(String(r.incident_date).slice(0, 4), 10))
       .filter(y => !isNaN(y))
   )
   yearSet.add(currentYear)  // always present even if no incidents yet

@@ -101,3 +101,59 @@ Reddit URL; taxi-driver-murders and infant-murder wrong incident_dates).
   `docs/YishunAgain_TechSpec_v1_9.md`.
 - **North–South Line** title en-dash was normalised to a hyphen during the audit; revert to the
   en-dash if typographic correctness is preferred (cosmetic).
+
+---
+
+## June-2026 feed + data-integrity + QA session
+
+A working session covering the public feed, the consolidation pipeline, the War Room,
+and a full-codebase QA sweep. Honest trail of what changed and what's still open.
+
+### Schema / migrations
+- **008** — `incidents.latest_source_role` CHECK expanded to include `sentencing`,
+  `appeal`, `appeal_dismissed` (multi-stage legal stories).
+- **009** — `training_signals.action` CHECK expanded to include `unpublish` (the War
+  Room unpublish route writes it; before 009 those inserts were silently rejected by
+  Postgres and swallowed by supabase-js, so unpublish signals were lost).
+
+### Pipeline
+- **Consolidation now dedups against the pending `war_room_queue`, not just published
+  incidents** (`consolidation/check.py`). Same-event reports arriving across passes
+  before approval collapse to one row via `action='skip'` (orchestrator already drops
+  skips). New `QUEUE_FETCH_LIMIT` in `consolidation/rules.py`.
+- **Google News URL resolver fixed** (`scrapers/_gnews_helpers.py`). Modern
+  `/rss/articles/CBMi…` links are resolved via Google's `batchexecute` RPC; fully
+  exception-guarded (degrades to the raw URL — never breaks a pass). Restores the
+  `Candidate.url` canonical-URL contract and the cheap URL-exact dedup gate.
+- **War Room `confirm-update` date corruption fixed** — it stamped `new Date()` as both
+  the merged timeline date and `incident_date`, floating merged stories to the top of
+  the feed dated "today". Now uses the candidate's real article date, falling back to
+  the incident's existing date (never the future). (PR pending merge at session end.)
+
+### Frontend (feed / incident display)
+- **DEVELOPING badge + banner removed.** `is_developing` still drives feed sort + the
+  report-count line.
+- **Lightning (⚡) = corroboration**, `max(0, corroboration_count − 1)`, derived live in
+  card / map popup / detail. Legacy `hype_meter` no longer read.
+- **Story timeline collapses same-date nodes**; renders only with 2+ distinct dates.
+- **"Time to verdict"** computed from the last verdict/sentencing/appeal entry in
+  `source_timeline` (helpers `lastVerdictEntry` / `verdictNoun`), never `incident_date`.
+- **War Room draft 404 fixed** — operator-only preview route
+  (`apps/war-room/app/incidents/[slug]`) renders drafts via the secret key; the list
+  routes Live → public View, Draft → internal Preview.
+
+### Data corrections (live DB, via one-off scripts)
+- Resolved every `news.google.com` source URL → real publisher + stamped the real
+  article date across published incidents.
+- Reconsolidated duplicate 2026 incidents into canonicals (re-queued to War Room as
+  `update` candidates); feed 45 → 26 published 2026 rows, Chaos 94 → 51.
+- Sourced 10 unsourced heritage cards (operator-supplied references).
+- **Pending (`cleanup_corrupted.py --apply`):** recompute `corroboration_count =
+  len(source_urls)` (13 stale rows) and repair 8 incidents whose `incident_date` was
+  forced to `2026-06-23` by the merge bug.
+
+### QA
+- Full-codebase functional QA produced **`docs/QA_BACKLOG.md`** — 39 ranked issues
+  (4 Critical, 8 High, 16 Medium, 11 Low) with a fix for each. Headline: 3 of the 4
+  "hardcoded — never remove" legal guardrails are not actually enforced in code
+  (QA C1/C2/C4), and UTM analytics inserts are blocked by RLS (QA C3).

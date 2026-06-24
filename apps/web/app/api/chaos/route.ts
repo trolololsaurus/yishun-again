@@ -43,9 +43,13 @@ export async function GET(req: Request) {
   const score  = computeChaosScore(rows)
   const counts = rows.reduce(
     (acc, r) => {
+      // QA M2: only count the three real classes; a 'custom' row must not add a
+      // phantom key or inflate total, or the chips won't sum to ALL.
       const cls = r.classification as 'heart' | 'clown' | 'dagger'
-      acc[cls] = (acc[cls] ?? 0) + 1
-      acc.total += 1
+      if (cls === 'heart' || cls === 'clown' || cls === 'dagger') {
+        acc[cls] += 1
+        acc.total += 1
+      }
       return acc
     },
     { heart: 0, clown: 0, dagger: 0, total: 0 }
@@ -57,7 +61,8 @@ export async function GET(req: Request) {
   // Distinct years that have incidents
   const yearSet = new Set(
     (incidentDateRes.data ?? [])
-      .map(r => new Date(r.incident_date).getFullYear())
+      // QA L5: parse year from the string (avoid new Date() UTC tz roll-back).
+      .map(r => parseInt(String(r.incident_date).slice(0, 4), 10))
       .filter(y => !isNaN(y))
   )
   // Always include current year even if no incidents yet

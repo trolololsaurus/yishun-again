@@ -127,7 +127,7 @@ Scrape Agent → Stage 1 Filter (Groq) → Stage 2 Writer (Claude) → Corrobora
 **Stage 2 (Claude):** Classification, draft writing, severity scoring, pixel art prompt generation. Returns JSON — see spec §4.3 for exact schema and system prompts.
 
 **EDMW treatment:** EDMW signal is never a quoted source. Three tiers:
-- EDMW only → publishable with 👎 "unverified" badge, hype_meter = 0
+- EDMW only → publishable with 👎 "unverified" badge, no lightning (corroboration_count = 0/1; the EDMW URL is never in `source_urls` per guardrail #2)
 - EDMW + MSM corroboration → standard incident, EDMW count shown as "Forum buzz"
 - MSM only → standard incident, no EDMW reference
 
@@ -144,6 +144,20 @@ Key tables: `incidents`, `sources`, `war_room_queue`, `utm_events`, `training_si
 Full schema with exact SQL: `docs/YishunAgain_TechSpec_v1_9.md` §3.
 
 **Sources seed data** (18 sources) is in the spec — run as part of Step 1 migration.
+
+**Migrations are hand-applied in the Supabase SQL Editor (no runner).** Apply in
+order; the live DB depends on `006_phase1_apply_now.sql` + `007` + `009` having all
+run. `006_ingestion_learning_loop_schema.sql` is a **superseded draft — do not run.**
+Recent additions: **008** expands `incidents.latest_source_role` to include
+`sentencing` / `appeal` / `appeal_dismissed`; **009** adds `unpublish` to the
+`training_signals.action` CHECK (the War Room unpublish route writes it — before 009
+those inserts were silently rejected). The lack of a migration runner is tracked as
+QA M15.
+
+**RLS note:** `incidents` anon reads are filtered to `is_published = TRUE`
+(`anon_read_published_incidents`), so the **publishable key cannot see drafts at all** —
+only the War Room (secret key) can. Any read-only audit run with the anon key will
+under-count by the number of unpublished drafts.
 
 ---
 
@@ -166,6 +180,17 @@ Full schema with exact SQL: `docs/YishunAgain_TechSpec_v1_9.md` §3.
 3. No personal information beyond what appears in public source URLs.
 4. If Stage 2 detects political content → set `confidence = 0`, flag `"[POLITICAL CONTENT DETECTED — REJECT]"`.
 
+> ⚠️ **Enforcement status (June-2026 QA — see `docs/QA_BACKLOG.md`).** These four are
+> the intended invariants and must never be weakened, but the QA sweep found the
+> automated enforcement is incomplete:
+> - **#1** the DB `CHECK (array_length(source_urls,1) >= 1)` does **not** reject an
+>   empty array (`array_length('{}',1)` is NULL) — fix to `cardinality(...) >= 1` (QA C4).
+> - **#2** the ingestion orchestrator currently puts an `edmw` candidate's URL into
+>   `source_urls` (latent — no EDMW adapter yet) (QA C2).
+> - **#4** Stage 2 only *logs* the marker; it never zeroes confidence or rejects (QA C1).
+> - **#3** has no programmatic check — operator-gate only.
+> Closing C1–C4 is the top priority in the QA backlog.
+
 ---
 
 ## Frontend Theme
@@ -174,7 +199,9 @@ Dark pixel art retro tabloid. Two fonts only: `Press Start 2P` (headers, scores,
 
 CSS tokens are defined in spec §6.1. Key colours: bg `#0D0D0D`, accent red `#E74C3C`, accent yellow `#F1C40F`, dagger purple `#8E44AD`.
 
-Map: MapLibre GL JS with OpenFreeMap "Liberty" style (`https://tiles.openfreemap.org/styles/liberty`). Keyless — no Mapbox token, no Stadia/CartoDB. Configured via `NEXT_PUBLIC_MAPLIBRE_STYLE` with a hardcoded fallback to the same Liberty URL in `IncidentMap.tsx`, so the map loads even if the env var is unset. A set-but-wrong env var overrides the fallback, so the safest production posture is to leave it unset.
+Map: MapLibre GL JS with OpenFreeMap "Liberty" style (`https://tiles.openfreemap.org/styles/liberty`). Keyless — no Mapbox token, no Stadia/CartoDB. `IncidentMap.tsx` reads `NEXT_PUBLIC_MAPLIBRE_STYLE` with a hardcoded fallback to the same Liberty URL (`||`, so an empty-string env var also falls back), so the map can never be a single point of failure if the var is unset. A set-but-wrong env var overrides the fallback. Because `NEXT_PUBLIC_*` vars are baked at build time, changing it requires a fresh deploy, not just a restart.
+
+**Lightning (⚡) = corroboration, not a separate hype field.** As of the June-2026 feed pass, the lightning meter is derived live from `corroboration_count`: `bolts = max(0, corroboration_count − 1)` (2 sources → ⚡, 3 → ⚡⚡, …). It grows as sources merge into one incident. The legacy `hype_meter` column is no longer read by the frontend. The **DEVELOPING** badge/banner was removed (it confused readers); `is_developing` still drives feed sort + the report-count line. The story timeline collapses same-date entries to a single node, and "time to verdict" is computed from the last verdict/sentencing/appeal entry in `source_timeline` (never `incident_date`). See `docs/FRONTEND_SPEC.md` and `lib/utils.ts` (`hypeFromSources`, `lastVerdictEntry`, `collapseTimelineByDate`).
 
 Share cards: rendered via OG meta tags — no separate image generation. The pixel art image (already generated for incident page) doubles as the OG image.
 

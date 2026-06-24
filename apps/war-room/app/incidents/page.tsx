@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { classIcon, classLabel, classColor, severityDiamonds, hypeMeter } from '@/lib/utils'
 import type { Incident } from '@/lib/types'
 
@@ -84,14 +85,25 @@ export default function IncidentsPage() {
               </td>
               <td className="py-2">
                 <div className="flex gap-2">
-                  <a
-                    href={`https://yishunagain.com/incidents/${inc.slug}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-yellow hover:underline"
-                  >
-                    View
-                  </a>
+                  {inc.is_published ? (
+                    // Live → real public page
+                    <a
+                      href={`https://www.yishunagain.com/incidents/${inc.slug}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-yellow hover:underline"
+                    >
+                      View
+                    </a>
+                  ) : (
+                    // Draft → operator-only internal preview (public page 404s drafts)
+                    <Link
+                      href={`/incidents/${inc.slug}`}
+                      className="text-text-secondary hover:text-text-primary hover:underline"
+                    >
+                      Preview
+                    </Link>
+                  )}
                   {inc.is_published && (
                     <button
                       onClick={() => unpublish(inc.id)}

@@ -75,7 +75,25 @@ shared `#E87070` with DARK EVENTS — live has them correctly distinct.)
 | Chaos descriptor / section headers | 11px |
 | Filter chip labels | 10px |
 | Year selector label | 10px |
-| Badges (DEVELOPING, MILESTONE) | 9px |
+| Badges (MILESTONE) | 9px |  <!-- DEVELOPING badge removed June-2026; see Feed deltas below -->
+
+<!--
+### Feed / incident-card deltas (June-2026 pass)
+- **DEVELOPING badge + banner removed** (confused readers). `is_developing` still
+  drives feed sort and the "N reports · First reported …" line.
+- **Lightning (⚡) = corroboration**, derived live from `corroboration_count`:
+  `bolts = max(0, corroboration_count − 1)` (2 sources → ⚡, 3 → ⚡⚡, …). The legacy
+  `hype_meter` column is no longer read. Tooltip updated accordingly. Same rule in
+  feed card, map popup, and detail page.
+- **Story timeline collapses same-date entries** to one node (most-significant role
+  wins the label); renders only with 2+ distinct dates.
+- **"Time to verdict"** is computed from the last verdict/sentencing/appeal entry in
+  `source_timeline` (helpers `lastVerdictEntry` / `verdictNoun`), never from
+  `incident_date` (which is the event date). Label adapts: "to verdict / sentencing / appeal".
+- Helpers: `apps/web/lib/utils.ts` → `hypeFromSources`, `lastVerdictEntry`,
+  `verdictNoun`, `collapseTimelineByDate`.
+-->
+
 
 **Courier Prime (content):**
 | Element | Size / weight |

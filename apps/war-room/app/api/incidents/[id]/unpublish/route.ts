@@ -12,14 +12,24 @@ export async function POST(
   // Fetch agent_confidence before unpublishing for the training signal
   const { data: incident } = await supabase
     .from('incidents')
-    .select('agent_confidence')
+    .select('agent_confidence,is_published')
     .eq('id', id)
     .single()
+
+  // QA M10: no-op if already a draft — a double-submit must not log a second
+  // 'unpublish' training signal for an already-unpublished incident.
+  if (!incident) {
+    return NextResponse.json({ error: 'Incident not found' }, { status: 404 })
+  }
+  if (!incident.is_published) {
+    return NextResponse.json({ ok: true, noop: true })
+  }
 
   const { error } = await supabase
     .from('incidents')
     .update({ is_published: false, published_at: null })
     .eq('id', id)
+    .eq('is_published', true)
 
   if (error) {
     console.error('Unpublish incident:', error)

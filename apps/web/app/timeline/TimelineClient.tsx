@@ -6,7 +6,7 @@ import { classDisplay }   from '@/lib/utils'
 import type { FilterState, Incident } from '@/lib/types'
 
 type Row = Pick<Incident, 'id' | 'slug' | 'title' | 'classification' | 'custom_label' | 'severity'
-  | 'hype_meter' | 'published_at' | 'area_name' | 'is_milestone'
+  | 'corroboration_count' | 'published_at' | 'area_name' | 'is_milestone'
   | 'is_developing' | 'update_count' | 'first_reported_at'
   | 'incident_date' | 'source_timeline' | 'latest_source_role'>
 
@@ -36,6 +36,7 @@ export function TimelineClient() {
       const p = new URLSearchParams({ page: String(pageNum) })
       if (filter !== 'all') p.set('classification', filter)
       if (year)             p.set('year', year)
+      if (minSev > 1)       p.set('min_severity', String(minSev))   // QA M1
       const res  = await fetch(`/api/incidents?${p}`)
       const data = (await res.json()) as Row[]
 
@@ -45,7 +46,7 @@ export function TimelineClient() {
     } finally {
       setLoading(false)
     }
-  }, [loading, filter, year])
+  }, [loading, filter, year, minSev])
 
   useEffect(() => { if (page === -1) loadMore(0) }, [page]) // eslint-disable-line
 

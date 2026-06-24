@@ -19,6 +19,7 @@ def build_queue_row(
     date_missing: bool = False,
     edmw_signal_count: int = 0,
     include_related_incidents: bool = False,
+    is_backfill: bool = True,
 ) -> dict:
     """
     Build a war_room_queue row for items going to operator review.
@@ -36,6 +37,11 @@ def build_queue_row(
     Defaults to False so backfill output is unchanged (consolidation_check()
     can return related_incidents for backfill candidates too, but backfill
     currently has no UI to surface them).
+
+    is_backfill: QA H4 — whether this row came from the historical backfill agent
+    (True) or the live forward-ingestion pipeline (False). The War Room buckets
+    bulk-backfill actions on raw_content._backfill, so the orchestrator MUST pass
+    False to avoid live drafts being mass-approved as "historical cleanup".
     """
     status = "update" if is_update else "pending"
     update_target_id = None
@@ -49,7 +55,7 @@ def build_queue_row(
         "raw_content": {
             **item,
             **draft,
-            "_backfill":        True,
+            "_backfill":        is_backfill,
             "_backfill_source": item.get("source_type", "msm"),
             **({"_date_fallback": True} if date_missing else {}),
         },

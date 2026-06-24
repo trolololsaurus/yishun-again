@@ -74,7 +74,13 @@ export function pinColor(cls: string, customLabel?: string | null): string {
   return PIN_COLOR[cls] ?? '#7A8BAA'
 }
 
-export const HYPE_TOOLTIP = 'Hype meter — number of mainstream media sources reporting this'
+export const HYPE_TOOLTIP = 'Corroboration — one bolt per extra source confirming this story (2 sources = ⚡, 3 = ⚡⚡, …)'
+
+// Lightning count from the number of sources: 1 source → none, 2 → 1 bolt,
+// 3 → 2 bolts, etc. Grows as more sources merge into one incident.
+export function hypeFromSources(sourceCount: number | null | undefined): number {
+  return Math.max(0, (sourceCount ?? 1) - 1)
+}
 
 export function severityTooltip(sev: number | null): string {
   return `Severity ${sev ?? 0}/5`
@@ -173,6 +179,32 @@ export function verdictNoun(role: string | null | undefined): string {
   return 'verdict'
 }
 
+// Significance order — used to pick the representative role when several
+// timeline entries share one date (a conclusion outranks a routine update).
+const ROLE_PRIORITY: Record<string, number> = {
+  appeal_dismissed: 6, appeal: 6, sentencing: 5, verdict: 4,
+  correction: 3, follow_up: 2, update: 1, initial: 0,
+}
+
+// Collapse a source_timeline so each DATE appears once (item: don't stamp
+// multiple REPORTED/VERDICT nodes on the same day). When several entries share
+// a date, the most significant role wins the node's label. Sorted by date.
+export function collapseTimelineByDate(
+  timeline: SourceTimelineEntry[] | null | undefined
+): SourceTimelineEntry[] {
+  if (!Array.isArray(timeline)) return []
+  const byDate = new Map<string, SourceTimelineEntry>()
+  for (const e of timeline) {
+    if (!e?.date) continue
+    const cur = byDate.get(e.date)
+    if (!cur) { byDate.set(e.date, e); continue }
+    const pe = ROLE_PRIORITY[e.role ?? 'initial'] ?? 0
+    const pc = ROLE_PRIORITY[cur.role ?? 'initial'] ?? 0
+    if (pe > pc) byDate.set(e.date, e)
+  }
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date))
+}
+
 export function chaosDescriptor(score: number): string {
   if (score < 20) return 'Quiet'
   if (score < 40) return 'Simmering'
@@ -181,12 +213,12 @@ export function chaosDescriptor(score: number): string {
   return 'Apocalyptic'
 }
 
-export function computeChaosScore(incidents: Array<{ classification: string; severity: number }>): number {
+export function computeChaosScore(incidents: Array<{ classification: string; severity: number | null }>): number {
   const raw = incidents.reduce((sum, inc) => {
     const weight = inc.classification === 'dagger' ? 3.0
                  : inc.classification === 'clown'  ? 1.5
                  : inc.classification === 'heart'  ? -1.0 : 0
-    return sum + inc.severity * weight
+    return sum + (inc.severity ?? 0) * weight   // QA M3: null/undefined severity → 0, not NaN
   }, 0)
   return Math.min(100, Math.max(0, Math.round((raw / 300) * 100)))
 }
