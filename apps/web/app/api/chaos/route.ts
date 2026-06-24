@@ -45,7 +45,7 @@ export async function GET(req: Request) {
     (acc, r) => {
       // QA M2: only count the three real classes; a 'custom' row must not add a
       // phantom key or inflate total, or the chips won't sum to ALL.
-      const cls = r.classification
+      const cls = r.classification as 'heart' | 'clown' | 'dagger'
       if (cls === 'heart' || cls === 'clown' || cls === 'dagger') {
         acc[cls] += 1
         acc.total += 1

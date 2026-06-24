@@ -99,7 +99,7 @@ export default async function HomePage() {
   const counts = rows.reduce(
     (acc, r) => {
       // QA M2: only count the three real classes (custom rows must not inflate total).
-      const cls = r.classification
+      const cls = r.classification as 'heart' | 'clown' | 'dagger'
       if (cls === 'heart' || cls === 'clown' || cls === 'dagger') {
         acc[cls] += 1
         acc.total += 1
