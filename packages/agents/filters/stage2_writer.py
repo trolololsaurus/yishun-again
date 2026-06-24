@@ -58,13 +58,21 @@ Return JSON only — no commentary, no markdown fences:
   "tags": string[],
   "confidence": float (0.0-1.0),
   "deaths": integer | null,
-  "injuries": integer | null
+  "injuries": integer | null,
+  "political": boolean
 }
 
 Classification guide:
 - heart: Good news, community wins, positive stories
 - clown: Absurd, stupid, baffling behaviour — no serious harm
 - dagger: Crime, violence, serious incidents
+
+POLITICAL CONTENT (hard legal guardrail — never publish):
+Set "political": true if the content concerns party politics, elections,
+candidates/MPs in a political capacity, government policy disputes, protests,
+or any partisan matter. When "political": true you MUST also set
+"confidence": 0. Ordinary crime/news that merely happens to involve a public
+official is NOT political — only genuinely partisan/electoral content is.
 
 Severity guide:
 1 = Minor offence, no injury
@@ -280,10 +288,22 @@ def _classify(client: anthropic.Anthropic, content: dict) -> dict:
     result["severity"]   = max(1, min(5, int(result["severity"])))
     result["confidence"] = max(0.0, min(1.0, float(result["confidence"])))
 
-    # deaths/injuries: normalize to int or None; never negative
+    # Legal guardrail #4 — political content is force-rejected (confidence=0),
+    # regardless of what the model returned for confidence.
+    result["political"] = bool(result.get("political", False))
+    if result["political"]:
+        result["confidence"] = 0.0
+        logger.warning("Stage 2 [classify] political content detected — confidence forced to 0")
+
+    # deaths/injuries: normalize to int or None; never negative.
+    # Tolerant of non-numeric model output (e.g. "several") — falls back to None
+    # rather than crashing the whole candidate (QA M5).
     for key in ("deaths", "injuries"):
         val = result.get(key)
-        result[key] = max(0, int(val)) if val is not None else None
+        try:
+            result[key] = max(0, int(val)) if val is not None else None
+        except (TypeError, ValueError):
+            result[key] = None
 
     return result
 
@@ -322,12 +342,8 @@ def _write_draft(client: anthropic.Anthropic, content: dict, classification: dic
         if key not in result:
             raise ValueError(f"Write response missing required field '{key}'")
 
-    # Legal guardrail §13.4 — political content detection
-    if (
-        result.get("confidence", 1.0) == 0
-        and "POLITICAL CONTENT DETECTED" in str(result.get("summary", "")).upper()
-    ):
-        logger.warning("Stage 2: political content flagged — marking for operator rejection")
+    # (Political-content detection now happens in _classify, which force-sets
+    # confidence=0; write_stage2 prepends the operator-visible reject marker.)
 
     # Enforce spec field-length constraints (truncate rather than error)
     if len(result["title"]) > 90:
@@ -430,7 +446,16 @@ def write_stage2(content: dict) -> dict:
         # Pass-through from input
         "edmw_signal_count":  content.get("edmw_signal_count", 0),
         "source_urls":        source_urls,
+        # Legal guardrail #4 — political flag propagates to the queue row
+        "political":          classification.get("political", False),
     }
+
+    # Political content: confidence is already 0 (forced in _classify); prepend the
+    # operator-visible reject marker so it cannot be silently approved.
+    if classification.get("political"):
+        marker = "[POLITICAL CONTENT DETECTED — REJECT] "
+        if not str(result.get("summary", "")).startswith(marker):
+            result["summary"] = marker + str(result.get("summary", ""))
 
     logger.info(
         "Stage 2 complete: [%s] sev=%d hype=%d '%s'",
