@@ -6,6 +6,18 @@ security) with a tech-lead-approved fix for each, ranked Critical → Low.
 
 **Status:** 🔴 Open · 🟡 Fixed in unmerged PR · 🟢 Cleanup script pending · ✅ Done
 
+> **Implementation status — branch `fix/qa-hardening` (this PR).**
+> **Landed:** C1, C2, C4, C3, M5 · H1, H2, H3, H4, H5 · M1, M2, M3, M4, M6, M7,
+> M9, M10, M13 · L1, L2, L5, L11. Plus migration **010** (C3/C4/M7) and tests
+> (`test_stage2_guardrails.py`). Verified: both apps `tsc --noEmit` clean, Python
+> 22/22 tests pass, web+war-room smoke OK.
+> **Already in-flight:** H6 (confirm-update date, merged into this branch via PR #10),
+> H7/H8 (`cleanup_corrupted.py --apply` — operator-run).
+> **Deferred (fast-follow — larger refactors / process, low user impact):** M8
+> (VariableSizeList), M12 (gnews canonicalization), M14 (source_type vocab), M15
+> (migration runner), M16 (map year-effect race), L3, L4 (won't-fix: "Deaths: 0"
+> conveys confirmed-none), L6, L7, L8, L9, L10.
+
 ---
 
 ## 🔴 Critical
