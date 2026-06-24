@@ -42,15 +42,32 @@ export async function POST(
   }
 
   const rc          = (item.raw_content ?? {}) as Record<string, unknown>
-  const sourceUrls  = (rc.source_urls as string[]) ?? [item.source_url]
+  const sourceUrls  = ((rc.source_urls as string[]) ?? [item.source_url]).filter(Boolean)
   const slug        = (item.proposed_slug ?? (rc.slug as string) ?? slugify(title))
 
-  // Read incident_date from raw_content — set by scraper/backfill agent
-  // Falls back to today only if raw_content has no usable date
-  const sourceDate  = (rc.date || rc.incident_date) as string | undefined
+  // QA C4/guardrail #1: never publish without a verifiable source.
+  if (sourceUrls.length < 1) {
+    return NextResponse.json(
+      { error: 'Cannot approve: incident has no source URL (legal guardrail #1).' },
+      { status: 422 },
+    )
+  }
+
+  // QA H3: never silently stamp incident_date with today. Prefer an
+  // operator-supplied date, then the real source date from raw_content. If a
+  // _date_fallback row reaches here with no real date, BLOCK the approval and
+  // ask the operator to set it — rather than defaulting to today.
+  const bodyDate    = (body as { incident_date?: string }).incident_date
+  const sourceDate  = (bodyDate || rc.date || rc.incident_date) as string | undefined
   const incidentDate = sourceDate && /^\d{4}-\d{2}-\d{2}/.test(sourceDate)
     ? sourceDate.substring(0, 10)
-    : new Date().toISOString().substring(0, 10)
+    : null
+  if (!incidentDate) {
+    return NextResponse.json(
+      { error: 'No real article date — set incident_date before approving (would otherwise default to today).' },
+      { status: 422 },
+    )
+  }
 
   // Build incident row
   const incident = {
@@ -116,25 +133,35 @@ export async function POST(
   }>) ?? []
   for (const link of agentRelated) {
     if (link.dismissed) continue
-    await supabase.from('incident_links').insert({
+    const { error: linkErr } = await supabase.from('incident_links').insert({
       incident_a:   newIncident.id,
       incident_b:   link.incident_id,
       link_type:    link.link_type ?? 'related',
       confidence:   link.confidence,
       agent_reason: link.reason ?? '',
     })
-    // Unique-constraint errors are ignored — fine if this link was already confirmed
+    // Unique-constraint (23505) is expected if already confirmed; log anything else.
+    if (linkErr && linkErr.code !== '23505') console.error('approve — incident_link insert:', linkErr)
   }
 
-  // Update queue status
-  await supabase.from('war_room_queue').update({
+  // QA H2: the queue-status update governs idempotency — if it fails, the
+  // incident is published but the item stays 'pending' and can be re-approved
+  // (slug conflict). Treat its failure as a hard error.
+  const { error: queueErr } = await supabase.from('war_room_queue').update({
     status:       'approved',
     incident_id:  newIncident.id,
     processed_at: new Date().toISOString(),
   }).eq('id', id)
+  if (queueErr) {
+    console.error('approve — queue status update failed (incident published but queue still pending):', queueErr)
+    return NextResponse.json(
+      { error: 'Incident published but queue update failed — do not re-approve; reconcile manually.', incident_id: newIncident.id },
+      { status: 500 },
+    )
+  }
 
-  // Log training signal
-  await supabase.from('training_signals').insert({
+  // Log training signal (telemetry — must not fail the request)
+  const { error: signalErr } = await supabase.from('training_signals').insert({
     incident_id:             newIncident.id,
     action,
     decision:                action === 'edit_approve' ? 'approve_with_edits' : 'approve',
@@ -147,6 +174,7 @@ export async function POST(
     operator_changes:        Object.keys(changes).length > 0 ? changes : null,
     agent_confidence_was:    item.agent_confidence,
   })
+  if (signalErr) console.error('approve — training_signal insert failed (non-fatal):', signalErr)
 
   return NextResponse.json({ incident_id: newIncident.id, action })
 }

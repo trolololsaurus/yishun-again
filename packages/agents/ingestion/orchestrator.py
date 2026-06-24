@@ -252,6 +252,7 @@ def run_ingestion_pass(
                         date_missing=is_dateless,
                         edmw_signal_count=edmw_signal_count,
                         include_related_incidents=True,
+                        is_backfill=False,   # QA H4 — live ingestion, not backfill
                     )
 
                     if not dry_run:

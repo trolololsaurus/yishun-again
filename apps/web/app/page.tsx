@@ -32,13 +32,18 @@ export default async function HomePage() {
     { data: allRows },
     { data: incidentDateRows },
   ] = await Promise.all([
-    // Map markers — all incidents with coordinates
+    // Map markers — current-year incidents with coordinates. QA H5: scope to the
+    // current year so the initial SSR pins match the default year shown by the
+    // chaos panel + feed (the IncidentMap year effect also defaults to current
+    // year, so all-time pins on first paint then shrinking was a visible mismatch).
     supabase
       .from('incidents')
       .select('id,slug,title,classification,custom_label,severity,corroboration_count,latitude,longitude')
       .eq('is_published', true)
       .not('latitude',  'is', null)
-      .not('longitude', 'is', null),
+      .not('longitude', 'is', null)
+      .gte('incident_date', `${currentYear}-01-01`)
+      .lt( 'incident_date', `${currentYear + 1}-01-01`),
 
     // Feed — first page (developing stories float to top)
     supabase
