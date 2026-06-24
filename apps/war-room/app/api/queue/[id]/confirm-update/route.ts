@@ -119,14 +119,17 @@ export async function POST(
 
   for (const link of agentRelated) {
     if (link.dismissed) continue
-    await supabase.from('incident_links').insert({
-      incident_a:   targetId,
-      incident_b:   link.incident_id,
-      link_type:    link.link_type ?? 'related',
-      confidence:   link.confidence,
-      agent_reason: link.reason ?? '',
-    }).select('id').limit(1)
-    // Ignore unique-constraint errors — may already exist
+    // QA M9: the operator just confirmed this update, so mark the link
+    // operator-confirmed (it was looking agent-suggested); capture the error.
+    const { error: linkErr } = await supabase.from('incident_links').insert({
+      incident_a:           targetId,
+      incident_b:           link.incident_id,
+      link_type:            link.link_type ?? 'related',
+      confidence:           link.confidence,
+      agent_reason:         link.reason ?? '',
+      confirmed_by_operator: true,
+    })
+    if (linkErr && linkErr.code !== '23505') console.error('confirm-update — incident_link insert:', linkErr)
   }
 
   // Update queue status

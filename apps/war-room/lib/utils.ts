@@ -72,7 +72,8 @@ export function slugify(text: string): string {
 
 export function validateUUID(id: string | undefined): string | null {
   if (!id) return null
-  const match = id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+  // QA L1: case-insensitive — uppercase/mixed-case UUIDs are valid per RFC 4122.
+  const match = id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
   return match ? id : null
 }
 

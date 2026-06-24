@@ -213,12 +213,12 @@ export function chaosDescriptor(score: number): string {
   return 'Apocalyptic'
 }
 
-export function computeChaosScore(incidents: Array<{ classification: string; severity: number }>): number {
+export function computeChaosScore(incidents: Array<{ classification: string; severity: number | null }>): number {
   const raw = incidents.reduce((sum, inc) => {
     const weight = inc.classification === 'dagger' ? 3.0
                  : inc.classification === 'clown'  ? 1.5
                  : inc.classification === 'heart'  ? -1.0 : 0
-    return sum + inc.severity * weight
+    return sum + (inc.severity ?? 0) * weight   // QA M3: null/undefined severity → 0, not NaN
   }, 0)
   return Math.min(100, Math.max(0, Math.round((raw / 300) * 100)))
 }

@@ -98,9 +98,12 @@ export default async function HomePage() {
 
   const counts = rows.reduce(
     (acc, r) => {
-      const cls = r.classification as 'heart' | 'clown' | 'dagger'
-      acc[cls] = (acc[cls] ?? 0) + 1
-      acc.total += 1
+      // QA M2: only count the three real classes (custom rows must not inflate total).
+      const cls = r.classification
+      if (cls === 'heart' || cls === 'clown' || cls === 'dagger') {
+        acc[cls] += 1
+        acc.total += 1
+      }
       return acc
     },
     { heart: 0, clown: 0, dagger: 0, total: 0 }
@@ -123,7 +126,9 @@ export default async function HomePage() {
   // ── Available years for dropdown ───────────────────────────────────────────
   const yearSet = new Set(
     (incidentDateRows ?? [])
-      .map(r => new Date(r.incident_date).getFullYear())
+      // QA L5: parse the year from the YYYY-MM-DD string directly — new Date()
+      // parses as UTC, so a Jan-1 SGT date would roll back to the prior year.
+      .map(r => parseInt(String(r.incident_date).slice(0, 4), 10))
       .filter(y => !isNaN(y))
   )
   yearSet.add(currentYear)  // always present even if no incidents yet

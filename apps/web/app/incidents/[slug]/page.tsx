@@ -57,11 +57,14 @@ export default async function IncidentPage({ params }: Props) {
   const incident = data as Incident
   const siteUrl  = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://yishunagain.com'
 
-  // Fetch confirmed related incident links (RLS filters to confirmed_by_operator=TRUE)
+  // Fetch confirmed related incident links. RLS already filters to
+  // confirmed_by_operator=TRUE; QA L11 asserts it explicitly as defence-in-depth
+  // so unconfirmed links can't leak if the policy is ever misconfigured.
   const [linksResult] = await Promise.all([
     supabase
       .from('incident_links')
       .select('incident_a,incident_b,link_type')
+      .eq('confirmed_by_operator', true)
       .or(`incident_a.eq.${incident.id},incident_b.eq.${incident.id}`),
   ])
 

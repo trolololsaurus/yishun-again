@@ -15,6 +15,9 @@ export async function GET(req: Request) {
   const page  = sanitisePage(url.searchParams.get('page'))
   const cls   = sanitiseClassification(url.searchParams.get('classification'))
   const year  = sanitiseYear(url.searchParams.get('year'))
+  // QA M1: severity floor (the Timeline "Sev ≥ N" control was previously a no-op).
+  const minSevRaw = parseInt(url.searchParams.get('min_severity') ?? '', 10)
+  const minSev    = minSevRaw >= 1 && minSevRaw <= 5 ? minSevRaw : null
 
   let q = supabase
     .from('incidents')
@@ -30,7 +33,8 @@ export async function GET(req: Request) {
     .order('id',             { ascending: false })
     .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1)
 
-  if (cls)  q = q.eq('classification', cls)
+  if (cls)    q = q.eq('classification', cls)
+  if (minSev) q = q.gte('severity', minSev)
   // Year filter uses incident_date (the real event date) — SAME column the chaos
   // API filters on, so sidebar counts, chip counts and feed rows all agree.
   if (year) {

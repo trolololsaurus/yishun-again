@@ -13,8 +13,6 @@ export function UTMLogger({ incidentId }: Props) {
     const utm_medium   = searchParams.get('utm_medium')
     const utm_campaign = searchParams.get('utm_campaign')
 
-    console.log('UTMLogger firing with params:', { utm_source, utm_medium, utm_campaign })
-
     if (!utm_source && !utm_medium && !utm_campaign) return
 
     const payload = {
@@ -25,17 +23,12 @@ export function UTMLogger({ incidentId }: Props) {
       referrer:     document.referrer || null,
     }
 
+    // QA L2: fire-and-forget; no debug logging of the response body in prod.
     fetch('/api/utm/log', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-    })
-      .then(async res => {
-        console.log('UTM log response:', res.status, await res.text())
-      })
-      .catch(err => {
-        console.error('UTM log fetch error:', err)
-      })
+    }).catch(() => { /* analytics best-effort */ })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return null
