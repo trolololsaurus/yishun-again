@@ -1,5 +1,5 @@
 """
-Stage 1 noise filter — Groq (llama3-8b-8192)
+Stage 1 noise filter — Groq (openai/gpt-oss-20b)
 
 Fast, cheap noise rejection before content reaches the more expensive
 Stage 2 Claude writer. Targets 60-70% rejection of raw scrape volume.
@@ -25,9 +25,12 @@ _rate_limiter = GroqMinuteRateLimiter()
 
 logger = logging.getLogger(__name__)
 
-# llama3-8b-8192 was decommissioned by Groq; llama-3.1-8b-instant is the
-# direct replacement — same 8B size, same latency profile, same free tier.
-MODEL = "llama-3.1-8b-instant"
+# Model history (Groq deprecations):
+#   llama3-8b-8192      — decommissioned by Groq.
+#   llama-3.1-8b-instant — deprecated 2026-06-27, decommissioned 2026-08-16.
+# Current: GPT OSS 20B, Groq's recommended replacement for the 8B-instant tier.
+# (Lighter alt if cost/latency matters: "gemma2-9b-it".)
+MODEL = "openai/gpt-oss-20b"
 PASS_THRESHOLD = 0.4
 
 # System prompt — extended with backfill-hardened reject criteria.
