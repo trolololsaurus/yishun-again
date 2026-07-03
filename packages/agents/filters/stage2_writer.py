@@ -124,12 +124,12 @@ TITLE RULES (critical):
 - Bad: "Stabbing incident reported at Yishun Ave 4" (sterile, bureaucratic)
 - Always vivid. Always specific. Never passive voice. Max 120 chars.
 
-SUMMARY RULES (SEO-optimised, 500-800 chars):
-- Write 3-5 sentences of rich, keyword-dense prose
+SUMMARY RULES (SEO-optimised, 800-1600 chars):
+- Write 5-9 sentences of rich, keyword-dense prose
 - Sentence 1: The hook — what happened, who, where (block-level if known)
 - Sentence 2: Context and detail — how it unfolded, what led to it
 - Sentence 3: Outcome — arrest, injury, outcome, community reaction
-- Sentence 4-5 (if sources allow): Corroborating detail, quotes if available, wider significance
+- Sentences 4-9 (as sources allow): Corroborating detail, quotes, timeline of developments, wider significance
 - Naturally include: "Yishun", block number or street name, incident type keywords
 - Written for Google — targets long-tail queries like "yishun stabbing 2024", "yishun cat killing"
 - Do NOT use bullet points. Flowing prose only.
@@ -138,7 +138,7 @@ SUMMARY RULES (SEO-optimised, 500-800 chars):
 Given source content, return JSON only:
 {
   "title": string (max 120 chars, clickbait-native, Yishun must appear, not always first),
-  "summary": string (500-800 chars, SEO prose, 3-5 sentences),
+  "summary": string (800-1600 chars, SEO prose, 5-9 sentences),
   "classification": "heart" | "clown" | "dagger",
   "severity": integer 1-5,
   "block_number": string | null,
@@ -326,7 +326,7 @@ def _write_draft(client: anthropic.Anthropic, content: dict, classification: dic
     calibration_hints = _load_calibration_hints()
     response = client.messages.create(
         model=MODEL_WRITE,
-        max_tokens=1500,
+        max_tokens=2048,   # headroom for summaries up to 1600 chars + title/seo/slug/pixel-prompt
         temperature=0.4,
         system=STAGE2_SYSTEM_PROMPT + calibration_hints,
         messages=[{"role": "user", "content": user_msg}],
@@ -553,7 +553,7 @@ def run_tests() -> None:
 
             # Basic sanity checks
             assert "yishun" in result.get("title", "").lower(), "FAIL: 'Yishun' missing from title"
-            assert 500 <= summary_len <= 900, f"FAIL: summary length {summary_len} out of expected range"
+            assert 800 <= summary_len <= 1600, f"FAIL: summary length {summary_len} out of expected range"
             assert result["classification"] in ("heart", "clown", "dagger"), "FAIL: invalid classification"
             assert 1 <= result["severity"] <= 5, "FAIL: severity out of range"
             # deaths must be None or a non-negative int
