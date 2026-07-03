@@ -122,7 +122,7 @@ TITLE RULES (critical):
 - Good: "Block 651 resident hurls furniture from 12th floor in Yishun" (location leads — specific dread)
 - Bad: "Man arrested in Yishun" (generic, no tension)
 - Bad: "Stabbing incident reported at Yishun Ave 4" (sterile, bureaucratic)
-- Always vivid. Always specific. Never passive voice. Max 90 chars.
+- Always vivid. Always specific. Never passive voice. Max 120 chars.
 
 SUMMARY RULES (SEO-optimised, 500-800 chars):
 - Write 3-5 sentences of rich, keyword-dense prose
@@ -137,7 +137,7 @@ SUMMARY RULES (SEO-optimised, 500-800 chars):
 
 Given source content, return JSON only:
 {
-  "title": string (max 90 chars, clickbait-native, Yishun must appear, not always first),
+  "title": string (max 120 chars, clickbait-native, Yishun must appear, not always first),
   "summary": string (500-800 chars, SEO prose, 3-5 sentences),
   "classification": "heart" | "clown" | "dagger",
   "severity": integer 1-5,
@@ -346,8 +346,8 @@ def _write_draft(client: anthropic.Anthropic, content: dict, classification: dic
     # confidence=0; write_stage2 prepends the operator-visible reject marker.)
 
     # Enforce spec field-length constraints (truncate rather than error)
-    if len(result["title"]) > 90:
-        result["title"] = result["title"][:90]
+    if len(result["title"]) > 120:
+        result["title"] = result["title"][:120]
     if len(result["slug"]) > 70:
         result["slug"] = result["slug"][:70]
     if len(result["seo_title"]) > 60:

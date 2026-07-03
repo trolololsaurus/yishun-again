@@ -100,7 +100,7 @@ export async function POST(request: Request) {
   // Process each item individually so slug-conflict errors are isolated.
   for (const item of queue) {
     const rc    = (item.raw_content ?? {}) as Record<string, unknown>
-    const title = (item.proposed_title ?? (rc.title as string) ?? '').slice(0, 90)
+    const title = (item.proposed_title ?? (rc.title as string) ?? '').slice(0, 120)
     const summary = item.proposed_summary ?? (rc.summary as string) ?? ''
 
     if (!title || !summary) {

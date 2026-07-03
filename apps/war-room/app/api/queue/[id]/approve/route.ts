@@ -18,7 +18,7 @@ export async function POST(
   }
 
   // Sanitise inputs
-  const title           = (body.title          ?? '').slice(0, 90).trim()
+  const title           = (body.title          ?? '').slice(0, 120).trim()
   const summary         = (body.summary         ?? '').trim()
   const classification  = (['heart', 'clown', 'dagger', 'custom'].includes(body.classification)
     ? body.classification : 'dagger') as Classification

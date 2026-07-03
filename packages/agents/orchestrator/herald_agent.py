@@ -105,7 +105,7 @@ def _queue_milestone_post(
             "raw_content":             raw_content,
             "source_url":              source_url,
             "source_type":             "msm",
-            "proposed_title":          title[:90],
+            "proposed_title":          title[:120],
             "proposed_summary":        summary,
             "proposed_classification": classification,
             "proposed_severity":       severity,
