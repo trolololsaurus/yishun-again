@@ -92,6 +92,13 @@ export async function POST(
     chaos_contribution:  (rc.chaos_contribution as number | null) ?? null,
     deaths:              (rc.deaths   as number | null) ?? null,
     injuries:            (rc.injuries as number | null) ?? null,
+    // Preserve a multi-source story that was already assembled on the queue row
+    // (e.g. an enriched draft moved back to the queue for review). Without these,
+    // approve would publish a timeline-less incident.
+    source_timeline:     (rc.source_timeline as unknown[])       ?? [],
+    update_count:        (rc.update_count as number | null)      ?? 0,
+    latest_source_role:  (rc.latest_source_role as string | null) ?? null,
+    conclusion_type:     (rc.conclusion_type as string | null)    ?? null,
     is_milestone:        (rc.is_milestone as boolean)        ?? false,
     milestone_type:      (rc.milestone_type  as string | null) ?? null,
     milestone_value:     (rc.milestone_value as number | null) ?? null,
