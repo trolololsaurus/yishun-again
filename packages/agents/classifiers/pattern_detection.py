@@ -194,10 +194,13 @@ def _fire_alert(
                 "status":        "pending",
             })
             .select("id")
-            .single()
             .execute()
         )
-        alert_id: str = alert_res.data["id"]
+        # supabase-py insert().select() returns a list, not a single object —
+        # this builder has no .single() (mirrors the pattern in backfill_agent).
+        if not alert_res.data:
+            raise RuntimeError("pattern_alerts insert returned no row")
+        alert_id: str = alert_res.data[0]["id"]
     except Exception as exc:
         logger.error("pattern_alerts insert failed (%s/%s): %s", pattern_type, pattern_value, exc)
         return False

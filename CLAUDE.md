@@ -103,7 +103,7 @@ Execute strictly in sequence — do not skip ahead:
 | Admin auth | Cloudflare Access | Free tier |
 | Backend | FastAPI | 0.110.x / Python 3.11+ |
 | Agent hosting | Google Cloud Run | asia-southeast1 |
-| Stage 1 filter | Groq API | llama3-8b-8192 |
+| Stage 1 filter | Groq API | openai/gpt-oss-20b |
 | Stage 2 writer | Anthropic API | claude-haiku-4-5-20251001 (classify), claude-sonnet-4-6 (write) |
 | Orchestrator | LangGraph | 0.1.x |
 | Image gen | Modal.run | SDXL + custom LoRA |

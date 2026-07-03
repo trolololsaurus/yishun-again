@@ -238,12 +238,12 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
           {/* Title */}
           <div>
             <label className="font-body text-text-secondary text-sm uppercase tracking-widest block mb-1">
-              Title <span className="text-border">{title.length}/90</span>
+              Title <span className="text-border">{title.length}/120</span>
             </label>
             <input
               type="text"
               value={title}
-              maxLength={90}
+              maxLength={120}
               onChange={e => setTitle(e.target.value)}
               className="w-full px-3 py-2 bg-bg border border-border text-text-primary font-body text-base rounded focus:border-yellow focus:outline-none"
             />
