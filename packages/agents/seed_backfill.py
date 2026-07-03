@@ -97,6 +97,40 @@ def _extract(html: str, fallback_url: str) -> tuple[str, str, str | None]:
     return title, body, date
 
 
+_DATE_SYS = (
+    "You extract the single most relevant date from a Singapore news article for an "
+    "incident archive. Return ONLY JSON {\"date\":\"YYYY-MM-DD\"} or {\"date\":null}. "
+    "Choose the date the incident happened or was first reported/published (prefer a "
+    "byline/publish date, else the primary event date). If only month+year are certain, "
+    "use day 01. Ignore unrelated dates (opening hours, other events, future court dates). "
+    "Year must be 1980-2026."
+)
+
+
+def _date_from_text(title: str, body: str) -> str | None:
+    """Last-resort date recovery: let the LLM read the date cues in the article
+    text when no <meta> publish date and no /YYYY/MM/DD/ URL path exist (gov sites,
+    Mothership, most Wayback snapshots)."""
+    if not body:
+        return None
+    try:
+        import anthropic
+        # backfill_agent (imported at module load) already ran load_dotenv, so
+        # ANTHROPIC_API_KEY is in the environment.
+        client = anthropic.Anthropic()
+        r = client.messages.create(
+            model="claude-haiku-4-5-20251001", max_tokens=60, temperature=0,
+            system=_DATE_SYS,
+            messages=[{"role": "user", "content": f"TITLE: {title}\nCONTENT: {body[:1800]}"}],
+        )
+        m = re.search(r'"date"\s*:\s*"?(\d{4}-\d{2}-\d{2})"?', r.content[0].text)
+        if m and 1980 <= int(m.group(1)[:4]) <= 2026:
+            return m.group(1)
+    except Exception as exc:
+        logger.debug("LLM date extraction failed: %s", exc)
+    return None
+
+
 def fetch_article(url: str) -> dict | None:
     """
     Fetch one article -> {title, content, url, source_name, source_type, date}.
@@ -129,6 +163,21 @@ def fetch_article(url: str) -> dict | None:
     if not body or len(body) < 120:
         logger.warning("FETCH FAILED (no content): %s", url)
         return None
+
+    # Soft-404 guard: some sites (e.g. Straits Times) return HTTP 200 with a
+    # generic headlines page for a bad URL. A real Yishun article names Yishun;
+    # if neither title nor body mentions it, we grabbed the wrong page — flag it
+    # instead of ingesting boilerplate as a draft.
+    if "yishun" not in (title or "").lower() and "yishun" not in body.lower():
+        logger.warning("FETCH FAILED (soft-404 / off-topic, no 'Yishun' in page): %s", url)
+        return None
+
+    # Date recovery when <meta>/URL-path gave nothing (gov sites, Mothership
+    # /YYYY/MM/ links, Wayback snapshots): month-only URL first, then LLM reads
+    # the date cues in the article text.
+    if not date:
+        mm = re.search(r"/(\d{4})/(\d{2})/(?:\d{2}/)?", url)
+        date = _date_from_text(title or "", body) or (f"{mm.group(1)}-{mm.group(2)}-01" if mm else None)
 
     logger.info("fetched [%s] %s | %s | %s", used, _host(url), date, (title or "")[:70])
     return {
