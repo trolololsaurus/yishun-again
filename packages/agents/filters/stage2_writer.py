@@ -124,8 +124,11 @@ TITLE RULES (critical):
 - Bad: "Stabbing incident reported at Yishun Ave 4" (sterile, bureaucratic)
 - Always vivid. Always specific. Never passive voice. Max 120 chars.
 
-SUMMARY RULES (SEO-optimised, 800-1600 chars):
-- Write 5-9 sentences of rich, keyword-dense prose
+SUMMARY RULES (SEO-optimised — length follows the sources, not a quota):
+- Write rich, keyword-dense prose — as long as the sources genuinely support
+  (a well-covered story can run to ~1600 chars / 5-9 sentences; a thinly-sourced
+  one should be shorter). Never pad to length with unverified detail — a shorter,
+  fully-grounded summary beats a longer one padded with invented specifics.
 - Sentence 1: The hook — what happened, who, where (block-level if known)
 - Sentence 2: Context and detail — how it unfolded, what led to it
 - Sentence 3: Outcome — arrest, injury, outcome, community reaction
@@ -138,7 +141,7 @@ SUMMARY RULES (SEO-optimised, 800-1600 chars):
 Given source content, return JSON only:
 {
   "title": string (max 120 chars, clickbait-native, Yishun must appear, not always first),
-  "summary": string (800-1600 chars, SEO prose, 5-9 sentences),
+  "summary": string (SEO prose; up to ~1600 chars, only as far as the sources support — never pad to length),
   "classification": "heart" | "clown" | "dagger",
   "severity": integer 1-5,
   "block_number": string | null,
@@ -553,7 +556,7 @@ def run_tests() -> None:
 
             # Basic sanity checks
             assert "yishun" in result.get("title", "").lower(), "FAIL: 'Yishun' missing from title"
-            assert 800 <= summary_len <= 1600, f"FAIL: summary length {summary_len} out of expected range"
+            assert 300 <= summary_len <= 1600, f"FAIL: summary length {summary_len} out of expected range"
             assert result["classification"] in ("heart", "clown", "dagger"), "FAIL: invalid classification"
             assert 1 <= result["severity"] <= 5, "FAIL: severity out of range"
             # deaths must be None or a non-negative int
