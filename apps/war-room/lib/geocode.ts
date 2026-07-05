@@ -1,0 +1,166 @@
+// OneMap geocoding for publish-time pin creation (June-2026 pin overhaul).
+// TypeScript port of packages/agents/classifiers/geocoding.py — keep the two
+// in sync. Coordinates come ONLY from here; LLM-estimated values are never
+// trusted. Priority: block → full address → POI → street. No match → null
+// (the incident gets no map pin rather than stacking at the Yishun centre).
+
+const BASE_URL = 'https://www.onemap.gov.sg/api/common/elastic/search'
+
+// Yishun bounding box — reject results outside
+const LAT_MIN = 1.39, LAT_MAX = 1.47
+const LON_MIN = 103.80, LON_MAX = 103.87
+
+// A real HDB block number ("349", "512C") — not streets, POIs or MRT codes
+const BLOCK_RE = /^\s*(?:BLK\.?|BLOCK)?\s*(\d{1,4}[A-Z]?)\s*$/i
+
+const STREET_RE = new RegExp(
+  '\\b(' +
+  'YISHUN\\s+(?:AVENUE|AVE|STREET|ST|RING\\s+ROAD|CENTRAL|CLOSE|DRIVE|DR|LINK' +
+  '|GROVE|WALK|PLACE|CRESCENT|LOOP|LANE)(?:\\s+\\d+)?' +
+  '|LENTOR\\s+AVENUE' +
+  '|SEMBAWANG\\s+ROAD' +
+  '|MILTONIA\\s+CLOSE' +
+  '|CANBERRA\\s+(?:ROAD|LINK|DRIVE)' +
+  ')\\b', 'i'
+)
+
+// Prominent places — scanned in order over block_number, area_name, title
+// ONLY (never the summary: dagger stories routinely mention the hospital
+// victims were taken to, which would mis-pin them there).
+const POI_ALIASES: Array<[string, string]> = [
+  ['khoo teck puat',                  'KHOO TECK PUAT HOSPITAL'],
+  ['yishun community hospital',       'YISHUN COMMUNITY HOSPITAL'],
+  ['yishun polyclinic',               'YISHUN POLYCLINIC'],
+  ['northpoint',                      'NORTHPOINT CITY'],
+  ['yishun integrated transport hub', 'YISHUN INTEGRATED TRANSPORT HUB'],
+  ['yishun bus interchange',          'YISHUN INTEGRATED TRANSPORT HUB'],
+  ['yishun interchange',              'YISHUN INTEGRATED TRANSPORT HUB'],
+  ['yishun mrt',                      'YISHUN MRT STATION'],
+  ['safra yishun',                    'SAFRA YISHUN'],
+  ['yishun park hawker',              'YISHUN PARK HAWKER CENTRE'],
+  ['yishun park connector',           'YISHUN PARK'],
+  ['yishun park',                     'YISHUN PARK'],
+  ['yishun pond',                     'YISHUN POND'],
+  ['yishun stadium',                  'YISHUN STADIUM'],
+  ['yishun swimming',                 'YISHUN SWIMMING COMPLEX'],
+  ['yishun sports hall',              'YISHUN SPORTS HALL'],
+  ['yishun public library',           'YISHUN PUBLIC LIBRARY'],
+  ['yishun library',                  'YISHUN PUBLIC LIBRARY'],
+  ['chong pang',                      'CHONG PANG MARKET AND FOOD CENTRE'],
+  ['wisteria',                        'WISTERIA MALL'],
+  ['junction nine',                   'JUNCTION NINE'],
+  ['junction 9',                      'JUNCTION NINE'],
+  ['north gaia',                      'NORTH GAIA'],
+  ['yishun 10',                       'YISHUN 10'],
+  ['yishun ten',                      'YISHUN 10'],
+  ['gv yishun',                       'YISHUN 10'],
+  ['north view primary',              'NORTH VIEW PRIMARY SCHOOL'],
+  ['chung cheng high',                'CHUNG CHENG HIGH SCHOOL YISHUN'],
+  ['yishun industrial park',          'YISHUN INDUSTRIAL PARK A'],
+  ['orchid country club',             'ORCHID COUNTRY CLUB'],
+  ['yishun dam',                      'YISHUN DAM'],
+  ['lower seletar',                   'LOWER SELETAR RESERVOIR PARK'],
+]
+
+const withinYishun = (lat: number, lon: number) =>
+  lat >= LAT_MIN && lat <= LAT_MAX && lon >= LON_MIN && lon <= LON_MAX
+
+const cleanBlock = (blockNumber?: string | null): string | null => {
+  if (!blockNumber) return null
+  const m = BLOCK_RE.exec(blockNumber)
+  return m ? m[1].toUpperCase() : null
+}
+
+const findStreet = (...texts: Array<string | null | undefined>): string | null => {
+  for (const t of texts) {
+    if (!t) continue
+    const m = STREET_RE.exec(t)
+    if (m) return m[1].toUpperCase().replace(/\s+/g, ' ').trim()
+  }
+  return null
+}
+
+const findPoi = (...texts: Array<string | null | undefined>): string | null => {
+  const combined = texts.filter(Boolean).join(' ').toLowerCase()
+  if (!combined) return null
+  for (const [alias, query] of POI_ALIASES) {
+    if (combined.includes(alias)) return query
+  }
+  return null
+}
+
+// OneMap's address index matches abbreviated postal forms ("YISHUN AVE 11")
+const abbrevStreet = (street: string): string =>
+  street.toUpperCase()
+    .replace(/\bAVENUE\b/g, 'AVE')
+    .replace(/\bSTREET\b/g, 'ST')
+    .replace(/\bRING\s+ROAD\b/g, 'RING RD')
+    .replace(/\bDRIVE\b/g, 'DR')
+
+function buildQueries(
+  blockNumber?: string | null,
+  areaName?: string | null,
+  extraText?: string | null,
+): string[] {
+  const queries: string[] = []
+  const block  = cleanBlock(blockNumber)
+  const street = findStreet(areaName, blockNumber)
+  const poi    = findPoi(blockNumber, areaName, extraText)
+
+  if (block && street) {
+    const ab = abbrevStreet(street)
+    queries.push(`${block} ${ab}`)
+    if (ab !== street) queries.push(`${block} ${street}`)
+    queries.push(`BLK ${block} ${ab}`)
+  } else if (block) {
+    queries.push(`${block} YISHUN`, `BLK ${block} YISHUN`)
+  }
+
+  if (!block && blockNumber && /\d/.test(blockNumber) && STREET_RE.test(blockNumber)) {
+    const raw = blockNumber.trim().toUpperCase().replace(/\s+/g, ' ')
+    queries.push(abbrevStreet(raw))
+    if (abbrevStreet(raw) !== raw) queries.push(raw)
+  }
+
+  if (poi) queries.push(poi)
+  if (street) queries.push(street)
+
+  return queries
+}
+
+async function onemapLookup(query: string): Promise<[number, number] | null> {
+  try {
+    const params = new URLSearchParams({
+      searchVal: query, returnGeom: 'Y', getAddrDetails: 'Y', pageNum: '1',
+    })
+    const res = await fetch(`${BASE_URL}?${params}`, {
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok) return null
+    const results = (await res.json())?.results ?? []
+    if (results.length > 0) {
+      const lat = parseFloat(results[0].LATITUDE)
+      const lon = parseFloat(results[0].LONGITUDE)
+      if (!isNaN(lat) && !isNaN(lon) && withinYishun(lat, lon)) return [lat, lon]
+    }
+  } catch { /* network error / timeout — treat as no result */ }
+  return null
+}
+
+/**
+ * Geocode an incident at publish time. Returns [latitude, longitude] or null.
+ * Failure must never block an approval — callers publish with null coords
+ * (no pin) when this returns null.
+ */
+export async function geocodeIncident(
+  blockNumber?: string | null,
+  areaName?: string | null,
+  extraText?: string | null,
+): Promise<[number, number] | null> {
+  for (const query of buildQueries(blockNumber, areaName, extraText)) {
+    const coords = await onemapLookup(query)
+    if (coords) return coords
+    await new Promise(r => setTimeout(r, 500))  // OneMap rate limit
+  }
+  return null
+}

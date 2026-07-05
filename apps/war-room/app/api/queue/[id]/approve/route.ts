@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { validateUUID, slugify } from '@/lib/utils'
+import { geocodeIncident } from '@/lib/geocode'
 import type { ApproveBody, Classification } from '@/lib/types'
 
 export async function POST(
@@ -69,16 +70,31 @@ export async function POST(
     )
   }
 
+  // Pin creation happens at publish: geocode via OneMap using priority order
+  // block → POI → street. LLM-estimated coords in raw_content are never
+  // trusted (they used to stack every pin at the Yishun centre point).
+  // Geocode failure must not block approval — publish with no pin instead.
+  const blockNumber = (rc.block_number as string | null) ?? null
+  const areaName    = (rc.area_name    as string | null) ?? null
+  let latitude: number | null = null
+  let longitude: number | null = null
+  try {
+    const coords = await geocodeIncident(blockNumber, areaName, title)
+    if (coords) [latitude, longitude] = coords
+  } catch (e) {
+    console.error('approve — geocoding failed (publishing without pin):', e)
+  }
+
   // Build incident row
   const incident = {
     title,
     summary,
     classification,
     severity,
-    block_number:        (rc.block_number  as string  | null) ?? null,
-    area_name:           (rc.area_name     as string  | null) ?? null,
-    latitude:            (rc.latitude      as number  | null) ?? null,
-    longitude:           (rc.longitude     as number  | null) ?? null,
+    block_number:        blockNumber,
+    area_name:           areaName,
+    latitude,
+    longitude,
     source_urls:         sourceUrls,
     corroboration_count: item.corroboration_count ?? 1,
     edmw_signal_count:   item.edmw_signal_count   ?? 0,

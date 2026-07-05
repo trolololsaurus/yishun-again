@@ -731,20 +731,23 @@ def _build_incident_row(draft: dict, item: dict) -> Optional[dict]:
 
     hype = 1 if item.get("source_type") == "reference" else draft.get("hype_meter", 0)
 
-    # Geocode if lat/lon still null after Stage 2
-    lat = draft.get("latitude")
-    lon = draft.get("longitude")
-    if (lat is None or lon is None) and (draft.get("block_number") or draft.get("area_name")):
-        try:
-            from classifiers.geocoding import geocode_incident
-            coords = geocode_incident(draft.get("block_number"), draft.get("area_name"))
-            if coords:
-                lat, lon = coords
-                logger.debug(
-                    "Geocoded in build_incident_row: lat=%.5f lon=%.5f", lat, lon,
-                )
-        except Exception as exc:
-            logger.debug("Geocoding in build_incident_row (non-fatal): %s", exc)
+    # Coordinates come ONLY from the deterministic OneMap geocoder — never
+    # from Stage 2's LLM output (it used to guess the Yishun centre point,
+    # which stacked every pin at 1.4295/103.835). No geocode → no pin.
+    lat, lon = None, None
+    try:
+        from classifiers.geocoding import geocode_incident
+        coords = geocode_incident(
+            draft.get("block_number"), draft.get("area_name"),
+            extra_text=draft.get("title"),
+        )
+        if coords:
+            lat, lon = coords
+            logger.debug(
+                "Geocoded in build_incident_row: lat=%.5f lon=%.5f", lat, lon,
+            )
+    except Exception as exc:
+        logger.debug("Geocoding in build_incident_row (non-fatal): %s", exc)
 
     return {
         "incident_date":       incident_date,
