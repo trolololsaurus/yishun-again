@@ -123,6 +123,9 @@ export function ChaosPanel({
 
       {/* ── Legal disclaimer (kept at 10px) ───────────────────── */}
       <div className="px-4 pt-3 pb-4 font-body" style={{ fontSize: 10, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+        <p className="mb-1">
+          The satirical incident archive of Yishun, Nee Soon — Singapore&apos;s most eventful estate.
+        </p>
         YISHUN AGAIN · SATIRE · ALL INCIDENTS SOURCED FROM PUBLIC MEDIA
       </div>
 

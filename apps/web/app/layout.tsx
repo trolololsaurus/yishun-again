@@ -4,8 +4,10 @@ import './globals.css'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { Nav }       from '@/components/Nav'
 import { UTMLogger } from '@/components/UTMLogger'
+import { SITE_URL }  from '@/lib/site'
 
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title:       { default: 'Yishun Again', template: '%s · Yishun Again' },
   description: "Singapore's Most Cursed Estate — Documented.",
   robots:      'index, follow',

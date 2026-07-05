@@ -6,21 +6,49 @@ import { computeChaosScore, chaosDescriptor } from '@/lib/utils'
 
 export const revalidate = 60  // 60-second ISR for production
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://yishunagain.com'
+import { SITE_URL } from '@/lib/site'
+
+const HOME_TITLE       = 'Yishun Again — Yishun Incident Map & Chaos Index | Singapore'
+const HOME_DESCRIPTION =
+  "A satirical live incident map for Yishun (Nee Soon), Singapore. " +
+  "Every strange, dark, and heartwarming thing that happens in Singapore's " +
+  "most eventful estate — mapped, classified, and scored on the Chaos Index."
 
 export const metadata: Metadata = {
-  title:       'Yishun Again — Map',
-  description: "Live incident map for Singapore's most eventful estate.",
-  alternates:  { canonical: SITE_URL },
+  // `absolute` opts out of the layout's '%s · Yishun Again' template —
+  // the homepage title already carries the brand.
+  title:       { absolute: HOME_TITLE },
+  description: HOME_DESCRIPTION,
+  alternates:  { canonical: `${SITE_URL}/` },
   openGraph: {
-    title:       'Yishun Again — Map',
-    description: "Live incident map for Singapore's most eventful estate.",
-    url:         SITE_URL,
+    title:       HOME_TITLE,
+    description: HOME_DESCRIPTION,
+    url:         `${SITE_URL}/`,
     images:      [{ url: `${SITE_URL}/og-default.jpg`, width: 1200, height: 630 }],
     type:        'website',
   },
   twitter: { card: 'summary_large_image' },
 }
+
+// Homepage structured data — WebSite + Organization nodes, same inline
+// <script type="application/ld+json"> pattern as incidents/[slug]/page.tsx.
+const homeJsonLd = [
+  {
+    '@context':  'https://schema.org',
+    '@type':     'WebSite',
+    name:        'Yishun Again',
+    url:         `${SITE_URL}/`,
+    description:
+      'Satirical live incident map and archive for Yishun (Nee Soon), Singapore, scored on the Chaos Index.',
+    inLanguage:  'en-SG',
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type':    'Organization',
+    name:       'Yishun Again',
+    url:        `${SITE_URL}/`,
+  },
+]
 
 export default async function HomePage() {
   const currentYear = new Date().getFullYear()
@@ -147,10 +175,16 @@ export default async function HomePage() {
   }
 
   return (
-    <HomeClient
-      mapFeatures={mapFeatures}
-      initialFeed={(feedRows ?? []) as any}
-      chaosData={chaosData}
-    />
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(homeJsonLd) }}
+      />
+      <HomeClient
+        mapFeatures={mapFeatures}
+        initialFeed={(feedRows ?? []) as any}
+        chaosData={chaosData}
+      />
+    </>
   )
 }

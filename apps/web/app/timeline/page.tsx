@@ -1,7 +1,6 @@
 import type { Metadata } from 'next'
 import { TimelineClient } from './TimelineClient'
-
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://yishunagain.com'
+import { SITE_URL } from '@/lib/site'
 
 export const metadata: Metadata = {
   title:       'Timeline',

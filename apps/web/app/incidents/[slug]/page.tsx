@@ -6,6 +6,7 @@ import { supabase }      from '@/lib/supabase'
 import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, fmtDate, formatDuration, formatDurationGap, lastVerdictEntry, verdictNoun, collapseTimelineByDate } from '@/lib/utils'
 import { ShareButton }   from './ShareButton'
 import { UTMLogger }     from '@/components/UTMLogger'
+import { SITE_URL }      from '@/lib/site'
 import type { Incident, IncidentLink, RelatedIncident, SourceTimelineEntry } from '@/lib/types'
 
 export const revalidate = 3600
@@ -21,7 +22,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
   if (!data) return { title: 'Incident not found' }
 
-  const siteUrl   = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://yishunagain.com'
+  const siteUrl   = SITE_URL
   const ogTitle   = data.seo_title ?? data.title ?? slug
   const ogDesc    = (data.seo_description ?? (data.summary ?? '').slice(0, 160))
   const ogImage   = data.pixel_art_url
@@ -31,6 +32,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title:       ogTitle,
     description: ogDesc,
+    alternates:  { canonical: `${siteUrl}/incidents/${slug}` },
     openGraph: {
       title:       ogTitle,
       description: ogDesc,
@@ -55,7 +57,7 @@ export default async function IncidentPage({ params }: Props) {
   if (error || !data) notFound()
 
   const incident = data as Incident
-  const siteUrl  = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://yishunagain.com'
+  const siteUrl  = SITE_URL
 
   // Fetch confirmed related incident links. RLS already filters to
   // confirmed_by_operator=TRUE; QA L11 asserts it explicitly as defence-in-depth

@@ -1,14 +1,13 @@
 import type { Metadata } from 'next'
-
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://yishunagain.com'
+import { SITE_URL } from '@/lib/site'
 
 export const metadata: Metadata = {
   title:       'About',
-  description: "What is Yishun Again? A satirical incident archive for Singapore's most eventful estate.",
+  description: "What is Yishun Again? A satirical incident archive for Yishun, Nee Soon — Singapore's most eventful estate.",
   alternates:  { canonical: `${SITE_URL}/about` },
   openGraph: {
     title:       'About — Yishun Again',
-    description: "What is Yishun Again? A satirical incident archive for Singapore's most eventful estate.",
+    description: "What is Yishun Again? A satirical incident archive for Yishun, Nee Soon — Singapore's most eventful estate.",
     url:         `${SITE_URL}/about`,
     images:      [{ url: `${SITE_URL}/og-default.jpg`, width: 1200, height: 630 }],
     type:        'website',
@@ -25,9 +24,9 @@ export default function AboutPage() {
 
       <section className="space-y-4 text-text-primary leading-relaxed" style={{ fontSize: '16px' }}>
         <p>
-          Yishun Again is a satirical incident archive for Yishun, Singapore.
-          It exists because Yishun has a reputation — earned, documented, and for reasons that
-          remain unclear to everyone including us.
+          Yishun Again is a satirical incident archive for Yishun, in Nee Soon in
+          Singapore&apos;s north. It exists because Yishun has a reputation — earned, documented,
+          and for reasons that remain unclear to everyone including us.
         </p>
         <p>
           Our pipeline scrapes public news sources, drafts incident write-ups, and queues

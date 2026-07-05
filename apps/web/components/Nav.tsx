@@ -17,13 +17,23 @@ export function Nav() {
       className="flex-none flex items-center justify-between px-4 relative z-[100]"
       style={{ height: 72, background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}
     >
-      {/* Logo — two-line stack with breathing room above and below */}
+      {/* Logo — two-line stack with breathing room above and below.
+          On the homepage the logo doubles as the page <h1> (the HUD has no
+          other heading); Tailwind preflight resets h1 to inherit font/margin,
+          so it renders pixel-identical. Other pages have their own <h1>. */}
       <Link
         href="/"
         className="font-display block"
         style={{ fontSize: 26, color: 'var(--color-amber)', lineHeight: '1.05' }}
       >
-        YISHUN<br />AGAIN
+        {path === '/' ? (
+          <h1>
+            YISHUN<br />AGAIN
+            <span className="sr-only"> — satirical incident map of Yishun, Nee Soon, Singapore</span>
+          </h1>
+        ) : (
+          <>YISHUN<br />AGAIN</>
+        )}
       </Link>
 
       {/* Nav links — right-aligned, consistent spacing */}
