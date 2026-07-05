@@ -47,6 +47,7 @@ const homeJsonLd = [
     '@type':    'Organization',
     name:       'Yishun Again',
     url:        `${SITE_URL}/`,
+    logo:       `${SITE_URL}/og-default.jpg`,
   },
 ]
 
