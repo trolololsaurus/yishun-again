@@ -62,7 +62,9 @@ steps:
       - $_REGION
       - --platform
       - managed
-      - --allow-unauthenticated
+      # IAM-protected — never expose the pipeline endpoints publicly
+      # (docs/WAR_ROOM_DEPLOY.md §8). Callers need roles/run.invoker.
+      - --no-allow-unauthenticated
       - --memory
       - 512Mi
       - --cpu
