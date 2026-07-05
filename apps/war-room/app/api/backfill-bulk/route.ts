@@ -19,6 +19,7 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { slugify, today } from '@/lib/utils'
+import { geocodeIncident } from '@/lib/geocode'
 
 const MAX_BULK = 200   // safety cap per call
 
@@ -116,15 +117,26 @@ export async function POST(request: Request) {
     const slug         = item.proposed_slug ?? (rc.slug as string) ?? slugify(title)
     const incidentDate = (rc.date as string) ?? today()
 
+    // Publish-time pin creation (block → POI → street); never trust LLM
+    // coords from raw_content. Geocode failure publishes without a pin.
+    const blockNumber = (rc.block_number as string | null) ?? null
+    const areaName    = (rc.area_name    as string | null) ?? null
+    let latitude: number | null = null
+    let longitude: number | null = null
+    try {
+      const coords = await geocodeIncident(blockNumber, areaName, title)
+      if (coords) [latitude, longitude] = coords
+    } catch { /* publish without pin */ }
+
     const incident = {
       title,
       summary,
       classification,
       severity,
-      block_number:        (rc.block_number  as string | null)  ?? null,
-      area_name:           (rc.area_name     as string | null)  ?? null,
-      latitude:            (rc.latitude      as number | null)  ?? null,
-      longitude:           (rc.longitude     as number | null)  ?? null,
+      block_number:        blockNumber,
+      area_name:           areaName,
+      latitude,
+      longitude,
       source_urls:         sourceUrls,
       corroboration_count: item.corroboration_count ?? 1,
       edmw_signal_count:   item.edmw_signal_count   ?? 0,

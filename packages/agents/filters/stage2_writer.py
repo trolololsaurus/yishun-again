@@ -83,9 +83,14 @@ Severity guide:
 
 confidence: how certain you are this is a genuine, verifiable Yishun incident.
 
-latitude/longitude: Yishun centre is approx 1.4295 N, 103.8350 E.
-Estimate block-level coordinates when a block number or street is named.
-Return null if location cannot be determined from the content.
+latitude/longitude: ALWAYS return null. Never estimate coordinates — they are
+resolved downstream by a deterministic geocoder. Instead, capture location as
+text with block-level precision where the source allows:
+- block_number: the HDB block number ONLY (e.g. "349", "512C"). Null if no
+  block is named. Never put street names or landmarks here.
+- area_name: the most specific location text in the source — street name
+  ("Yishun Avenue 11"), or a named place (hospital, mall, hawker centre, MRT
+  station, park, e.g. "Khoo Teck Puat Hospital"), falling back to "Yishun".
 
 deaths / injuries extraction rules (STRICT — legal record):
 - deaths: number of people confirmed dead in the source text.
