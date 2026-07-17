@@ -43,7 +43,7 @@ import httpx
 from pathlib import Path
 from dotenv import load_dotenv
 
-from filters.stage1_quota import RpdExhaustedError, Stage1DailyQuota
+from filters.stage1_quota import Stage1DailyQuota, Stage1HaltError
 from scrapers._gnews_helpers import _gnews_source_name, _resolve_redirect
 
 # Explicit path so the module finds .env regardless of CWD
@@ -1425,11 +1425,17 @@ def process_candidates(
         else:
             try:
                 s1 = filter_content(item)
-            except RpdExhaustedError as exc:
-                # Daily quota gone — retrying every remaining candidate would
-                # just hammer the same wall until midnight US/Pacific.
+            except Stage1HaltError as exc:
+                # Non-retryable (daily quota gone, or billing blocked) — retrying
+                # every remaining candidate would just hammer the same wall.
                 budget.mark_rpd_exhausted()
-                logger.warning("Stage 1 daily quota exhausted (RPD 429) — stopping loop cleanly: %s", exc)
+                stats["errors"] += 1
+                if len(stats["error_details"]) < 100:
+                    stats["error_details"].append({
+                        "phase": "stage1", "url": url[:120],
+                        "error": f"{type(exc).__name__}: {exc}",
+                    })
+                logger.warning("Stage 1 halted — stopping loop cleanly: %s", exc)
                 break
             except Exception as exc:
                 stats["errors"] += 1

@@ -21,7 +21,11 @@ from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel
 
-from filters.stage1_quota import RpdExhaustedError, Stage1RpmThrottle
+from filters.stage1_quota import (
+    BillingExhaustedError,
+    RpdExhaustedError,
+    Stage1RpmThrottle,
+)
 
 load_dotenv(override=False)
 
@@ -126,17 +130,34 @@ def _get_client() -> genai.Client:
     return genai.Client(api_key=api_key)
 
 
-# An RPD 429 names a per-day quota; an RPM 429 names a per-minute one. Only the
-# latter clears with backoff, so they must never be treated alike.
+# Gemini returns 429 RESOURCE_EXHAUSTED for three unrelated conditions. Only the
+# RPM one clears with backoff, so they must never be treated alike:
+#   RPM     — burst limit; back off and retry.
+#   RPD     — daily quota; resets midnight US/Pacific. Stop the pass.
+#   billing — e.g. "prepayment credits are depleted". Never clears without
+#             operator action. Stop the pass. (Observed live 2026-07: this was
+#             being misread as RPM and retried 5x per candidate.)
 _RPD_MARKERS = (
     "perday", "per day", "requests per day", "daily limit", "quota_limit_value",
 )
+_BILLING_MARKERS = (
+    "prepayment credit", "credits are depleted", "credit balance",
+    "billing account", "insufficient credit",
+)
+
+
+def _error_blob(exc: Exception) -> str:
+    return f"{getattr(exc, 'message', '') or ''} {exc}".lower()
+
+
+def _is_billing_429(exc: Exception) -> bool:
+    """True if this 429 is a billing/credit problem rather than a rate limit."""
+    return any(marker in _error_blob(exc) for marker in _BILLING_MARKERS)
 
 
 def _is_rpd_429(exc: Exception) -> bool:
     """True if this 429 is a daily-quota exhaustion rather than a burst limit."""
-    blob = f"{getattr(exc, 'message', '') or ''} {exc}".lower()
-    return any(marker in blob for marker in _RPD_MARKERS)
+    return any(marker in _error_blob(exc) for marker in _RPD_MARKERS)
 
 
 def _generate(client: genai.Client, user_message: str):
@@ -172,6 +193,12 @@ def _generate(client: genai.Client, user_message: str):
                 raise
             # A rejected request still counts against the provider's window.
             _rpm_throttle.record()
+            if _is_billing_429(exc):
+                raise BillingExhaustedError(
+                    "Stage 1 blocked by billing, not rate limiting: the Gemini "
+                    "project has no credits. Top up at https://ai.studio/projects "
+                    f"or use a free-tier key. Original: {exc}"
+                ) from exc
             if _is_rpd_429(exc):
                 raise RpdExhaustedError(
                     "Stage 1 daily request quota exhausted (RPD 429). Resets at "
@@ -316,7 +343,10 @@ def filter_content(content: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Tests — run directly:  python packages/agents/filters/stage1_filter.py
+# Smoke test — 6 live calls. Must be run as a module from packages/agents so
+# sibling packages resolve (the plain script path puts filters/ on sys.path,
+# not packages/agents, and the imports fail):
+#     cd packages/agents && .venv/Scripts/python.exe -m filters.stage1_filter
 # ---------------------------------------------------------------------------
 
 SAMPLES = [

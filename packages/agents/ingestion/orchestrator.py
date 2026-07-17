@@ -42,7 +42,7 @@ from classifiers.corroboration import get_supabase_client
 from consolidation.check import check as consolidation_check, write_incident_links
 from consolidation.queue_row import build_queue_row
 from filters.stage1_filter import filter_content
-from filters.stage1_quota import RPM_LIMIT, RpdExhaustedError
+from filters.stage1_quota import RPM_LIMIT, RpdExhaustedError, Stage1HaltError
 from filters.stage2_writer import write_stage2
 from ingestion import dedup, fallback, learning, recency, state_store
 from ingestion.budget import load_daily_budget, save_daily_budget
@@ -298,14 +298,19 @@ def run_ingestion_pass(
 
                     consecutive.clear()   # clean completion → reset circuit breaker
 
-                except RpdExhaustedError as exc:
-                    # Daily quota gone — backing off will not help (resets at
-                    # midnight US/Pacific). Halt the pass instead of retrying
-                    # every remaining candidate into the same wall.
+                except Stage1HaltError as exc:
+                    # Non-retryable: daily quota gone (resets midnight US/Pacific)
+                    # or a billing block. Either way, retrying every remaining
+                    # candidate just hammers the same wall. Halt the pass.
                     daily_budget.mark_rpd_exhausted()
                     budget_halted = True
+                    abort_pass = str(exc)
+                    degraded = True
+                    reason = ("Stage 1 daily quota exhausted (RPD 429)"
+                              if isinstance(exc, RpdExhaustedError)
+                              else "Stage 1 blocked by billing — operator action needed")
                     logger.warning("run_ingestion_pass: %s", exc)
-                    notes.append(f"{source.name}: remaining candidates skipped — Stage 1 daily quota exhausted (RPD 429).")
+                    notes.append(f"{source.name}: remaining candidates skipped — {reason}.")
                     break
 
                 except Exception as exc:

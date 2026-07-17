@@ -45,12 +45,31 @@ RPD_SOFT_LIMIT = int(RPD_HARD_LIMIT * 0.9)
 LOG_PATH = Path(__file__).parent / "stage1_session_usage.json"
 
 
-class RpdExhaustedError(Exception):
+class Stage1HaltError(Exception):
+    """
+    Base for non-retryable Stage 1 failures: the caller must stop the pass.
+
+    Catch THIS in candidate loops. Retrying any subclass just burns the
+    remaining candidates against a wall that will not move within the pass.
+    """
+
+
+class RpdExhaustedError(Stage1HaltError):
     """
     Raised on an RPD (requests-per-day) 429.
 
     Distinct from an RPM 429: backing off does not help — the quota resets at
     midnight US/Pacific. Callers must break their candidate loop, not continue.
+    """
+
+
+class BillingExhaustedError(Stage1HaltError):
+    """
+    Raised on a billing/credit 429 (e.g. "prepayment credits are depleted").
+
+    Shares the 429 status with RPM/RPD but is neither: it never clears on its
+    own — it needs operator action (top up credits, or use a free-tier key).
+    Retrying is pure waste, so it halts the pass immediately.
     """
 
 

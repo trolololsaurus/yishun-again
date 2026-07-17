@@ -100,11 +100,35 @@ try:
 except ValueError:
     check("empty response -> ValueError (unchanged failure mode)", True)
 
-# ── 429 classification: RPD must never be retried ───────────────────────────
+# ── 429 classification: RPM vs RPD vs billing ───────────────────────────────
+# Gemini returns 429 for all three; only RPM may be retried.
 check("RPD 429 detected from quota message",
       s1._is_rpd_429(_client_error(429, "Quota exceeded: GenerateRequestsPerDayPerProjectPerModel")))
 check("RPM 429 not misread as RPD",
       not s1._is_rpd_429(_client_error(429, "Quota exceeded: GenerateRequestsPerMinutePerProject")))
+
+# Verbatim live message observed 2026-07 — was being misread as RPM and retried.
+_BILLING_MSG = ("Your prepayment credits are depleted. Please go to AI Studio at "
+                "https://ai.studio/projects to manage your project and billing.")
+check("billing 429 detected (real message)", s1._is_billing_429(_client_error(429, _BILLING_MSG)))
+check("billing 429 not misread as RPD", not s1._is_rpd_429(_client_error(429, _BILLING_MSG)))
+check("RPM 429 not misread as billing",
+      not s1._is_billing_429(_client_error(429, "Quota exceeded: GenerateRequestsPerMinutePerProject")))
+
+billing_client = mock.MagicMock()
+billing_client.models.generate_content.side_effect = _client_error(429, _BILLING_MSG)
+try:
+    with mock.patch.object(s1, "_get_client", return_value=billing_client):
+        s1.filter_content(dict(ITEM))
+    check("billing 429 raises BillingExhaustedError", False)
+except q.BillingExhaustedError:
+    check("billing 429 raises BillingExhaustedError", True)
+check("billing 429 attempted exactly once (no 5x retry storm)",
+      billing_client.models.generate_content.call_count == 1)
+check("BillingExhaustedError is a Stage1HaltError (callers halt on it)",
+      issubclass(q.BillingExhaustedError, q.Stage1HaltError))
+check("RpdExhaustedError is a Stage1HaltError (callers halt on it)",
+      issubclass(q.RpdExhaustedError, q.Stage1HaltError))
 
 rpd_client = mock.MagicMock()
 rpd_client.models.generate_content.side_effect = _client_error(
