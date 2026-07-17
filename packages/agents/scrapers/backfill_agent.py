@@ -43,7 +43,7 @@ import httpx
 from pathlib import Path
 from dotenv import load_dotenv
 
-from scrapers.groq_budget import GroqBudget
+from filters.stage1_quota import RpdExhaustedError, Stage1DailyQuota
 from scrapers._gnews_helpers import _gnews_source_name, _resolve_redirect
 
 # Explicit path so the module finds .env regardless of CWD
@@ -138,11 +138,11 @@ WIKI_LINK_KEYWORDS = (
 WIKI_MAX_FOLLOWED_ARTICLES = 30
 
 
-# ── Cheap local pre-filter (runs before Groq — zero API cost) ────────────────
+# ── Cheap local pre-filter (runs before Stage 1 — zero API cost) ─────────────
 #
 # Title-level keyword patterns that are almost always noise for this archive.
 # Any item whose title contains one of these *and* contains NO override keyword
-# is silently dropped before Stage 1, saving Groq quota.
+# is silently dropped before Stage 1, saving Stage 1 quota.
 #
 # Override keywords: if any appear in title+content the item is never pre-rejected
 # (same list used by stage1_filter._has_override_keyword).
@@ -180,7 +180,7 @@ _PREFILTER_OVERRIDES = (
 def _prefilter_is_noise(item: dict) -> bool:
     """
     Return True if the item is cheap-detectable noise and should be dropped
-    before spending a Groq Stage 1 call on it.
+    before spending a Stage 1 call on it.
 
     Logic:
       1. Check title (lower-case) for any _PREFILTER_NOISE_PHRASES.
@@ -1366,7 +1366,7 @@ def process_candidates(
     dry_run: bool,
     supabase,
     stats: dict,
-    budget: GroqBudget,
+    budget: Stage1DailyQuota,
 ) -> None:
     """
     Run Stage 1 -> Stage 2 -> intra-batch dedup -> consolidation -> tier routing
@@ -1419,12 +1419,18 @@ def process_candidates(
         # ── Stage 1 ──────────────────────────────────────────────────────────
         # Wikipedia (reference) items bypass Stage 1 entirely — they're already
         # spec-floored to WIKI_CONFIDENCE_FLOOR and never read like scraped noise.
-        # Bypassed items must NOT touch the Groq budget (CHANGE 5/6).
+        # Bypassed items must NOT touch the Stage 1 budget (CHANGE 5/6).
         if is_wiki:
             logger.info("Wikipedia item bypassing Stage 1: %s", item.get("title", "")[:60])
         else:
             try:
                 s1 = filter_content(item)
+            except RpdExhaustedError as exc:
+                # Daily quota gone — retrying every remaining candidate would
+                # just hammer the same wall until midnight US/Pacific.
+                budget.mark_rpd_exhausted()
+                logger.warning("Stage 1 daily quota exhausted (RPD 429) — stopping loop cleanly: %s", exc)
+                break
             except Exception as exc:
                 stats["errors"] += 1
                 if len(stats["error_details"]) < 100:
@@ -1438,7 +1444,7 @@ def process_candidates(
             usage = s1.get("usage") or {}
             budget.record(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
             if budget.should_halt():
-                logger.warning("Groq budget halt — stopping candidate processing loop cleanly.")
+                logger.warning("Stage 1 daily request budget halt — stopping candidate processing loop cleanly.")
                 break
 
             if not s1["passes"]:
@@ -1597,7 +1603,7 @@ def run_backfill(
     """
     from classifiers.corroboration import get_supabase_client
 
-    budget = GroqBudget()
+    budget = Stage1DailyQuota()
 
     end_year  = min(end_year, 2026)
 
@@ -1611,7 +1617,7 @@ def run_backfill(
         "stage2_processed":   0,
         "stage2_errors":      0,
         "duplicates_skipped": 0,
-        "prefiltered":        0,    # cheap local rejects before Groq call
+        "prefiltered":        0,    # cheap local rejects before Stage 1 call
         "batch_merges":       0,    # same-incident items collapsed within the batch
         "auto_published":     0,
         "queued_for_review":  0,

@@ -22,7 +22,7 @@ yishun-again/
 ├── packages/
 │   ├── agents/       # FastAPI 0.110.x + Python 3.11 agent pipeline
 │   │   ├── scrapers/       # Per-source scraping agents (RSS-first)
-│   │   ├── filters/        # Stage 1 (Groq) + Stage 2 (Claude) filters
+│   │   ├── filters/        # Stage 1 (Gemini) + Stage 2 (Claude) filters
 │   │   ├── classifiers/    # Corroboration + severity scoring
 │   │   ├── writers/        # Incident draft generation
 │   │   ├── art/            # Pixel art prompt gen + Modal.run calls
@@ -76,7 +76,7 @@ Execute strictly in sequence — do not skip ahead:
 1. Supabase schema — all tables, indexes, RLS policies
 2. Cloudflare R2 bucket + `assets.yishunagain.com` domain
 3. FastAPI skeleton on Cloud Run — health check only
-4. Stage 1 filter (Groq) — unit test with sample content
+4. Stage 1 filter (Gemini) — unit test with sample content
 5. Stage 2 writer (Claude) — unit test with sample content
 6. Scraping agents — CNA + Mothership first
 7. War Room CMS — queue view + approve/reject flow
@@ -103,7 +103,7 @@ Execute strictly in sequence — do not skip ahead:
 | Admin auth | Cloudflare Access | Free tier |
 | Backend | FastAPI | 0.110.x / Python 3.11+ |
 | Agent hosting | Google Cloud Run | asia-southeast1 |
-| Stage 1 filter | Groq API | openai/gpt-oss-20b |
+| Stage 1 filter | Gemini API | gemini-3.1-flash-lite |
 | Stage 2 writer | Anthropic API | claude-haiku-4-5-20251001 (classify), claude-sonnet-4-6 (write) |
 | Orchestrator | LangGraph | 0.1.x |
 | Image gen | Modal.run | SDXL + custom LoRA |
@@ -115,14 +115,14 @@ Execute strictly in sequence — do not skip ahead:
 ## Agent Pipeline
 
 ```
-Scrape Agent → Stage 1 Filter (Groq) → Stage 2 Writer (Claude) → Corroboration Agent → war_room_queue
+Scrape Agent → Stage 1 Filter (Gemini) → Stage 2 Writer (Claude) → Corroboration Agent → war_room_queue
                                                                                               ↓
                                                                                Operator reviews in War Room
                                                                                               ↓
                                                                                Approve → Art Agent → Publish
 ```
 
-**Stage 1 (Groq):** Fast noise rejection. Pass threshold: confidence ≥ 0.4. Target 60–70% rejection of raw scrape volume.
+**Stage 1 (Gemini):** Fast noise rejection. Pass threshold: confidence ≥ 0.4. Target 60–70% rejection of raw scrape volume.
 
 **Stage 2 (Claude):** Classification, draft writing, severity scoring, pixel art prompt generation. Returns JSON — see spec §4.3 for exact schema and system prompts.
 
@@ -228,7 +228,7 @@ SUPABASE_URL
 SUPABASE_PUBLISHABLE_KEY   # frontend-safe
 SUPABASE_SECRET_KEY        # server/agents only — bypasses RLS
 ANTHROPIC_API_KEY
-GROQ_API_KEY
+GEMINI_API_KEY
 NEXT_PUBLIC_MAPLIBRE_STYLE
 CF_R2_ACCOUNT_ID, CF_R2_ACCESS_KEY_ID, CF_R2_SECRET_ACCESS_KEY, CF_R2_BUCKET_NAME
 MODAL_TOKEN_ID, MODAL_TOKEN_SECRET

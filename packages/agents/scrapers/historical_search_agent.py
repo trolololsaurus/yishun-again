@@ -47,7 +47,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 from scrapers import BROWSER_HEADERS, content_matches_keywords
-from scrapers.groq_budget import GroqBudget
+from filters.stage1_quota import Stage1DailyQuota
 
 # Explicit path so the module finds .env regardless of CWD
 _repo_root = Path(__file__).resolve().parents[3]
@@ -317,7 +317,7 @@ def run_historical_search(
     from classifiers.corroboration import get_supabase_client
 
     end_year = min(end_year, 2026)
-    budget   = GroqBudget()
+    budget   = Stage1DailyQuota()
     run_at   = datetime.now(timezone.utc).isoformat()
 
     stats: dict = {

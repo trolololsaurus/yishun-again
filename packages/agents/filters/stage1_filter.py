@@ -1,5 +1,5 @@
 """
-Stage 1 noise filter — Groq (openai/gpt-oss-20b)
+Stage 1 noise filter — Google Gemini (gemini-3.1-flash-lite)
 
 Fast, cheap noise rejection before content reaches the more expensive
 Stage 2 Claude writer. Targets 60-70% rejection of raw scrape volume.
@@ -10,28 +10,41 @@ Pass threshold: confidence >= 0.4
 import json
 import logging
 import os
+import random
 import re
 import sys
+import time
 
 from dotenv import load_dotenv
-from groq import Groq
-from scrapers.groq_budget import GroqMinuteRateLimiter
+from google import genai
+from google.genai import errors as genai_errors
+from google.genai import types
+from pydantic import BaseModel
+
+from filters.stage1_quota import RpdExhaustedError, Stage1RpmThrottle
 
 load_dotenv(override=False)
 
 # Module-level singleton: shared across all filter_content() calls in this
-# process. Enforces the 6k TPM free-tier ceiling without any changes to callers.
-_rate_limiter = GroqMinuteRateLimiter()
+# process. Enforces the free-tier RPM ceiling without any changes to callers.
+_rpm_throttle = Stage1RpmThrottle()
 
 logger = logging.getLogger(__name__)
 
-# Model history (Groq deprecations):
-#   llama3-8b-8192      — decommissioned by Groq.
-#   llama-3.1-8b-instant — deprecated 2026-06-27, decommissioned 2026-08-16.
-# Current: GPT OSS 20B, Groq's recommended replacement for the 8B-instant tier.
-# (Lighter alt if cost/latency matters: "gemma2-9b-it".)
-MODEL = "openai/gpt-oss-20b"
+# Provider/model history:
+#   Groq llama3-8b-8192       — decommissioned by Groq.
+#   Groq llama-3.1-8b-instant — deprecated 2026-06-27, decommissioned 2026-08-16.
+#   Groq openai/gpt-oss-20b   — retired 2026-07. Groq suspended Developer-tier
+#     signups indefinitely, capping us at a 6k TPM free tier that dropped 33%
+#     (218/656) of a measured backfill pass to 429s. Stage 1 is a FILTER, so a
+#     dropped candidate is an invisible false negative — hence the move.
+# Current: Gemini 3.1 Flash-Lite. Free tier binds on RPM (30) and RPD (1500),
+# not TPM — see filters/stage1_quota.py.
+MODEL = os.getenv("STAGE1_MODEL", "gemini-3.1-flash-lite")
 PASS_THRESHOLD = 0.4
+
+# Max attempts for an RPM 429 before giving up. RPD 429s are never retried.
+MAX_RETRIES = 5
 
 # System prompt — extended with backfill-hardened reject criteria.
 # Override rule: even a normally-rejected topic PASSES if incident-signal
@@ -79,7 +92,7 @@ PASS it if the content contains clear incident-signal language such as:
 """
 
 # Incident-signal keywords used by the pre-filter in filter_content().
-# Any match → skip the REJECT-category check and always send to Groq.
+# Any match → skip the REJECT-category check and always send to the model.
 # These are substring matches (lower-case), not whole-word.
 _OVERRIDE_KEYWORDS = (
     "death", "dead", "died", "killed", "murder", "stab", "injur",
@@ -90,14 +103,92 @@ _OVERRIDE_KEYWORDS = (
 )
 
 
-def _get_client() -> Groq:
-    api_key = os.getenv("GROQ_API_KEY")
+class Stage1Verdict(BaseModel):
+    """
+    Stage 1's JSON contract — mirrors the shape STAGE1_SYSTEM_PROMPT declares.
+
+    Passed to Gemini as a response_json_schema so the model is constrained to
+    this shape natively rather than only by prompt instruction. The prompt is
+    unchanged; this is belt-and-braces on the same contract.
+    """
+    is_relevant: bool
+    confidence: float
+    reason: str
+
+
+def _get_client() -> genai.Client:
+    api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise EnvironmentError(
-            "GROQ_API_KEY is not set. "
+            "GEMINI_API_KEY is not set. "
             "Add it to .env or Cloud Run environment variables."
         )
-    return Groq(api_key=api_key)
+    return genai.Client(api_key=api_key)
+
+
+# An RPD 429 names a per-day quota; an RPM 429 names a per-minute one. Only the
+# latter clears with backoff, so they must never be treated alike.
+_RPD_MARKERS = (
+    "perday", "per day", "requests per day", "daily limit", "quota_limit_value",
+)
+
+
+def _is_rpd_429(exc: Exception) -> bool:
+    """True if this 429 is a daily-quota exhaustion rather than a burst limit."""
+    blob = f"{getattr(exc, 'message', '') or ''} {exc}".lower()
+    return any(marker in blob for marker in _RPD_MARKERS)
+
+
+def _generate(client: genai.Client, user_message: str):
+    """
+    One Gemini call, guarded by the RPM throttle with exponential backoff on
+    RPM 429s. Returns (response, seconds_slept).
+
+    Raises RpdExhaustedError on a daily-quota 429 — that will not clear by
+    retrying, so callers must stop the pass rather than loop.
+
+    thinking_config is deliberately unset: thinking tokens bill as output and
+    Stage 1 is a binary relevance filter that needs no deliberation.
+    """
+    slept = 0.0
+    for attempt in range(MAX_RETRIES):
+        slept += _rpm_throttle.wait_if_needed()
+        try:
+            response = client.models.generate_content(
+                model=MODEL,
+                contents=user_message,
+                config=types.GenerateContentConfig(
+                    system_instruction=STAGE1_SYSTEM_PROMPT,
+                    temperature=0.1,   # low temperature → consistent JSON output
+                    max_output_tokens=256,
+                    response_mime_type="application/json",
+                    response_json_schema=Stage1Verdict.model_json_schema(),
+                ),
+            )
+            _rpm_throttle.record()
+            return response, slept
+        except genai_errors.ClientError as exc:
+            if getattr(exc, "code", None) != 429:
+                raise
+            # A rejected request still counts against the provider's window.
+            _rpm_throttle.record()
+            if _is_rpd_429(exc):
+                raise RpdExhaustedError(
+                    "Stage 1 daily request quota exhausted (RPD 429). Resets at "
+                    f"midnight US/Pacific. Original: {exc}"
+                ) from exc
+            backoff = min(2 ** attempt + random.uniform(0, 1), 60.0)
+            logger.warning(
+                "Stage 1 RPM 429 (attempt %d/%d) — backing off %.1fs",
+                attempt + 1, MAX_RETRIES, backoff,
+            )
+            time.sleep(backoff)
+            slept += backoff
+
+    raise RuntimeError(
+        f"Stage 1: still rate-limited after {MAX_RETRIES} attempts (RPM 429). "
+        "Consider lowering STAGE1_RPM."
+    )
 
 
 def _build_user_message(content: dict) -> str:
@@ -167,7 +258,7 @@ def filter_content(content: dict) -> dict:
             "reason":      str,    # one-sentence explanation
             "passes":      bool,   # confidence >= PASS_THRESHOLD and is_relevant
             "override":    bool,   # True if incident-signal override fired
-            "usage":       dict,   # {prompt_tokens, completion_tokens} from the Groq response
+            "usage":       dict,   # {prompt_tokens, completion_tokens} from the model response
         }
     """
     # Surface whether the override is active so the model sees it in the prompt
@@ -185,36 +276,29 @@ def filter_content(content: dict) -> dict:
         )
 
     logger.debug(
-        "Stage 1 — calling Groq for: %s%s",
+        "Stage 1 — calling %s for: %s%s",
+        MODEL,
         content.get("title", "")[:80],
         " [override]" if override_active else "",
     )
 
-    sleep_seconds = _rate_limiter.wait_if_needed(estimated_tokens=800)
+    response, sleep_seconds = _generate(client, user_message)
 
-    completion = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": STAGE1_SYSTEM_PROMPT},
-            {"role": "user",   "content": user_message},
-        ],
-        temperature=0.1,   # low temperature → consistent JSON output
-        max_tokens=256,
-    )
-
-    _rate_limiter.record(
-        completion.usage.prompt_tokens + completion.usage.completion_tokens
-    )
-
-    raw = completion.choices[0].message.content
+    # response.text is None when the model returns no candidate (e.g. a safety
+    # block). Coercing to "" keeps the old failure mode: _parse_response raises
+    # ValueError, which callers already treat as a Stage 1 error.
+    raw = response.text or ""
     logger.debug("Stage 1 raw response: %s", raw)
 
     result = _parse_response(raw)
     result["passes"]   = result["is_relevant"] and result["confidence"] >= PASS_THRESHOLD
     result["override"] = override_active
+    # Mapped into the retired Groq shape on purpose: ingestion/orchestrator.py
+    # and scrapers/backfill_agent.py feed these straight into quota.record().
+    usage = getattr(response, "usage_metadata", None)
     result["usage"] = {
-        "prompt_tokens":     completion.usage.prompt_tokens,
-        "completion_tokens": completion.usage.completion_tokens,
+        "prompt_tokens":     getattr(usage, "prompt_token_count", 0) or 0,
+        "completion_tokens": getattr(usage, "candidates_token_count", 0) or 0,
     }
     result["rate_limiter_sleep_seconds"] = sleep_seconds
 
@@ -352,7 +436,7 @@ def run_tests() -> None:
 
     print(f"{'=' * 64}")
     if failed:
-        print(f"FAILED — {failed} error(s). Check GROQ_API_KEY and network.")
+        print(f"FAILED — {failed} error(s). Check GEMINI_API_KEY and network.")
         sys.exit(1)
     else:
         print(f"All {passed} samples returned valid responses. Stage 1 filter OK.")

@@ -42,6 +42,7 @@ from classifiers.corroboration import get_supabase_client
 from consolidation.check import check as consolidation_check, write_incident_links
 from consolidation.queue_row import build_queue_row
 from filters.stage1_filter import filter_content
+from filters.stage1_quota import RPM_LIMIT, RpdExhaustedError
 from filters.stage2_writer import write_stage2
 from ingestion import dedup, fallback, learning, recency, state_store
 from ingestion.budget import load_daily_budget, save_daily_budget
@@ -57,11 +58,14 @@ def _classify_error(exc: Exception) -> str | None:
     for one-off / unclassified errors.
 
     Uses string matching only — no SDK imports — so it stays correct even if
-    Groq/Anthropic SDK exception hierarchies shift between minor versions.
+    Gemini/Anthropic SDK exception hierarchies shift between minor versions.
+
+    Note an RPD 429 never reaches here: it raises RpdExhaustedError, which is
+    caught upstream and halts the pass outright rather than tripping a counter.
     """
     msg = str(exc).lower()
     if "rate limit" in msg or "rate_limit" in msg or "429" in msg:
-        return "groq_429"
+        return "rate_limit_429"
     if "credit balance" in msg or "billing" in msg:
         return "anthropic_billing"
     return None
@@ -105,7 +109,7 @@ def run_ingestion_pass(
         daily_budget = load_daily_budget()
         budget_halted = daily_budget.should_halt()
         if budget_halted:
-            notes.append("Groq daily budget already exhausted (SGT) — Stage 1/2 skipped for this pass.")
+            notes.append("Stage 1 daily request budget already exhausted (SGT) — Stage 1/2 skipped for this pass.")
 
         reputation = learning.load_source_reputation(client)
         signal_summary = learning.load_recent_signal_patterns(client)
@@ -126,7 +130,7 @@ def run_ingestion_pass(
                 per_source.append(SourceResult(
                     name=source.name, status="unavailable",
                     fetched=0, fresh=0, novel=0, queued=0,
-                    reason="groq budget exhausted",
+                    reason="stage 1 daily request budget exhausted",
                 ))
                 degraded = True
                 continue
@@ -188,7 +192,7 @@ def run_ingestion_pass(
                     break
 
                 if budget_halted:
-                    notes.append(f"{source.name}: remaining candidates skipped — Groq daily budget exhausted mid-pass.")
+                    notes.append(f"{source.name}: remaining candidates skipped — Stage 1 daily request budget exhausted mid-pass.")
                     break
 
                 try:
@@ -294,6 +298,16 @@ def run_ingestion_pass(
 
                     consecutive.clear()   # clean completion → reset circuit breaker
 
+                except RpdExhaustedError as exc:
+                    # Daily quota gone — backing off will not help (resets at
+                    # midnight US/Pacific). Halt the pass instead of retrying
+                    # every remaining candidate into the same wall.
+                    daily_budget.mark_rpd_exhausted()
+                    budget_halted = True
+                    logger.warning("run_ingestion_pass: %s", exc)
+                    notes.append(f"{source.name}: remaining candidates skipped — Stage 1 daily quota exhausted (RPD 429).")
+                    break
+
                 except Exception as exc:
                     logger.warning("run_ingestion_pass: error processing %s (%s): %s", candidate.url, source.name, exc)
                     notes.append(f"{source.name}: error processing {candidate.url}: {exc}")
@@ -324,7 +338,7 @@ def run_ingestion_pass(
         if total_sleep_seconds > 0:
             notes.append(
                 f"Rate limiter slept {total_sleep_seconds:.1f}s total across Stage 1 calls "
-                f"(Groq 6k TPM free-tier)."
+                f"(Gemini free-tier {RPM_LIMIT} RPM)."
             )
 
         if not dry_run:

@@ -39,7 +39,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 import scrapers.backfill_agent as bf
-from scrapers.groq_budget import GroqBudget
+from filters.stage1_quota import Stage1DailyQuota
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +290,7 @@ def run(manifest_path: str, dry_run: bool, route_filter: str | None) -> dict:
         "queued_for_review": 0, "updates_found": 0, "rejected": 0, "errors": 0,
         "capped": False, "items": [], "error_details": [],
     }
-    budget = GroqBudget()
+    budget = Stage1DailyQuota()
 
     try:
         bf.process_candidates(candidates, cap=len(candidates) or 1,
