@@ -28,7 +28,9 @@ export async function GET(req: Request) {
       'source_timeline,latest_source_role'
     )
     .eq('is_published', true)
-    .order('is_developing',  { ascending: false, nullsFirst: false })
+    // Latest incident always on top — sort purely by event date (newest first),
+    // id as a stable tiebreaker for consistent pagination. is_developing no
+    // longer floats stories to the top (stale flags were burying newer rows).
     .order('incident_date',  { ascending: false, nullsFirst: false })
     .order('id',             { ascending: false })
     .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1)

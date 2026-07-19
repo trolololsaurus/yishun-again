@@ -79,8 +79,9 @@ shared `#E87070` with DARK EVENTS — live has them correctly distinct.)
 
 <!--
 ### Feed / incident-card deltas (June-2026 pass)
-- **DEVELOPING badge + banner removed** (confused readers). `is_developing` still
-  drives feed sort and the "N reports · First reported …" line.
+- **DEVELOPING badge + banner removed** (confused readers). `is_developing` drives
+  only the "N reports · First reported …" line — **not** feed sort (see §5; the
+  feed is newest-first).
 - **Lightning (⚡) = corroboration**, derived live from `corroboration_count`:
   `bolts = max(0, corroboration_count − 1)` (2 sources → ⚡, 3 → ⚡⚡, …). The legacy
   `hype_meter` column is no longer read. Tooltip updated accordingly. Same rule in
@@ -172,14 +173,14 @@ mouse-leave → dismiss popup.
 
 ## 5. Feed behavior — LOCKED
 
-**Sort order** (`/api/incidents`):
+**Sort order** (`/api/incidents` and the SSR first page in `page.tsx` — kept identical):
 ```
-ORDER BY is_developing DESC NULLS LAST,
-         incident_date  DESC NULLS LAST,
-         id             DESC
+ORDER BY incident_date DESC NULLS LAST,
+         id            DESC
 ```
-Developing incidents float to top; then newest event date; `id` is the
-deterministic tiebreaker (prevents duplicate-slug pagination).
+Latest incident always on top (newest event date first); `id` is the
+deterministic tiebreaker (prevents duplicate-slug pagination). `is_developing`
+no longer floats stories to the top — stale flags were burying newer incidents.
 
 **Pagination:** `PAGE_SIZE = 20`, client virtualization `ITEM_HEIGHT = 152px`.
 
