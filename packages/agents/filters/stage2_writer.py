@@ -258,7 +258,8 @@ def _build_user_message(content: dict) -> str:
     return (
         f"{learning_block}"
         f"Source: {content.get('source_name', 'unknown')}\n"
-        f"URL: {content.get('url', '')}\n\n"
+        f"URL: {content.get('url', '')}\n"
+        f"Date: {content.get('date') or 'unknown'}\n\n"
         f"Title: {content.get('title', '')}\n\n"
         f"Content:\n{content.get('content', '')}"
     )
@@ -316,6 +317,42 @@ def _classify(client: anthropic.Anthropic, content: dict) -> dict:
     return result
 
 
+# Month abbreviations for slug date suffixes — fixed list, no locale/strftime.
+_SLUG_MONTHS = ("jan", "feb", "mar", "apr", "may", "jun",
+                "jul", "aug", "sep", "oct", "nov", "dec")
+
+# A trailing date the model may append to a slug: "-jun-2024", "-2024", etc.
+_SLUG_DATE_SUFFIX = re.compile(
+    r'-(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)?-?(?:19|20)\d{2}$'
+)
+
+
+def _stamp_slug_date(slug: str, date_str: str | None, max_len: int = 70) -> str:
+    """
+    Force the slug's trailing -month-year to match the authoritative incident
+    date, overwriting whatever the model produced.
+
+    The model is never given the incident date (see _build_user_message pre-fix),
+    so it guessed the slug's year — pattern-matching the prompt's examples or the
+    article's content — and 2026 incidents shipped at -2020/-2024/-2025 URLs. The
+    date is data, not a creative choice, so it is stamped deterministically here.
+
+    date_str: "YYYY-MM-DD" from content["date"]. If absent/unparseable, any
+    trailing date the model guessed is stripped and the base returned, so a
+    dateless item never carries a fabricated year (its real date is set later at
+    operator approval).
+    """
+    base = _SLUG_DATE_SUFFIX.sub("", slug).rstrip("-")
+
+    m = re.match(r'(\d{4})-(\d{2})-\d{2}', date_str or "")
+    if not m or not (1 <= int(m.group(2)) <= 12):
+        return base or slug  # dateless / unparseable: no fabricated year
+    suffix = f"{_SLUG_MONTHS[int(m.group(2)) - 1]}-{m.group(1)}"
+
+    base = base[:max_len - len(suffix) - 1].rstrip("-")   # leave room for -suffix
+    return f"{base}-{suffix}"
+
+
 def _write_draft(client: anthropic.Anthropic, content: dict, classification: dict) -> dict:
     """
     Sonnet call: write title, summary, SEO copy, slug, pixel art prompt.
@@ -356,8 +393,9 @@ def _write_draft(client: anthropic.Anthropic, content: dict, classification: dic
     # Enforce spec field-length constraints (truncate rather than error)
     if len(result["title"]) > 120:
         result["title"] = result["title"][:120]
-    if len(result["slug"]) > 70:
-        result["slug"] = result["slug"][:70]
+    # Stamp the slug's date from the authoritative incident date, never the
+    # model's guess (also enforces the 70-char limit). See _stamp_slug_date.
+    result["slug"] = _stamp_slug_date(result["slug"], content.get("date"))
     if len(result["seo_title"]) > 60:
         result["seo_title"] = result["seo_title"][:60]
     if len(result["seo_description"]) > 155:
