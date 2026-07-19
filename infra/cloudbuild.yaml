@@ -8,13 +8,21 @@
 #
 # Or wire up a Cloud Build trigger in the GCP console pointing at this file.
 #
-# Secrets (SUPABASE_SECRET_KEY, ANTHROPIC_API_KEY, GROQ_API_KEY, etc.) must
+# Secrets (SUPABASE_SECRET_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, etc.) must
 # be set on the Cloud Run service separately — never commit them here.
+#
+# Stage 1 moved from Groq to Gemini in 2026-07: GROQ_API_KEY is retired and
+# GEMINI_API_KEY replaces it. STAGE1_MODEL/STAGE1_RPM/STAGE1_RPD are plain env
+# vars (not secrets) so the model/limits can change without a redeploy of code.
+#
 # One-time setup:
 #   gcloud run services update yishun-agents \
 #     --region asia-southeast1 \
-#     --set-env-vars "SUPABASE_URL=...,CF_R2_BUCKET_NAME=yishun-assets,..." \
-#     --set-secrets "SUPABASE_SECRET_KEY=supabase-secret-key:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest,GROQ_API_KEY=groq-api-key:latest,CF_R2_ACCOUNT_ID=cf-r2-account-id:latest,CF_R2_ACCESS_KEY_ID=cf-r2-access-key-id:latest,CF_R2_SECRET_ACCESS_KEY=cf-r2-secret-access-key:latest,MODAL_TOKEN_ID=modal-token-id:latest,MODAL_TOKEN_SECRET=modal-token-secret:latest"
+#     --set-env-vars "SUPABASE_URL=...,CF_R2_BUCKET_NAME=yishun-assets,STAGE1_MODEL=gemini-3.1-flash-lite,STAGE1_RPM=30,STAGE1_RPD=1500,..." \
+#     --set-secrets "SUPABASE_SECRET_KEY=supabase-secret-key:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest,GEMINI_API_KEY=gemini-api-key:latest,CF_R2_ACCOUNT_ID=cf-r2-account-id:latest,CF_R2_ACCESS_KEY_ID=cf-r2-access-key-id:latest,CF_R2_SECRET_ACCESS_KEY=cf-r2-secret-access-key:latest,MODAL_TOKEN_ID=modal-token-id:latest,MODAL_TOKEN_SECRET=modal-token-secret:latest"
+#
+# Retire the old secret once the migration is verified:
+#   gcloud run services update yishun-agents --region asia-southeast1 --remove-secrets GROQ_API_KEY
 
 substitutions:
   _REGION:  asia-southeast1

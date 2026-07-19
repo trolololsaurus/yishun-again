@@ -16,8 +16,11 @@ langgraph==0.4.0
 # ── AI APIs ─────────────────────────────────────────────────────────────────
 # Stage 2 writer — claude-haiku-4-5-20251001 (classify) / claude-sonnet-4-6 (write)
 anthropic==0.40.0
-# Stage 1 filter — llama3-8b-8192 via Groq
-groq==0.9.0
+# Stage 1 filter — gemini-3.1-flash-lite via the Gemini API.
+# Replaced groq==0.9.0 in 2026-07: Groq suspended Developer-tier signups
+# indefinitely and its 6k TPM free tier was dropping ~33% of backfill passes
+# to 429s. Free tier here binds on RPM/RPD, not TPM.
+google-genai==2.12.1
 
 # ── HTTP + scraping ─────────────────────────────────────────────────────────
 httpx==0.27.0

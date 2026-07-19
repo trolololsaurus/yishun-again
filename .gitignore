@@ -32,8 +32,8 @@ packages/agents/*.log
 packages/agents/scrapers/*.log
 packages/agents/backfill_*.txt
 packages/agents/**/*_backup.json
-packages/agents/**/groq_session_usage.json
-packages/agents/**/groq_daily_usage.json
+packages/agents/**/stage1_session_usage.json
+packages/agents/**/stage1_daily_usage.json
 packages/agents/**/incidents_export.json
 
 # One-off DB audit and cleanup scripts — kept locally as run-record, not product code
@@ -47,3 +47,5 @@ packages/agents/query_*.py
 packages/agents/probe_*.py
 packages/agents/cleanup_*.py
 packages/agents/reconsolidate_*.py
+.vercel
+.env*
