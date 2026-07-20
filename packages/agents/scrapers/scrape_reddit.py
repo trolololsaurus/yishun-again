@@ -10,6 +10,7 @@ import json
 import logging
 import sys
 import time
+from datetime import date
 
 import feedparser
 
@@ -72,12 +73,24 @@ def _parse_feed(rss_url: str, source_name: str) -> list[dict]:
         if not url or not content_matches_keywords(content):
             continue
 
+        # Reddit's RSS carries <published>/<updated>; without it the candidate is
+        # dateless — it bypasses the recency watermark and blocks approval until
+        # the operator sets a date by hand (QA H3). Same shape as scrape_cna.
+        published_at = None
+        pp = entry.get("published_parsed") or entry.get("updated_parsed")
+        if pp:
+            try:
+                published_at = date(*pp[:3])
+            except (TypeError, ValueError):
+                pass
+
         results.append({
-            "title":       title,
-            "content":     content[:_CONTENT_LIMIT],
-            "url":         url,
-            "source_name": source_name,
-            "source_type": SOURCE_TYPE,
+            "title":        title,
+            "content":      content[:_CONTENT_LIMIT],
+            "url":          url,
+            "source_name":  source_name,
+            "source_type":  SOURCE_TYPE,
+            "published_at": published_at,
         })
 
     logger.info("Reddit [%s]: %d Yishun posts", source_name, len(results))
