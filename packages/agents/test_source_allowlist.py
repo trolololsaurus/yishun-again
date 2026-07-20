@@ -80,5 +80,32 @@ r2 = sa.check_source_urls(["https://www.straitstimes.com/a"], {})
 check("empty domain map keeps everything (flags, never strips)",
       r2["kept"] == ["https://www.straitstimes.com/a"] and r2["dropped_signal"] == [])
 
+# ── guardrail #2: signal detection must survive the vocab drift ─────────────
+# scrape_edmw emits source_type 'signal'; the orchestrator and Candidate's
+# contract say 'edmw'. orchestrator.py tested == "edmw", so a real EDMW candidate
+# (which says 'signal') slipped through and its forum URL was written into
+# source_urls. is_signal_source accepts both spellings AND falls back to a domain
+# lookup, so no single string mismatch can breach the guardrail.
+EDMW_URL = "https://forums.hardwarezone.com.sg/threads/yishun-again.123/"
+
+check("source_type 'signal' detected (what scrape_edmw actually emits)",
+      sa.is_signal_source("signal", EDMW_URL, DOMAINS) is True)
+check("source_type 'edmw' detected (what the contract/orchestrator say)",
+      sa.is_signal_source("edmw", "https://x.example/a", DOMAINS) is True)
+check("case/whitespace tolerated", sa.is_signal_source("  SIGNAL ", "", DOMAINS) is True)
+check("mislabelled 'msm' still caught via signal DOMAIN (defence in depth)",
+      sa.is_signal_source("msm", EDMW_URL, DOMAINS) is True)
+check("missing source_type still caught via domain",
+      sa.is_signal_source(None, EDMW_URL, DOMAINS) is True)
+check("a genuine MSM candidate is NOT signal",
+      sa.is_signal_source("msm", "https://www.straitstimes.com/a", DOMAINS) is False)
+check("unknown outlet is not signal just because it is unapproved",
+      sa.is_signal_source("msm", "https://8days.sg/x", DOMAINS) is False)
+
+# the end-to-end consequence the bug had
+r_edmw = sa.check_source_urls([EDMW_URL], DOMAINS)
+check("an EDMW-only candidate yields NO quoted source_urls",
+      r_edmw["kept"] == [] and r_edmw["dropped_signal"] == [EDMW_URL])
+
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

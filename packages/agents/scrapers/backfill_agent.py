@@ -741,10 +741,22 @@ def _build_incident_row(draft: dict, item: dict) -> Optional[dict]:
 
     # Guardrail #2: a signal URL (EDMW/HWZ) is never a quoted source. Unapproved
     # domains are kept and flagged rather than dropped — see
-    # classifiers.source_allowlist. Fall back to the original list if filtering
-    # would empty it, so guardrail #1 (>= 1 source URL) can never be broken here.
+    # classifiers.source_allowlist.
     from classifiers.source_allowlist import check_source_urls
-    source_urls = check_source_urls(source_urls)["kept"] or source_urls
+    allow = check_source_urls(source_urls)
+    if not allow["kept"]:
+        # Everything was signal. Do NOT fall back to the unfiltered list — that
+        # would publish the forum URL as a source. Guardrail #1 also forbids
+        # publishing with an empty source_urls, so this item cannot auto-publish
+        # at all: downgrade to the queue (same contract as a missing date) and
+        # let the operator attach an MSM source first.
+        logger.warning(
+            "Backfill: all source URLs are signal for '%s' — downgrading to QUEUE "
+            "tier (guardrail #2: an EDMW/forum URL is never a quoted source)",
+            draft.get("title", "")[:60],
+        )
+        return None
+    source_urls = allow["kept"]
 
     # Coordinates come ONLY from the deterministic OneMap geocoder — never
     # from Stage 2's LLM output (it used to guess the Yishun centre point,
