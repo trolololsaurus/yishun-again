@@ -39,6 +39,7 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
 from classifiers.corroboration import get_supabase_client
+from classifiers.source_allowlist import is_signal_source
 from consolidation.check import check as consolidation_check, write_incident_links
 from consolidation.queue_row import build_queue_row
 from filters.stage1_filter import filter_content
@@ -216,7 +217,13 @@ def run_ingestion_pass(
                     # Legal guardrail #2: an EDMW/signal URL is NEVER a quoted
                     # source. EDMW candidates contribute only edmw_signal_count;
                     # source_urls must stay empty until an MSM URL is attached.
-                    is_edmw = candidate.source_type == "edmw"
+                    # NOT a plain == "edmw": scrape_edmw emits source_type
+                    # 'signal' (as does the sources table), while this module and
+                    # Candidate's contract say 'edmw'. That mismatch meant
+                    # is_edmw was False for real EDMW candidates and the forum
+                    # URL was written straight into source_urls. is_signal_source
+                    # accepts both vocabularies and falls back to a domain lookup.
+                    is_edmw = is_signal_source(candidate.source_type, candidate.url)
                     edmw_signal_count = 1 if is_edmw else 0
                     stage2_input = {
                         **item,

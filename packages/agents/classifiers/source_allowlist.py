@@ -84,6 +84,31 @@ def classify(url: str, domains: dict[str, dict] | None = None) -> str:
     return "unapproved"
 
 
+# Both spellings are in use for the same concept: the sources table and
+# scrape_edmw say 'signal', while Candidate's contract and the orchestrator say
+# 'edmw' (QA M14 vocab drift). Guardrail #2 must not hinge on which one a given
+# component happens to use.
+SIGNAL_TYPES = frozenset({"signal", "edmw"})
+
+
+def is_signal_source(source_type: str | None, url: str = "", domains: dict[str, dict] | None = None) -> bool:
+    """
+    True if this candidate is forum/signal material, whose URL may NEVER become a
+    quoted source (guardrail #2).
+
+    Deliberately belt-and-braces: a legal guardrail should not depend on one
+    string comparison matching. Checks the declared type under BOTH vocabularies
+    AND resolves the URL's domain against the sources table, so a mislabelled
+    candidate from a known signal domain is still caught.
+
+    This exact mismatch was live: scrape_edmw emits 'signal', the orchestrator
+    tested == 'edmw', so an EDMW URL would have been written into source_urls.
+    """
+    if (source_type or "").strip().lower() in SIGNAL_TYPES:
+        return True
+    return bool(url) and classify(url, domains) == "signal"
+
+
 def check_source_urls(urls: list[str], domains: dict[str, dict] | None = None) -> dict:
     """
     Apply the allowlist to a candidate's source_urls.
