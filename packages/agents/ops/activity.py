@@ -34,6 +34,13 @@ LEVELS = ("info", "success", "warning", "error", "anomaly")
 # ones a human may be paged about, and they must survive a hard crash.
 _BATCH_SIZE = 25
 
+# ...but a count-only trigger is wrong for a pass that runs 20 minutes and emits
+# ~15 events: the buffer never fills, so nothing lands until close() and the
+# table reads as empty for the entire run. That defeats the point of logging a
+# long unattended job — you cannot watch it, and a container killed mid-pass
+# takes the whole buffer with it. Flush on age as well as size.
+_BATCH_MAX_AGE_SECONDS = 30.0
+
 
 def _client(explicit=None):
     """Return a Supabase client, or None. Never raises."""
@@ -68,6 +75,7 @@ class AgentRun:
         self._saw_anomaly = False
         self._pending: list[dict] = []
         self._t0 = time.monotonic()
+        self._last_flush = time.monotonic()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -149,7 +157,9 @@ class AgentRun:
             "detail":      _jsonable(detail),
         })
         # Errors and anomalies must survive a hard crash — flush now.
-        if level in ("error", "anomaly") or len(self._pending) >= _BATCH_SIZE:
+        if (level in ("error", "anomaly")
+                or len(self._pending) >= _BATCH_SIZE
+                or (time.monotonic() - self._last_flush) >= _BATCH_MAX_AGE_SECONDS):
             self._flush()
 
     def info(self, event, message, **kw):    self.event("info", event, message, **kw)
@@ -159,6 +169,9 @@ class AgentRun:
     def anomaly(self, event, message, **kw): self.event("anomaly", event, message, **kw)
 
     def _flush(self) -> None:
+        # Stamp the flush time even on an empty buffer, so a quiet stretch does
+        # not leave the next single event looking 20 minutes overdue.
+        self._last_flush = time.monotonic()
         if not self._pending:
             return
         batch, self._pending = self._pending, []
