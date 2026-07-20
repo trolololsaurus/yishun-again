@@ -76,6 +76,47 @@ check("every registered source satisfies the Source protocol",
       all(hasattr(s, "name") and hasattr(s, "enabled") and callable(getattr(s, "fetch", None))
           for s in srcmod.get_enabled_sources()))
 
+# ── failure signalling: a dead source must not look like "no news" ──────────
+from ingestion.contracts import SourceBlockedError, SourceUnavailableError  # noqa: E402
+from scrapers import ScraperBlocked, ScraperError, raise_scrape_failure  # noqa: E402
+
+def _raiser(exc):
+    def _f():
+        raise exc
+    return LegacyScraperSource("x", _f)
+
+def _raises(src, want):
+    try:
+        src.fetch(since=None)
+        return False
+    except Exception as e:
+        return isinstance(e, want)
+
+check("ScraperBlocked -> SourceBlockedError",
+      _raises(_raiser(ScraperBlocked("429")), SourceBlockedError))
+check("ScraperError -> SourceUnavailableError",
+      _raises(_raiser(ScraperError("boom")), SourceUnavailableError))
+check("unclassified exception -> SourceUnavailableError (not swallowed)",
+      _raises(_raiser(RuntimeError("surprise")), SourceUnavailableError))
+check("empty result is NOT an error (genuinely no Yishun news)",
+      LegacyScraperSource("x", lambda: []).fetch(since=None) == [])
+
+def _classify(text):
+    try:
+        raise_scrape_failure("S", Exception(text))
+    except ScraperBlocked:
+        return "blocked"
+    except ScraperError:
+        return "error"
+
+check("429 classified as blocked",        _classify("HTTP 429 Too Many Requests") == "blocked")
+check("403 classified as blocked",        _classify("403 Forbidden") == "blocked")
+check("captcha/bot page -> blocked",      _classify("detected unusual traffic") == "blocked")
+check("timeout -> transient error",       _classify("ConnectTimeout") == "error")
+check("404 -> transient error (not a block)", _classify("404 Not Found") == "error")
+check("raise_scrape_failure always raises",  _classify("anything") in {"blocked", "error"})
+
+
 # ── resolve_published_at: the Phase-2b date helper (no network) ─────────────
 import io  # noqa: E402
 from contextlib import contextmanager  # noqa: E402

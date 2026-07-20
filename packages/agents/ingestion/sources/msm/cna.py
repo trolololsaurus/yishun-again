@@ -5,19 +5,25 @@ Q1=1b.
 Thin wrapper around scrapers.scrape_cna.scrape() — does not reimplement its
 RSS fetch/parse/filter logic, only adapts its output to Candidate (§3.1).
 
-Known v1 limitation: scrape_cna.scrape() catches its own per-feed exceptions
-and logs+returns [] rather than raising — it was written for scrape_all()'s
-best-effort aggregation, not the Source protocol's "MUST raise
-SourceBlockedError/SourceUnavailableError, MUST NOT swallow" contract. This
-adapter cannot currently distinguish "CNA blocked us" from "no new Yishun
-items in CNA's feed right now" — both surface as an empty fetch with
-status='ok'. Revisit if CNA blocking becomes observable in practice.
+scrape_cna.scrape() now raises ScraperError/ScraperBlocked on a source-level
+failure instead of logging and returning [], so this adapter can honour the
+Source protocol's "MUST raise SourceBlockedError/SourceUnavailableError, MUST
+NOT swallow" contract. An empty fetch now genuinely means "no new Yishun items
+in CNA's feed", not "something broke quietly".
+
+CNA polls several feeds; one feed failing to parse is skipped rather than
+failing the whole run — only a source-level failure propagates.
 """
 
 import logging
 from datetime import date
 
-from ingestion.contracts import Candidate
+from ingestion.contracts import (
+    Candidate,
+    SourceBlockedError,
+    SourceUnavailableError,
+)
+from scrapers import ScraperBlocked, ScraperError
 from scrapers import scrape_cna
 
 logger = logging.getLogger(__name__)
@@ -36,7 +42,15 @@ class CNASource:
         current feed only). RecencyFilter (§5.1) applies the real window
         downstream.
         """
-        items = scrape_cna.scrape()
+        try:
+            items = scrape_cna.scrape()
+        except ScraperBlocked as exc:
+            raise SourceBlockedError(f"cna: {exc}") from exc
+        except ScraperError as exc:
+            raise SourceUnavailableError(f"cna: {exc}") from exc
+        except Exception as exc:
+            raise SourceUnavailableError(f"cna: {type(exc).__name__}: {exc}") from exc
+
         return [
             Candidate(
                 title=item["title"],

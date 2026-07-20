@@ -14,7 +14,7 @@ from datetime import date
 
 import feedparser
 
-from . import content_matches_keywords, strip_html
+from . import ScraperError, content_matches_keywords, raise_scrape_failure, strip_html
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +53,9 @@ def _parse_feed(rss_url: str, source_name: str) -> list[dict]:
     feed = feedparser.parse(rss_url)
 
     if feed.bozo and not feed.entries:
-        logger.warning(
-            "Reddit RSS parse error [%s]: %s", source_name, feed.bozo_exception
-        )
-        return []
+        # Raise instead of returning [] — a dead source must not look
+        # like "no Yishun news" (see scrapers.raise_scrape_failure).
+        raise ScraperError(f"{SOURCE_NAME}: feed parse failed")
 
     results = []
     for entry in feed.entries:

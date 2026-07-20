@@ -14,7 +14,7 @@ import time
 import httpx
 from bs4 import BeautifulSoup
 
-from . import BROWSER_HEADERS, content_matches_lang, resolve_published_at, strip_html, translate_article
+from . import BROWSER_HEADERS, ScraperError, content_matches_lang, raise_scrape_failure, resolve_published_at, strip_html, translate_article
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +80,9 @@ def scrape() -> list[dict]:
     with httpx.Client(headers=BROWSER_HEADERS, follow_redirects=True) as client:
         html = _fetch(client, _INDEX_URL)
         if not html:
-            logger.warning("Tamil Murasu: main page fetch failed — skipping run")
-            return results
+            # Raise instead of returning [] — a dead source must not look
+            # like "no Yishun news" (see scrapers.raise_scrape_failure).
+            raise ScraperError(f"{SOURCE_NAME}: fetch failed")
 
         candidates = _extract_article_links(html)
         logger.debug("Tamil Murasu: %d candidate links", len(candidates))

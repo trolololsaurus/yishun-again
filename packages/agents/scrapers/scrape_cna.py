@@ -15,7 +15,7 @@ from datetime import date
 
 import feedparser
 
-from . import content_matches_keywords, strip_html
+from . import ScraperError, content_matches_keywords, raise_scrape_failure, strip_html
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,7 @@ def scrape() -> list[dict]:
 
         except Exception as exc:
             logger.error("CNA scraper error (%s): %s", feed_url, exc)
+            raise_scrape_failure(SOURCE_NAME, exc)
 
         time.sleep(1)
 
