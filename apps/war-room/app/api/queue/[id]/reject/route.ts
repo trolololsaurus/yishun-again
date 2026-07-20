@@ -29,7 +29,7 @@ export async function POST(
   // Verify item exists and is pending
   const { data: item, error: fetchErr } = await supabase
     .from('war_room_queue')
-    .select('id, proposed_summary, proposed_classification, proposed_severity, agent_confidence')
+    .select('id, source_url, source_type, raw_content, proposed_summary, proposed_classification, proposed_severity, agent_confidence')
     .eq('id', id)
     .eq('status', 'pending')
     .single()
@@ -50,10 +50,17 @@ export async function POST(
   }
 
   // Log training signal — no incident_id on reject
+  const rc = (item.raw_content ?? {}) as Record<string, unknown>
   await supabase.from('training_signals').insert({
     incident_id:             null,
+    queue_id:                id,
     action:                  'reject',
     decision:                'reject',
+    source_url:              item.source_url,
+    source_name:             rc.source_name as string | undefined,
+    source_type:             item.source_type,
+    proposed_classification: item.proposed_classification,
+    proposed_severity:       item.proposed_severity,
     reject_reason:           reason,
     original_draft:          item.proposed_summary,
     original_classification: item.proposed_classification,

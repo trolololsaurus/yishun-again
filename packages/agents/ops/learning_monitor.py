@@ -75,6 +75,17 @@ AGREE_DECISIONS = {"approve"}
 EDIT_DECISIONS = {"approve_with_edits"}
 REJECT_DECISIONS = {"reject"}
 
+# Minimum verdicts before a domain's trust is allowed to move off neutral.
+# See the reasoning at the clamp in rebuild_source_reputation().
+MIN_DOMAIN_OBSERVATIONS = int(os.getenv("REPUTATION_MIN_OBSERVATIONS", "10"))
+DEFAULT_TRUST = 0.500
+
+# Share of unchanged approvals above which an unmarked window is treated as
+# unreadable rather than excellent (QA A11). 0.75 is deliberately high: a good
+# model genuinely should produce mostly clean approvals, so this must only fire
+# when the reading is extreme enough to be ambiguous.
+UNMARKED_BULK_SUSPICION = float(os.getenv("UNMARKED_BULK_SUSPICION", "0.75"))
+
 
 def _client(explicit=None):
     if explicit is not None:
@@ -143,7 +154,26 @@ def rebuild_source_reputation(client, run: AgentRun, lookback_days: int = 365) -
 
     now_iso = datetime.now(timezone.utc).isoformat()
     for dom, t in tally.items():
-        trust = (t["approvals"] + 1) / (t["approvals"] + t["rejections"] + 2)
+        observations = t["approvals"] + t["rejections"]
+
+        # Stay NEUTRAL until a domain has been seen enough times.
+        #
+        # This is a safety gate, not statistical fussiness. trust >= 0.700 buys a
+        # +0.10 confidence nudge in ingestion/learning.py, and auto-publish fires
+        # at 0.95 — so an inflated trust score can push a 0.86 draft over the
+        # autonomy gate. Laplace smoothing alone does not protect against that:
+        # a domain with 3 approvals and 0 rejections scores 0.800 and clears the
+        # boost threshold on almost no evidence.
+        #
+        # Rejections are also structurally scarcer than approvals right now
+        # (a rejected draft has no incident_id to trace a domain through), so
+        # early data skews positive by construction. Neutral-until-proven is the
+        # conservative direction: the worst case is the nudge does nothing, which
+        # is exactly where the system has been all along.
+        if observations < MIN_DOMAIN_OBSERVATIONS:
+            trust = DEFAULT_TRUST
+        else:
+            trust = (t["approvals"] + 1) / (t["approvals"] + t["rejections"] + 2)
         try:
             client.table("source_reputation").upsert({
                 "source_domain": dom,
@@ -173,12 +203,13 @@ def rebuild_source_reputation(client, run: AgentRun, lookback_days: int = 365) -
 
 def _window_metrics(client, start: datetime, end: datetime) -> dict:
     """Operator-decision metrics for one window. Returns zeros on failure."""
-    m = {"samples": 0, "agree": 0, "edit": 0, "reject": 0,
+    m = {"samples": 0, "agree": 0, "edit": 0, "reject": 0, "unclassified": 0,
+         "bulk_excluded": 0, "clean_approvals": 0,
          "mean_confidence": None, "per_category": {}}
     try:
         res = (client.table("training_signals")
                .select("decision,decided_by,agent_confidence,agent_confidence_was,"
-                       "proposed_classification,original_classification")
+                       "proposed_classification,original_classification,operator_changes")
                .gte("created_at", start.isoformat())
                .lt("created_at", end.isoformat())
                .limit(5000).execute())
@@ -191,6 +222,16 @@ def _window_metrics(client, start: datetime, end: datetime) -> dict:
     for row in rows:
         if row.get("decided_by") == "agent":
             continue
+
+        # QA A11 — a bulk approval is one click over many cards, not a verdict on
+        # each. Counting it as "the operator agreed, unchanged" is how this metric
+        # flatters itself: a window heavy in backfill always beats a window of real
+        # review, and the delta measures workflow, not model quality.
+        changes = row.get("operator_changes") or {}
+        if isinstance(changes, dict) and changes.get("bulk"):
+            m["bulk_excluded"] += 1
+            continue
+
         decision = row.get("decision")
         if decision in AGREE_DECISIONS:
             bucket = "agree"
@@ -203,6 +244,12 @@ def _window_metrics(client, start: datetime, end: datetime) -> dict:
 
         m["samples"] += 1
         m[bucket] += 1
+        # An approval with no recorded changes is either a genuinely clean
+        # proposal or an UNMARKED bulk click — the two are indistinguishable in
+        # rows written before the marker existed. Tracked so _verdict can refuse
+        # to draw a conclusion when the window is dominated by them.
+        if bucket == "agree" and not changes:
+            m["clean_approvals"] += 1
 
         conf = row.get("agent_confidence")
         if conf is None:
@@ -213,7 +260,14 @@ def _window_metrics(client, start: datetime, end: datetime) -> dict:
             except (TypeError, ValueError):
                 pass
 
-        cls = row.get("proposed_classification") or row.get("original_classification") or "unknown"
+        # A row with no classification recorded is UNCLASSIFIABLE, not a
+        # disagreement. Bucketing it as "unknown" and scoring it produced a
+        # phantom 0%-agreement category that dragged the headline rate down and
+        # invited exactly the wrong conclusion. Count it separately instead.
+        cls = row.get("proposed_classification") or row.get("original_classification")
+        if not cls:
+            m["unclassified"] += 1
+            continue
         c = m["per_category"].setdefault(cls, {"samples": 0, "agree": 0})
         c["samples"] += 1
         if bucket == "agree":
@@ -272,6 +326,24 @@ def _verdict(cur: dict, prev: dict, agreement_delta, confidence_delta) -> tuple[
     if prev["samples"] < MIN_SAMPLES or agreement_delta is None:
         return ("insufficient_data",
                 "no comparable previous window yet — this snapshot becomes the baseline.")
+
+    # QA A11 bridge for pre-marker data. Rows written before backfill-bulk began
+    # marking itself carry no `bulk` flag, so an unmarked bulk click is
+    # indistinguishable from a genuinely clean approval. When almost every
+    # approval is unchanged AND nothing in the window was identifiably bulk, the
+    # window is equally consistent with "the model is excellent" and "someone
+    # bulk-approved a backfill" — and reporting the flattering one would be a
+    # guess dressed as a measurement.
+    #
+    # Self-clearing: once marked bulk rows appear (bulk_excluded > 0) or the
+    # clean share drops back to a normal level, the verdict speaks again.
+    clean_share = (cur["clean_approvals"] / cur["samples"]) if cur["samples"] else 0.0
+    if cur["bulk_excluded"] == 0 and clean_share >= UNMARKED_BULK_SUSPICION:
+        return ("insufficient_data",
+                f"{clean_share:.0%} of decisions are approvals with no recorded changes and "
+                f"none are marked as bulk. Cannot distinguish a well-performing model from "
+                f"bulk backfill approvals (QA A11), so the {agreement_delta:+.1%} agreement "
+                f"move is not reportable. Weight auto_publish_reverted instead.")
 
     # Over-confidence: claiming more while being confirmed less. Caught before
     # the flat-agreement check, because a flat rate hides this entirely.
@@ -352,7 +424,14 @@ def run(supabase_client=None, window_days: int = WINDOW_DAYS,
             "auto_publish_count": auto_pub,
             "auto_publish_reverted": auto_rev,
             "verdict": verdict,
-            "per_category": cur["per_category"],
+            "per_category": {
+                **cur["per_category"],
+                "_meta": {
+                    "bulk_excluded": cur["bulk_excluded"],
+                    "clean_approvals": cur["clean_approvals"],
+                    "unclassified": cur["unclassified"],
+                },
+            },
             "notes": note,
         }
 

@@ -183,11 +183,22 @@ export async function POST(
     )
   }
 
-  // Log training signal (telemetry — must not fail the request)
+  // Log training signal (telemetry — must not fail the request).
+  // The queue_id/source_* fields are what make the row usable by the Learning
+  // Loop: ops/learning_monitor.py::rebuild_source_reputation() tallies operator
+  // approvals and rejections per source_url domain. A signal written without
+  // source_url is invisible to it, so source_reputation stays empty forever and
+  // ingestion/learning.py has no per-domain trust to nudge with.
   const { error: signalErr } = await supabase.from('training_signals').insert({
     incident_id:             newIncident.id,
+    queue_id:                id,
     action,
     decision:                action === 'edit_approve' ? 'approve_with_edits' : 'approve',
+    source_url:              item.source_url,
+    source_name:             rc.source_name as string | undefined,
+    source_type:             item.source_type,
+    proposed_classification: item.proposed_classification,
+    proposed_severity:       item.proposed_severity,
     original_draft:          item.proposed_summary,
     edited_draft:            action === 'edit_approve' ? summary : null,
     original_classification: item.proposed_classification,

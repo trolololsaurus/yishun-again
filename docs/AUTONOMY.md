@@ -128,6 +128,40 @@ wrong". Rising ⇒ raise `AUTO_PUBLISH_CONFIDENCE`.
 > handles the easy cards itself and only hard ones reach the operator. A flat
 > agreement rate against a harder review set is the loop working as designed.
 
+### Why the metric refuses to answer sometimes (QA A11)
+
+The very first real snapshot read `learning`, agreement `0.414 → 0.782` (**+36.8pp**) over
+101 samples. It was wrong, and the way it was wrong is worth keeping in mind.
+
+**A bulk approval is one click over N cards, not N verdicts.** `backfill-bulk` wrote a
+`training_signals` row per card with no `operator_changes` — which the metric read as "the
+operator agreed with the model, unchanged." 91 of 130 rows had exactly that shape, and
+`dagger` scored **100% agreement over 53 samples**. So a window heavy in backfill always
+outscores a window of genuine review, and the delta measured *workflow composition*, not
+model quality. That is the self-flattering-metric failure mode this whole section exists
+to avoid, and it appeared on the first reading.
+
+Two changes close it:
+
+1. **`backfill-bulk` now marks its rows** `operator_changes: {bulk: true}`, and
+   `_window_metrics` excludes them from the agreement maths (counted in
+   `per_category._meta.bulk_excluded`).
+2. **Pre-marker rows cannot be fixed retroactively**, so the metric refuses to guess.
+   When ≥75% of decisions are unchanged approvals **and** nothing in the window is
+   identifiably bulk, the window is equally consistent with "the model is excellent" and
+   "someone bulk-approved a backfill" — so the verdict returns `insufficient_data` with
+   the reason, rather than reporting the flattering interpretation as fact.
+
+The threshold is deliberately high (`UNMARKED_BULK_SUSPICION = 0.75`): a genuinely good
+model *should* produce mostly clean approvals, so this must only fire when the reading is
+ambiguous. It is self-clearing — once marked bulk rows appear, or the clean share returns
+to normal, the verdict speaks again.
+
+> Against the live archive today this correctly returns **`insufficient_data`**, not the
+> +36.8% it would have claimed. `auto_publish_reverted` remains the signal to weight most
+> heavily, because it cannot be gamed this way: it only moves when a human unpublishes
+> something the agent chose.
+
 ### The loop was open until now
 
 `ingestion/learning.py` has always *read* `source_reputation` and nudged
