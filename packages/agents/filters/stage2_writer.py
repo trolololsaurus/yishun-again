@@ -248,6 +248,56 @@ def _compute_chaos_contribution(classification: str, severity: int) -> float:
     return round(severity * multipliers.get(classification, 1.0), 2)
 
 
+# Caps on the extra source text handed to Sonnet. A 5-source story adds roughly
+# 3k input tokens at these limits — enough for the delta between reports without
+# unbounded cost on heavily-covered incidents.
+MAX_EXTRA_SOURCES  = 5
+EXTRA_SOURCE_CHARS = 2_500
+
+
+def _format_additional_sources(content: dict) -> str:
+    """
+    Render the other outlets' reports of the same incident.
+
+    Multi-source stories used to reach Stage 2 as a single article: the
+    aggregator kept every URL and timeline entry but only the primary's text, so
+    a block number in one report, a charge detail in another and an eyewitness
+    quote in a third were all invisible to the writer. The system prompt already
+    asks for corroborating detail "as sources allow" — it simply never had more
+    than one source to work from.
+
+    Signal sources (EDMW/HWZ) are excluded upstream and must never appear here:
+    guardrail #2 and spec §4.1 forbid quoting forum content.
+    """
+    articles = content.get("source_articles") or []
+    primary_url = content.get("url", "")
+
+    others = [
+        a for a in articles
+        if a.get("url") != primary_url
+        and (a.get("content") or "").strip()
+        and a.get("source_type") != "signal"
+    ][:MAX_EXTRA_SOURCES]
+
+    if not others:
+        return ""
+
+    parts = [
+        f"\n\n---\nADDITIONAL REPORTS OF THE SAME INCIDENT ({len(others)}). "
+        "Use them to corroborate the primary report and to add specifics it "
+        "omits — block numbers, ages, charges, timings, quotes. Do not repeat "
+        "the same fact twice, and never assert anything no source states."
+    ]
+    for i, a in enumerate(others, start=2):
+        when = f" ({a['date']})" if a.get("date") else ""
+        parts.append(
+            f"\n\n[{i}] {a.get('source_name') or 'unknown'} — {a.get('url', '')}{when}\n"
+            f"Title: {a.get('title', '')}\n"
+            f"{(a.get('content') or '')[:EXTRA_SOURCE_CHARS]}"
+        )
+    return "".join(parts)
+
+
 def _build_user_message(content: dict) -> str:
     learning_context = content.get("learning_context", "")
     learning_block = (
@@ -262,6 +312,7 @@ def _build_user_message(content: dict) -> str:
         f"Date: {content.get('date') or 'unknown'}\n\n"
         f"Title: {content.get('title', '')}\n\n"
         f"Content:\n{content.get('content', '')}"
+        f"{_format_additional_sources(content)}"
     )
 
 

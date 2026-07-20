@@ -246,6 +246,21 @@ def build_candidates(manifest: list[dict], route_filter: str | None) -> tuple[li
         cand = dict(primary)
         cand["source_urls"]     = src_urls or [primary["url"]]
         cand["source_timeline"] = timeline
+        # Every non-signal report's TEXT, not just its URL. Previously only the
+        # primary's content reached Stage 2, so detail that appeared in a single
+        # outlet's write-up was lost. Signal sources are excluded — guardrail #2
+        # and spec §4.1 forbid quoting forum content.
+        cand["source_articles"] = [
+            {
+                "source_name": f.get("source_name", ""),
+                "source_type": f.get("source_type", "msm"),
+                "url":         f.get("url", ""),
+                "date":        f.get("date"),
+                "title":       f.get("title", ""),
+                "content":     f.get("content", ""),
+            }
+            for f in fetched if f.get("source_type") != "signal"
+        ]
         cand["_story"]    = entry.get("story", "")
         cand["_route"]    = entry.get("route", "auto")
         cand["_category"] = entry.get("category", "")

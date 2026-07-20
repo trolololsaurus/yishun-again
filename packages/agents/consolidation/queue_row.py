@@ -47,18 +47,33 @@ def build_queue_row(
     update_target_id = None
     agent_role = "initial"
 
+    # Corroboration = distinct non-signal source URLs backing this draft. This was
+    # hardcoded to 1, so multi-source stories reached the operator (and publish)
+    # claiming a single source — which also zeroed the lightning meter downstream
+    # (bolts = corroboration_count - 1). draft wins over item because Stage 2
+    # returns the list it actually wrote from.
+    _srcs = [u for u in (draft.get("source_urls") or item.get("source_urls") or []) if u]
+    corroboration_count = max(1, len(dict.fromkeys(_srcs)))
+
     if consolidation is not None:
         update_target_id = consolidation.matched_incident_id
         agent_role = consolidation.agent_role_proposed
 
+    raw_content = {
+        **item,
+        **draft,
+        "_backfill":        is_backfill,
+        "_backfill_source": item.get("source_type", "msm"),
+        **({"_date_fallback": True} if date_missing else {}),
+    }
+    # The full text of every corroborating report is Stage 2 *input*, not queue
+    # state — persisting it would add ~12KB of duplicated article text to every
+    # row. The sources themselves are still recorded in source_urls and
+    # source_timeline.
+    raw_content.pop("source_articles", None)
+
     row = {
-        "raw_content": {
-            **item,
-            **draft,
-            "_backfill":        is_backfill,
-            "_backfill_source": item.get("source_type", "msm"),
-            **({"_date_fallback": True} if date_missing else {}),
-        },
+        "raw_content": raw_content,
         "source_url":              item["url"],
         "source_type":             item.get("source_type", "msm"),
         "proposed_title":          draft["title"],
@@ -68,7 +83,7 @@ def build_queue_row(
         "proposed_pixel_prompt":   draft.get("pixel_art_prompt", ""),
         "proposed_slug":           draft.get("slug", ""),
         "agent_confidence":        draft["confidence"],
-        "corroboration_count":     1,
+        "corroboration_count":     corroboration_count,
         "edmw_signal_count":       edmw_signal_count,
         "status":                  status,
     }
