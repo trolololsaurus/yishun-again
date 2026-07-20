@@ -59,14 +59,21 @@ def build_queue_row(
         update_target_id = consolidation.matched_incident_id
         agent_role = consolidation.agent_role_proposed
 
+    raw_content = {
+        **item,
+        **draft,
+        "_backfill":        is_backfill,
+        "_backfill_source": item.get("source_type", "msm"),
+        **({"_date_fallback": True} if date_missing else {}),
+    }
+    # The full text of every corroborating report is Stage 2 *input*, not queue
+    # state — persisting it would add ~12KB of duplicated article text to every
+    # row. The sources themselves are still recorded in source_urls and
+    # source_timeline.
+    raw_content.pop("source_articles", None)
+
     row = {
-        "raw_content": {
-            **item,
-            **draft,
-            "_backfill":        is_backfill,
-            "_backfill_source": item.get("source_type", "msm"),
-            **({"_date_fallback": True} if date_missing else {}),
-        },
+        "raw_content": raw_content,
         "source_url":              item["url"],
         "source_type":             item.get("source_type", "msm"),
         "proposed_title":          draft["title"],
