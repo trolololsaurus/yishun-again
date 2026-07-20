@@ -102,6 +102,15 @@ check("a genuine MSM candidate is NOT signal",
 check("unknown outlet is not signal just because it is unapproved",
       sa.is_signal_source("msm", "https://8days.sg/x", DOMAINS) is False)
 
+# ── QA M14: one canonical vocabulary ────────────────────────────────────────
+check("'edmw' normalises to canonical 'signal'", sa.canonical_source_type("edmw") == "signal")
+check("'signal' stays 'signal'", sa.canonical_source_type("signal") == "signal")
+check("case/whitespace normalised", sa.canonical_source_type("  EDMW ") == "signal")
+check("non-signal types pass through", sa.canonical_source_type("msm") == "msm")
+check("None -> empty string", sa.canonical_source_type(None) == "")
+check("canonical value is what the sources-table CHECK accepts",
+      sa.CANONICAL_SIGNAL_TYPE == "signal")
+
 # the end-to-end consequence the bug had
 r_edmw = sa.check_source_urls([EDMW_URL], DOMAINS)
 check("an EDMW-only candidate yields NO quoted source_urls",

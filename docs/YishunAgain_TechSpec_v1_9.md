@@ -1362,8 +1362,22 @@ def compute_chaos_index(year: int) -> float:
     - clown  (ABSURDITIES):  severity * 1.5
     - heart  (GOOD VIBES):   severity * -1.0 (positive news reduces score)
     
-    Normalised to 0–100.
-    Max theoretical score (all severity-5 daggers): 100
+    Normalised to 0–100 by a saturating curve (rebalanced July 2026):
+
+        raw   = Σ (severity × weight), floored at 0
+        score = round(100 * (1 - exp(-raw / 300)))
+
+    Was `min(100, raw / 300 * 100)` — linear with a hard cliff, so raw 300
+    (~20 severity-5 daggers) pegged a year at 100 permanently and 2026 read 87
+    by July. `raw` is a cumulative sum over the year, so the old score only ever
+    climbed and measured catalogue volume more than chaos. The curve approaches
+    100 asymptotically without reaching it: raw 300 → 63, Apocalyptic (>=80)
+    needs raw ~483.
+
+    Canonical implementation is computeChaosScore() in apps/web/lib/utils.ts —
+    the aggregate is NOT computed in Python; Stage 2 only stores the per-incident
+    chaos_contribution.
+
     Filtered by EXTRACT(YEAR FROM incident_date) = year
     """
     incidents = get_incidents_for_year(year)

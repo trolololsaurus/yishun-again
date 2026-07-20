@@ -29,9 +29,12 @@ KNOWN v1 GAPS (flagged, not fixed here — see chat for detail):
     _build_user_message() does not currently read that key — it has no
     injection hook. The load-once wiring is in place per spec; consuming
     it requires a small follow-up edit to stage2_writer.py.
-  - edmw_signal_count is derived as 1 if the candidate's source_type is
-    'edmw' else 0 — no EDMW source adapter exists yet in
-    ingestion/sources/, so this is currently always 0 in practice.
+  - edmw_signal_count is 1 for a signal candidate, else 0. Signal detection
+    goes through classifiers.source_allowlist.is_signal_source, which accepts
+    both vocabulary spellings AND falls back to a domain lookup — a plain
+    `== 'edmw'` comparison here silently breached guardrail #2, because
+    scrape_edmw emits the canonical 'signal'. The EDMW adapter IS registered
+    now (Phase 3), so this is live, not theoretical.
 """
 
 import logging

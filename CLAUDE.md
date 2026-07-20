@@ -242,13 +242,36 @@ Share cards: rendered via OG meta tags — no separate image generation. The pix
 
 ## Chaos Index
 
-Computed on every new publish, stored in `chaos_index_snapshots`:
+Computed on every new publish, stored in `chaos_index_snapshots`.
+
+**Per-incident points** (unchanged — these are what Stage 2 stores as
+`chaos_contribution`):
 - Dagger: `severity × 3.0`
 - Clown: `severity × 1.5`
 - Heart: `severity × -1.0`
-- Normalised to 0–100 (max theoretical: 300 raw points → 100)
+
+**Aggregate score** (`computeChaosScore`, `apps/web/lib/utils.ts` — the only
+place it is calculated; `/api/chaos` and the SSR homepage both use it):
+
+```
+raw   = Σ (severity × weight) for the selected year, floored at 0
+score = round(100 × (1 − e^(−raw / CHAOS_SCALE)))      CHAOS_SCALE = 300
+```
+
+Rebalanced July 2026. It was `min(100, raw / 300 × 100)` — linear with a hard
+cliff, so 20 severity-5 daggers (raw 300) pegged a year at 100 permanently and
+2026 read **87 Apocalyptic by July**. Because `raw` is a cumulative sum over the
+year it only ever climbed, making the index closer to "how much have we
+catalogued" than "how chaotic was it". The curve now gives diminishing returns
+and approaches 100 asymptotically without reaching it: raw 300 → 63, and
+Apocalyptic (≥80) needs raw ≈ 483, about 32 severity-5 daggers in one year.
+2026 reads **58 Elevated** with room to grow.
 
 Descriptors: Quiet / Simmering / Elevated / Critical / Apocalyptic (thresholds: 0/20/40/60/80).
+
+⚠️ The index still tracks **archive coverage** as much as reality — thin
+historical years read Quiet because few incidents are catalogued, not because
+Yishun was calm. Comparing years is therefore not apples-to-apples.
 
 ---
 

@@ -32,6 +32,7 @@ from ingestion.contracts import (
     SourceBlockedError,
     SourceUnavailableError,
 )
+from classifiers.source_allowlist import canonical_source_type
 from scrapers import ScraperBlocked, ScraperError
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,9 @@ class LegacyScraperSource:
                 content=item.get("content", ""),
                 url=url,
                 source_name=item.get("source_name") or self._source_name or self.name,
-                source_type=item.get("source_type") or self._source_type,
+                # Normalised here so the legacy 'edmw' spelling never reaches
+                # downstream code — 'signal' is canonical (QA M14).
+                source_type=canonical_source_type(item.get("source_type") or self._source_type),
                 published_at=item.get("published_at"),
                 discovered_via=self.name,
             ))

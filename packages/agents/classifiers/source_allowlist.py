@@ -84,11 +84,29 @@ def classify(url: str, domains: dict[str, dict] | None = None) -> str:
     return "unapproved"
 
 
-# Both spellings are in use for the same concept: the sources table and
-# scrape_edmw say 'signal', while Candidate's contract and the orchestrator say
-# 'edmw' (QA M14 vocab drift). Guardrail #2 must not hinge on which one a given
-# component happens to use.
-SIGNAL_TYPES = frozenset({"signal", "edmw"})
+# QA M14 vocab drift. Two spellings existed for one concept: the `sources` table
+# CHECK and scrape_edmw say 'signal'; Candidate's contract and the orchestrator
+# said 'edmw'. That mismatch silently breached guardrail #2.
+#
+# 'signal' is CANONICAL — it is the only spelling the database accepts
+# (sources.type CHECK) and what the scraper emits. 'edmw' is a tolerated legacy
+# alias: candidates are normalised to 'signal' at the adapter boundary, and
+# is_signal_source still accepts both so no single component can reintroduce the
+# breach by comparing the wrong string.
+CANONICAL_SIGNAL_TYPE = "signal"
+SIGNAL_TYPES = frozenset({CANONICAL_SIGNAL_TYPE, "edmw"})
+
+
+def canonical_source_type(source_type: str | None) -> str:
+    """
+    Normalise a source_type to the canonical vocabulary (QA M14).
+
+    Any signal spelling collapses to 'signal'; everything else is passed through
+    lower-cased. Applied at the Source-adapter boundary so no Candidate ever
+    carries the legacy alias downstream.
+    """
+    st = (source_type or "").strip().lower()
+    return CANONICAL_SIGNAL_TYPE if st in SIGNAL_TYPES else st
 
 
 def is_signal_source(source_type: str | None, url: str = "", domains: dict[str, dict] | None = None) -> bool:
