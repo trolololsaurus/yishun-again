@@ -61,8 +61,11 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
       // without emitting 'error', which would leave the loading overlay up forever.
       loadTimeout = setTimeout(() => {
         if (destroyed || loadedRef.current) return
-        console.error('[IncidentMap] load timed out after 12s, style URL:', MAP_STYLE)
-        setErrorMsg('Map timed out — tile provider unreachable')
+        // Don't assert "unreachable" — the style, tiles, CSP and WebGL can all be
+        // healthy yet 'load' still not fire (e.g. a render/rAF stall in a
+        // backgrounded or headless tab). The timeout says "didn't finish", not "network down".
+        console.error('[IncidentMap] map load did not complete within 12s (tiles may be reachable). style URL:', MAP_STYLE)
+        setErrorMsg('Map failed to load — reload to retry')
         setMapStatus('error')
       }, 12_000)
 
