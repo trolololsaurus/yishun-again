@@ -9,7 +9,7 @@ from datetime import date
 
 import feedparser
 
-from . import content_matches_keywords, strip_html
+from . import ScraperError, content_matches_keywords, raise_scrape_failure, strip_html
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +33,9 @@ def scrape() -> list[dict]:
     try:
         feed = feedparser.parse(_RSS_URL)
         if feed.bozo and not feed.entries:
-            logger.warning("The Independent RSS parse error: %s", feed.bozo_exception)
-            return results
+            # Raise instead of returning [] — a dead source must not look
+            # like "no Yishun news" (see scrapers.raise_scrape_failure).
+            raise ScraperError(f"{SOURCE_NAME}: feed parse failed")
 
         for entry in feed.entries:
             url   = entry.get("link", "").strip()
@@ -74,6 +75,7 @@ def scrape() -> list[dict]:
 
     except Exception as exc:
         logger.error("The Independent scraper error: %s", exc)
+        raise_scrape_failure(SOURCE_NAME, exc)
 
     logger.info("The Independent: %d Yishun items", len(results))
     return results

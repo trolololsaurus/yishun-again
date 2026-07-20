@@ -11,7 +11,7 @@ import time
 import httpx
 from bs4 import BeautifulSoup
 
-from . import BROWSER_HEADERS, content_matches_keywords, resolve_published_at, strip_html
+from . import BROWSER_HEADERS, ScraperError, content_matches_keywords, raise_scrape_failure, resolve_published_at, strip_html
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +73,9 @@ def scrape() -> list[dict]:
     with httpx.Client(headers=BROWSER_HEADERS, follow_redirects=True) as client:
         html = _fetch(client, _SEARCH_URL)
         if not html:
-            logger.warning("AsiaOne: listing fetch failed — skipping run")
-            return results
+            # Raise instead of returning [] — a dead source must not look
+            # like "no Yishun news" (see scrapers.raise_scrape_failure).
+            raise ScraperError(f"{SOURCE_NAME}: fetch failed")
 
         candidates = _parse_listing(html)
         logger.debug("AsiaOne: %d candidate links", len(candidates))

@@ -7,11 +7,16 @@ Those scrapers predate the Source protocol: each exposes a bare
 duplicate a near-identical wrapper per source, this adapter maps that shape to
 `Candidate` and is instantiated once per scraper in this package's `__init__`.
 
-Known limitation (shared with msm/cna.py): the legacy scrapers catch their own
-exceptions and log+return `[]` instead of raising, so this adapter cannot
-distinguish "the source blocked us" from "no Yishun items in the feed right
-now" — both surface as an empty fetch with status='ok'. Making the scrapers
-raise SourceBlockedError/SourceUnavailableError is tracked in issue #23.
+The scrapers now RAISE on a source-level failure (`ScraperError` /
+`ScraperBlocked`) instead of logging and returning `[]`, so this adapter can
+tell "the source is broken or blocking us" from "no Yishun items right now" and
+map it onto the Source protocol's SourceBlockedError / SourceUnavailableError.
+FallbackLadder and the run report already act on those.
+
+That distinction is not academic: Stomp's search endpoint moved, every run
+logged "skipping run" and returned zero, and nothing surfaced it until someone
+looked. Per-ARTICLE failures still degrade quietly (one bad article must not
+kill a run) — only source-level failures raise.
 
 `published_at` is passed through untouched. A source that cannot supply a date
 yields None, and RecencyFilter (§5.1) routes it to review rather than dropping
@@ -22,7 +27,12 @@ import logging
 from datetime import date
 from typing import Callable
 
-from ingestion.contracts import Candidate
+from ingestion.contracts import (
+    Candidate,
+    SourceBlockedError,
+    SourceUnavailableError,
+)
+from scrapers import ScraperBlocked, ScraperError
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +60,21 @@ class LegacyScraperSource:
         `since` is accepted for protocol conformance but unused — these scrapers
         poll a current feed and have no date-range query. RecencyFilter (§5.1)
         applies the real window downstream.
+
+        Raises SourceBlockedError / SourceUnavailableError per the Source
+        protocol; an empty list now genuinely means "no Yishun items", not
+        "something broke and we swallowed it".
         """
-        items = self._scrape()
+        try:
+            items = self._scrape()
+        except ScraperBlocked as exc:
+            raise SourceBlockedError(f"{self.name}: {exc}") from exc
+        except ScraperError as exc:
+            raise SourceUnavailableError(f"{self.name}: {exc}") from exc
+        except Exception as exc:
+            # A scraper that fails in a way it didn't classify is still a source
+            # failure — surface it rather than reporting a silent empty run.
+            raise SourceUnavailableError(f"{self.name}: {type(exc).__name__}: {exc}") from exc
 
         candidates: list[Candidate] = []
         for item in items:

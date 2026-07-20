@@ -40,6 +40,45 @@ BROWSER_HEADERS = {
 }
 
 
+# ── Failure signalling ───────────────────────────────────────────────────────
+# The scrapers used to catch everything and return [], so a dead source was
+# indistinguishable from "no Yishun news today". Stomp proved the cost: its
+# search endpoint had moved, every run logged "skipping run" and returned zero,
+# and nothing ever surfaced it.
+#
+# They now raise. scrape_all() already wraps each scraper in try/except, so the
+# best-effort legacy path is unchanged; ingestion's Source adapters translate
+# these into SourceBlockedError / SourceUnavailableError, which FallbackLadder
+# and the run report already understand.
+
+class ScraperError(Exception):
+    """A scraper could not complete its run (transport, HTTP, or parse failure)."""
+
+
+class ScraperBlocked(ScraperError):
+    """Bot-detection or rate-limiting — back off rather than retry immediately."""
+
+
+_BLOCK_MARKERS = (
+    "403", "429", "forbidden", "too many requests", "captcha", "recaptcha",
+    "unusual traffic", "/sorry/", "automated queries", "not a robot",
+)
+
+
+def raise_scrape_failure(source: str, exc: Exception) -> None:
+    """
+    Re-raise a scraper's internal failure as a typed error.
+
+    Classifies bot-detection/rate-limit as ScraperBlocked so the adapter can map
+    it to SourceBlockedError; everything else is a transient ScraperError.
+    Always raises — never returns.
+    """
+    blob = f"{type(exc).__name__}: {exc}".lower()
+    if any(marker in blob for marker in _BLOCK_MARKERS):
+        raise ScraperBlocked(f"{source}: {exc}") from exc
+    raise ScraperError(f"{source}: {exc}") from exc
+
+
 # ── Keyword matching ─────────────────────────────────────────────────────────
 
 def content_matches_keywords(text: str) -> bool:
