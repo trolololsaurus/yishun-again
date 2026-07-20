@@ -199,6 +199,41 @@ for real breakage. The `Jom` seed row also still sat in `sources`.
 **Fixed:** job removed, remaining `jom` references cleared from `MSM_DOMAINS` lists
 and `scrape_discovery`, seed row deleted in migration 011.
 
+### A10 — `source_reputation` still cannot populate: `training_signals.source_url` is never written 🔴
+Found immediately after 011 landed. `rebuild_source_reputation()` (A4's fix) reads
+`training_signals.source_url` — and **all 130 rows have it NULL**, so the rebuild scores
+zero domains. The ten War Room routes that insert training signals write
+`incident_id`/`action`/`decision`/`operator_changes` but never `source_url` or `queue_id`
+(those columns arrived with migration 006 for the ingestion-era schema and no route was
+updated). So A4 fixed the writer, but the writer has no input: **the loop is still open.**
+**Fix:** populate `queue_id`, `source_url`, `source_type`, `proposed_*` on the four
+source-quality routes (`approve`, `reject`, `confirm-update`, `backfill-bulk`).
+**Related guard shipped:** `MIN_DOMAIN_OBSERVATIONS = 10` — trust stays at the neutral
+0.500 until a domain has ten verdicts. Without it, 3 approvals and 0 rejections scores
+0.800, clears the `TRUST_BOOST_THRESHOLD`, and buys a +0.10 confidence nudge that can
+push a 0.86 draft over the 0.95 auto-publish gate. Rejections are structurally scarcer
+than approvals (a rejected draft has no `incident_id` to trace a domain through), so
+early data skews positive by construction.
+
+### A11 — bulk approvals inflate the agreement rate ✅
+`backfill-bulk` approves many cards in one click, writing one `training_signals` row per
+card with no `operator_changes` — indistinguishable from a considered per-item approval.
+`learning_snapshots` therefore counts them as "operator agreed, unchanged." The first real
+snapshot read `learning` at +36.8pp (0.414 → 0.782, n=101), with `dagger` at **100%
+agreement over 53 samples** — almost certainly composition change (a bulk-backfill window
+vs a review window), not model improvement.
+**Fixed, two parts.** (1) `backfill-bulk` now writes `operator_changes: {bulk: true}` on
+both paths and `_window_metrics` excludes those rows. (2) Pre-marker rows are
+unrecoverable, so the verdict refuses to guess: when ≥75% of decisions are unchanged
+approvals **and** none are identifiably bulk (`UNMARKED_BULK_SUSPICION`), it returns
+`insufficient_data` with the reason instead of the flattering reading. Self-clearing once
+marked rows appear. Verified against the live archive — now returns `insufficient_data`
+rather than the `learning +36.8%` it previously claimed.
+Also fixed alongside: rows with no classification were scored as 0%-agreement in
+`per_category`, creating a phantom `unknown` bucket (n=21) that dragged the breakdown down.
+They are unclassifiable, not disagreements — now counted separately in
+`per_category._meta.unclassified`.
+
 ### Still open from this sweep
 - **A6 — ephemeral budget file** 🔴 `ingestion/stage1_daily_usage.json` and
   `classifiers/calibration_log.json` live on Cloud Run's ephemeral disk and reset on

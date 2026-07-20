@@ -144,8 +144,14 @@ export async function POST(
 
   await supabase.from('training_signals').insert({
     incident_id:             targetId,
+    queue_id:                id,
     action,
     decision:                action === 'edit_approve' ? 'approve_with_edits' : 'approve',
+    source_url:              item.source_url,
+    source_name:             rc.source_name as string | undefined,
+    source_type:             item.source_type,
+    proposed_classification: item.proposed_classification,
+    proposed_severity:       item.proposed_severity,
     original_draft:          item.proposed_summary,
     edited_draft:            updatedSummary || null,
     agent_confidence_was:    item.agent_confidence,

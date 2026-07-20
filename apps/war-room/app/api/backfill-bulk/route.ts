@@ -82,14 +82,27 @@ export async function POST(request: Request) {
 
     // Log training signals (fire-and-forget — don't fail the bulk op on signal errors)
     for (const item of queue) {
+      const rc = (item.raw_content ?? {}) as Record<string, unknown>
       supabase.from('training_signals').insert({
         incident_id:             null,
+        queue_id:                item.id,
         action:                  'reject',
         decision:                'reject',
+        source_url:              item.source_url,
+        source_name:             rc.source_name as string | undefined,
+        source_type:             item.source_type,
+        proposed_classification: item.proposed_classification,
+        proposed_severity:       item.proposed_severity,
         reject_reason:           'noise',
         original_draft:          item.proposed_summary,
         original_classification: item.proposed_classification,
         original_severity:       item.proposed_severity,
+        // QA A11 — mark bulk decisions. One click over N cards is not N verdicts,
+        // and ops/learning_monitor.py excludes these from the agreement rate.
+        // Without the marker a bulk-heavy window always outscores a window of
+        // genuine review, and the "is the model learning?" metric measures
+        // workflow rather than model quality.
+        operator_changes:        { bulk: true },
         agent_confidence_was:    item.agent_confidence,
       }).then(() => {}, () => {})
     }
@@ -184,11 +197,18 @@ export async function POST(request: Request) {
     // Log training signal (fire-and-forget)
     supabase.from('training_signals').insert({
       incident_id:             newIncident.id,
+      queue_id:                item.id,
       action:                  'approve',
       decision:                'approve',
+      source_url:              item.source_url,
+      source_name:             rc.source_name as string | undefined,
+      source_type:             item.source_type,
+      proposed_classification: item.proposed_classification,
+      proposed_severity:       item.proposed_severity,
       original_draft:          item.proposed_summary,
       original_classification: item.proposed_classification,
       original_severity:       item.proposed_severity,
+      operator_changes:        { bulk: true },   // QA A11 — see the reject path above
       agent_confidence_was:    item.agent_confidence,
     }).then(() => {}, () => {})
 
