@@ -12,6 +12,7 @@
 | 1.6 | June 2026 | Developing story lifecycle (source roles, 180-day timeout), pattern detection agent, people_profiles schema, autonomy graduation tracker, dismiss reason taxonomy, recalibration system |
 | 1.7 | June 2026 | UI overhaul (one-page layout, game HUD, typography scale), classification display renames, death counter removed, hero incidents inserted, backfill agent built, geocoding agent, link validator, ISR revalidation, Chaos Index renamed, tech debt log |
 | 1.8 | June 2026 | Backfill scope expanded 1980–2025, Wikipedia promoted to primary discovery source, phased Google News batches, EDMW signal in backfill from 2015+, Reddit explicitly out of backfill scope, groq_budget.py added, wikipedia_discovery.py added, scrapers inventory table, pre-backfill checklist, backfill_agent.py year-range refactor documented |
+| 1.9.1 | July 2026 | **Stage 1 migrated Groq → Gemini** (`gemini-3.1-flash-lite`); Groq removed entirely, `groq_budget.py` deleted for `filters/stage1_quota.py` (RPM/RPD, not TPM) — §4.2, §4.8. **Adapter port complete:** `get_enabled_sources()` went from 2 → **14** live sources (all 13 non-signal scrapers + Google News RSS); gated on `published_at`, so 9 scrapers gained date extraction (`scrapers.resolve_published_at` for the HTML ones). **Scrapers now raise** `ScraperError`/`ScraperBlocked` instead of returning `[]` — a dead source no longer looks like "no news" (Stomp had been silently dead: its search endpoint moved to `www.stomp.sg`). **Source allowlist** (`classifiers/source_allowlist.py`) checks every `source_url` against the `sources` table: signal removed (guardrail #2), unapproved kept-and-flagged; table grew 17 → 43 with citation-only domains. **Multi-source fixes:** backfills no longer collapse to one `source_url`, and Stage 2 now writes from *every* source report, not just the primary. Stage 2 slug year is stamped from `incident_date` instead of guessed. Feed sorts newest-first (`is_developing` no longer floats stale stories). |
 | 1.9 | June 2026 | **Forward-looking ingestion architecture (Option B):** new §4.9 ingestion layer (trigger-agnostic `run_ingestion_pass()` entrypoint, pluggable Source interface, **SG MSM primary + Google News corroboration**, RecencyFilter, FallbackLadder, IngestionReport) — detailed design in `docs/INGESTION_DESIGN.md`. **Learning Loop** (`docs/LEARNING_LOOP.md`): Phase-1 contextual learning in scope (Futurist agent reads `source_reputation`+`training_signals`, steers frozen models; agent accumulates DATA never weights); Phase-2 graduated autonomy + Phase-3 LoRA roadmapped not built; permanent human-in-the-loop, crime/named-individual content never auto-publishes. Three-phase scope: Cold Start (1980–2023, Historical agent enriches the hand-built archive), Warm Start (2024–Jun 2026 litmus test), Forward (daily live). New §3.7 `pipeline_state`+`pipeline_run_history` tables (watermark store). Corrected §11.2 trigger model (Cloud Scheduler→HTTP replaces broken in-process APScheduler under min-instances 0). §4.0b reconciliation note (spec-vs-filesystem drift documented). Manual historical backfill 2008–2025 completed; `docs/CONSOLIDATION_RULES.md` governs it. Data-quality audit pass; 3 wrong dates corrected. CULTURE content type (`custom`/`CULTURE`/🌐) added. |
 
 ---
@@ -47,7 +48,7 @@ yishun-again/
 ├── packages/
 │   ├── agents/                 # Python agent pipeline (FastAPI)
 │   │   ├── scrapers/           # Per-source scraping agents
-│   │   ├── filters/            # Stage 1 (Groq) + Stage 2 (Claude) filters
+│   │   ├── filters/            # Stage 1 (Gemini) + Stage 2 (Claude) filters
 │   │   ├── classifiers/        # Classification + severity scoring
 │   │   ├── writers/            # Incident draft generation
 │   │   ├── art/                # Pixel art prompt generation + Modal.run calls
@@ -78,7 +79,7 @@ yishun-again/
 | Admin auth | Cloudflare Access | Free tier | Zero-trust, service token |
 | Backend | FastAPI | 0.110.x | Python 3.11+ |
 | Agent hosting | Google Cloud Run | — | Single shared-cpu-1x machine to start |
-| Stage 1 filter | Groq API | — | llama-3.1-8b-instant model |
+| Stage 1 filter | Gemini API | — | `gemini-3.1-flash-lite` (migrated from Groq, July 2026 — see §4.2) |
 | Stage 2 writer | Anthropic API | — | claude-haiku-4-5-20251001 default, claude-sonnet-4-6 for quality tasks |
 | Orchestrator | LangGraph | 0.4.0 | Python |
 | Image gen | Modal.run | — | SDXL + LoRA yishunagain_v1 (trained, 456.5MB on R2) |
@@ -160,7 +161,7 @@ INSERT INTO sources (name, url, type, scrape_interval_minutes, approved_by_opera
   ('CNA', 'https://www.channelnewsasia.com', 'msm', 60, true),
   ('The Straits Times', 'https://www.straitstimes.com', 'msm', 60, true),
   ('Mothership', 'https://mothership.sg', 'msm', 60, true),
-  ('Stomp', 'https://stomp.straitstimes.com', 'msm', 120, true),
+  ('Stomp', 'https://www.stomp.sg', 'msm', 120, true),   -- moved off stomp.straitstimes.com (July 2026)
   ('MustShareNews', 'https://mustsharenews.com', 'msm', 60, true),
   ('The Independent Singapore', 'https://theindependent.sg', 'msm', 60, true),
   -- Jom removed: SSL reliability issues + low Yishun incident relevance (arts/culture focus)
@@ -351,7 +352,11 @@ YISHUN_KEYWORDS = [
 - Berita Harian: RSS 404 — HTML scraper (`/singapura`)
 - Shin Min, Tamil Murasu: no public RSS — HTML scrapers on main page
 - Jom: **DROPPED** — SSL handshake issues + arts/culture focus, low Yishun incident probability
-- Groq Stage 1 model: `llama-3.1-8b-instant` (replaces `llama3-8b-8192` which Groq decommissioned)
+- Stage 1 model: `gemini-3.1-flash-lite` (Gemini API). Groq history: `llama3-8b-8192`
+  → `llama-3.1-8b-instant` → `openai/gpt-oss-20b` → **migrated off Groq entirely in
+  July 2026** after Developer-tier signups were suspended indefinitely and the 6k TPM
+  free tier dropped 33% of a measured backfill pass (218 of 656 candidates) to 429s.
+  Stage 1 is a filter, so a dropped candidate is an invisible false negative.
 - All multilingual scrapers pre-filter in native script, translate via Haiku ONLY on keyword match
 
 **Reddit:** Use Reddit JSON API (no auth required for public subreddits):
@@ -368,7 +373,17 @@ https://www.reddit.com/r/singapore/search.json?q=yishun&sort=new&limit=25
 
 > 🔧 **v1.9 RECONCILIATION NOTE — this table has drifted from the filesystem. Verify against
 > real files before trusting it.** Confirmed deltas as of v1.9:
-> - `groq_budget.py` is marked "NOT YET BUILT" below but **exists** at `scrapers/groq_budget.py`.
+> - `groq_budget.py` was marked "NOT YET BUILT" below, was then built at
+>   `scrapers/groq_budget.py`, and has since been **deleted** by the July-2026 Gemini
+>   migration. Its replacement is `filters/stage1_quota.py` — the binding limit moved
+>   from Groq's TPM to Gemini's RPM/RPD, so it counts **requests**, not tokens.
+> - **"Live pipeline" in the table below means "a scraper exists", NOT "the orchestrator
+>   calls it".** `run_ingestion_pass()` only runs what `ingestion/sources/get_enabled_sources()`
+>   registers. As of July 2026 that is all 13 non-signal scrapers **plus Google News RSS**
+>   (which has no row in this table and no `sources` seed row, yet supplied 656 of 657
+>   candidates in a measured backfill). EDMW is the only scraper still unregistered.
+> - MustShareNews, The Independent and Yahoo are listed below as "HTML scraper" but have
+>   always used **feedparser** — they are RSS-backed.
 > - `wikipedia_discovery.py` is marked "NOT YET BUILT" but was **never built as a standalone
 >   file**; Wikipedia discovery logic lives **inline** in `backfill_agent.py` (`_scrape_wikipedia`).
 > - `scrape_agent.py` (named in §4.1) **does not exist**; the per-source `scrape_<source>.py`
@@ -388,10 +403,10 @@ https://www.reddit.com/r/singapore/search.json?q=yishun&sort=new&limit=25
 | `scrape_mothership.py` | Mothership RSS scraper | Live pipeline | RSS-first |
 | `scrape_straitstimes.py` | ST RSS scraper | Live pipeline | RSS-first |
 | `scrape_asiaone.py` | AsiaOne HTML scraper | Live pipeline | No public RSS — `/singapore` listing page |
-| `scrape_stomp.py` | Stomp HTML scraper | Live pipeline | |
-| `scrape_mustsharenews.py` | MustShareNews HTML scraper | Live pipeline | |
-| `scrape_theindependent.py` | The Independent SG HTML scraper | Live pipeline | |
-| `scrape_yahoo.py` | Yahoo News SG HTML scraper | Live pipeline | |
+| `scrape_stomp.py` | Stomp HTML scraper | Live + registered | Moved to `www.stomp.sg` (WordPress `?s=` search). The old `stomp.straitstimes.com/search?q=` 404'd, so it returned zero silently for weeks. |
+| `scrape_mustsharenews.py` | MustShareNews **RSS** scraper | Live + registered | `/feed/` — RSS, not HTML |
+| `scrape_theindependent.py` | The Independent SG **RSS** scraper | Live + registered | `/feed/` — RSS, not HTML |
+| `scrape_yahoo.py` | Yahoo News SG **RSS** scraper | Live + registered | `/rss/` — RSS, not HTML |
 | `scrape_zaobao.py` | Lianhe Zaobao HTML scraper | Live pipeline | `/news/singapore` — multilingual, keyword pre-filter in Chinese |
 | `scrape_beritaharian.py` | Berita Harian HTML scraper | Live pipeline | `/singapura` — Malay, keyword pre-filter |
 | `scrape_shinmin.py` | Shin Min Daily News HTML scraper | Live pipeline | Multilingual |
@@ -400,7 +415,7 @@ https://www.reddit.com/r/singapore/search.json?q=yishun&sort=new&limit=25
 | `scrape_edmw.py` | HWZ EDMW HTML scraper | Live pipeline + backfill signal (2015+) | Thread titles only. Signal, never source. |
 | `scrape_discovery.py` | Source discovery agent | Live pipeline (monthly) | Runs first Monday of month. Finds new source candidates. |
 | `wikipedia_discovery.py` | Wikipedia discovery agent | Backfill only | **NOT YET BUILT.** See §4.7. Bypasses Stage 1. |
-| `groq_budget.py` | Groq TPD token counter | Backfill utility | **NOT YET BUILT.** See §4.8. |
+| ~~`groq_budget.py`~~ | Groq TPD token counter | **DELETED** | Removed by the July-2026 Gemini migration. Replaced by `filters/stage1_quota.py`, which counts requests (RPM/RPD), not tokens. |
 
 **Confirmed absent (correctly):** `scrape_jom.py` — dropped in v1.4 (SSL issues + low Yishun relevance). `.pyc` in `__pycache__` is a harmless artifact from before removal.
 
@@ -413,12 +428,27 @@ EDMW revised treatment (three tiers):
 
 EDMW content is never quoted or attributed directly. The 👎 badge signals to readers that corroboration is thin.
 
-### 4.2 Stage 1 Filter — Groq
+### 4.2 Stage 1 Filter — Gemini
 
 **File:** `packages/agents/filters/stage1_filter.py`
 
+> **Migrated off Groq, July 2026.** Groq suspended Developer-tier signups
+> indefinitely, leaving Stage 1 on a 6k TPM free tier that dropped **218 of 656
+> candidates (33%) to 429s** in a measured backfill pass. Stage 1 is a *filter*,
+> so a dropped candidate is an invisible false negative that permanently loses an
+> incident. Groq was removed rather than kept as a fallback: its own ~667-request
+> daily ceiling could not absorb even one pass.
+>
+> The prompt, override keywords and the 0.4 threshold are **byte-identical** to
+> the Groq era — this was a provider swap, not a prompt rewrite. The binding
+> constraint moved from **TPM to RPM/RPD**, so `scrapers/groq_budget.py` was
+> replaced by `filters/stage1_quota.py`, which counts requests. Gemini returns 429
+> for three unrelated conditions (RPM, RPD, billing) and only RPM clears with
+> backoff, so they are classified separately — see `_is_rpd_429` / `_is_billing_429`.
+> Env: `GEMINI_API_KEY`, `STAGE1_MODEL`, `STAGE1_RPM`, `STAGE1_RPD`.
+
 ```python
-# Model: llama-3.1-8b-instant via Groq API
+# Model: gemini-3.1-flash-lite via Gemini API
 # Purpose: Fast, free noise rejection
 # Target rejection rate: 60-70% of raw scrape volume
 # Pass threshold: confidence >= 0.4
@@ -775,9 +805,18 @@ On incident detail page `/incidents/[slug]`:
 
 ---
 
-### 4.8 Groq Budget Middleware (v1.8 — new)
+### 4.8 Groq Budget Middleware (v1.8 — SUPERSEDED, July 2026)
 
-**File:** `packages/agents/scrapers/groq_budget.py`
+> ⚠️ **Historical.** This section describes the Groq era and is kept as a record.
+> `scrapers/groq_budget.py` has been **deleted**; Stage 1 runs on Gemini (§4.2).
+> Its replacement is **`filters/stage1_quota.py`**, which guards
+> **requests** rather than tokens because Gemini binds on RPM/RPD, not TPM:
+> `Stage1RpmThrottle` (rolling 60s window, `STAGE1_RPM`) and `Stage1DailyQuota`
+> (daily request ceiling, `STAGE1_RPD`, persisted per SGT day by
+> `ingestion/budget.py`). RPD and billing 429s raise `Stage1HaltError` and stop
+> the pass — unlike RPM, they do not clear with backoff.
+
+**File:** ~~`packages/agents/scrapers/groq_budget.py`~~ (deleted)
 
 Tracks cumulative Groq token usage within a single backfill session. Prevents mid-run failures from hitting the 500k TPD ceiling.
 
@@ -848,7 +887,7 @@ nothing when `dry_run=True`.
    ignore date operators and return a relevance-ranked multi-year grab-bag)
 4. **Deduplicator** — reuse existing `check_duplicate(url)` (corroboration.py) against
    `war_room_queue` + `incidents` by canonical URL; abort pass as DEGRADED on infra failure
-5. **Stage 1 (Groq, budget-guarded via §4.8) → Stage 2 (Claude)** → draft
+5. **Stage 1 (Gemini, quota-guarded via `filters/stage1_quota.py`) → Stage 2 (Claude)** → draft
 6. **Consolidation routing (shared module)** — `consolidation.check()` decides **new** vs.
    **update** (enrich an existing card's `source_timeline`, not just tag a link) vs.
    **phenomenon_member** (umbrella hub + sourced member, per CONSOLIDATION_RULES.md); duplicate
@@ -898,7 +937,7 @@ re-attempts the same window. A zero-queue pass is only "healthy-quiet" if every 
 NORMAL; a zero-queue pass caused by a block is DEGRADED and says so. (INGESTION_DESIGN.md §6–7.)
 
 **Corroboration & budget.** Honours §4.4 (min 1 MSM/Reddit source to auto-publish) and §4.8
-(Groq budget middleware wraps every Stage 1 call). No new corroboration logic.
+(`filters/stage1_quota.py` wraps every Stage 1 call — RPM throttle + daily request ceiling). No new corroboration logic.
 
 **Explicitly deferred (anti-scope-creep, INGESTION_DESIGN.md §9):** the trigger infrastructure
 itself (§11.2 — separate task), fuzzy/semantic dedup (URL-exact only in v1), additional source
@@ -1759,8 +1798,11 @@ SUPABASE_SECRET_KEY=   # MASTER KEY — never expose to frontend, never commit t
 # Anthropic
 ANTHROPIC_API_KEY=
 
-# Groq
-GROQ_API_KEY=
+# Gemini (Stage 1 filter) — migrated off Groq July 2026, see §4.2
+GEMINI_API_KEY=
+STAGE1_MODEL=gemini-3.1-flash-lite
+STAGE1_RPM=30
+STAGE1_RPD=1500
 
 # MapLibre + OpenFreeMap (no token needed)
 NEXT_PUBLIC_MAPLIBRE_STYLE=https://tiles.openfreemap.org/styles/liberty
@@ -2182,7 +2224,7 @@ War Room analytics page shows graduation status per category. Operator dismiss i
 Step 1:  ✅ Supabase schema — all tables, indexes, RLS policies
 Step 2:  ✅ Cloudflare R2 + domain (assets.yishunagain.com live)
 Step 3:  ✅ FastAPI on Cloud Run — health check live
-Step 4:  ✅ Stage 1 filter (Groq llama-3.1-8b-instant)
+Step 4:  ✅ Stage 1 filter (Groq llama-3.1-8b-instant — since migrated to Gemini, §4.2)
 Step 5:  ✅ Stage 2 writer (Claude Haiku + Sonnet)
 Step 6:  ✅ All 14 scrapers built and tested
 Step 7:  ✅ War Room CMS — 4 pages + /health tab
@@ -2232,7 +2274,7 @@ v1.8 refactor: ⏳ Backfill scope expansion, Wikipedia discovery agent,
 | Backfill intra-batch dedup untested live | Medium | ⏳ Pending | Dry-run confirmed working. Needs live test WITH hero incidents in DB. |
 | REVALIDATE_SECRET not in Vercel | Medium | ✅ Fixed | Added to Vercel env vars |
 | Map tiles style clashes with dark palette | Medium | Tomorrow | Replacing map entirely |
-| Groq free tier (500k TPD) | Medium | Managed | groq_budget.py (to be built) enforces 450k soft / 500k hard ceiling |
+| ~~Groq free tier (500k TPD)~~ | — | **Resolved** | Migrated off Groq (§4.2). Gemini's free tier binds on RPM/RPD; `filters/stage1_quota.py` throttles requests and halts on RPD/billing 429s. |
 | Hero incidents not in DB | High | ⚠️ Blocking backfill | DB wiped clean. Re-insert migration 005 before any backfill run. |
 | backfill_agent.py single-year only | High | ⚠️ Blocks year-range runs | --year YYYY needs refactor to --year-from/--year-to |
 | wikipedia_discovery.py not built | High | ⚠️ Blocks Wikipedia sweep | Build §4.7 or verify --year wiki mode in backfill_agent.py is functional |
@@ -2339,7 +2381,14 @@ python -m scrapers.backfill_agent --year-from 2015 --year-to 2015 --dry-run --li
 
 ---
 
-### Groq TPD Ceiling
+### Groq TPD Ceiling (SUPERSEDED — Groq era)
+
+> ⚠️ **Historical.** Stage 1 runs on Gemini (§4.2). The limit is no longer a
+> daily *token* ceiling but **requests**: `STAGE1_RPM` (default 30) and
+> `STAGE1_RPD` (default 1500), enforced by `filters/stage1_quota.py`. Those
+> defaults are advisory — Google publishes no per-model limits and the real cap
+> varies by project, so an actual 429 is ground truth.
+
 
 ```
 Daily limit:       500,000 tokens (Groq free tier)
