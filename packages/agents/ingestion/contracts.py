@@ -32,7 +32,12 @@ class Candidate:
     content: str                # summary / snippet (HTML stripped)
     url: str                    # CANONICAL article url (redirects resolved)
     source_name: str            # human-readable, e.g. "Channel NewsAsia"
-    source_type: str            # 'msm' | 'reddit' | 'edmw' | 'rss' ...
+    # CANONICAL vocabulary: 'msm' | 'reddit' | 'signal' | 'reference' | 'rss'.
+    # 'signal' (not 'edmw') is the forum/EDMW value — it is what the sources
+    # table CHECK allows and what scrape_edmw emits. Adapters normalise via
+    # classifiers.source_allowlist.canonical_source_type, so the legacy 'edmw'
+    # spelling never reaches downstream code (QA M14).
+    source_type: str
     published_at: date | None   # parsed publication date; None if unknowable
     discovered_via: str         # which Source produced this (e.g. 'google_news_rss')
 

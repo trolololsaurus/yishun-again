@@ -213,6 +213,35 @@ export function chaosDescriptor(score: number): string {
   return 'Apocalyptic'
 }
 
+/**
+ * Raw points at which the curve reaches ~63. Formerly this was the hard 100
+ * cap, which is what made the index saturate: a severity-5 dagger scores 15, so
+ * just 20 of them pegged a year at Apocalyptic permanently. 2026 hit 87 by July.
+ */
+export const CHAOS_SCALE = 300
+
+/**
+ * Chaos Index, 0-100.
+ *
+ * Per-incident points are unchanged (dagger x3.0, clown x1.5, heart x-1.0,
+ * multiplied by severity) — the same values Stage 2 stores as
+ * chaos_contribution. What changed is the curve.
+ *
+ * Old: `min(100, raw / 300 * 100)` — linear with a hard cliff. Because raw is a
+ * cumulative sum over the year, the score only ever climbed and stuck at 100
+ * once passed, so it measured "how much have we catalogued" more than "how
+ * chaotic was it".
+ *
+ * New: `100 * (1 - e^(-raw / CHAOS_SCALE))` — diminishing returns that approach
+ * 100 asymptotically and never actually reach it. Volume still counts, but each
+ * additional incident adds less, so a busy year reads Elevated/Critical instead
+ * of pegging. Apocalyptic (>=80) now needs raw ~483, roughly 32 severity-5
+ * daggers in one year, rather than 20.
+ *
+ * Note this index still reflects archive coverage as much as reality: thin
+ * historical years read Quiet because few incidents are catalogued, not because
+ * Yishun was calm.
+ */
 export function computeChaosScore(incidents: Array<{ classification: string; severity: number | null }>): number {
   const raw = incidents.reduce((sum, inc) => {
     const weight = inc.classification === 'dagger' ? 3.0
@@ -220,7 +249,9 @@ export function computeChaosScore(incidents: Array<{ classification: string; sev
                  : inc.classification === 'heart'  ? -1.0 : 0
     return sum + (inc.severity ?? 0) * weight   // QA M3: null/undefined severity → 0, not NaN
   }, 0)
-  return Math.min(100, Math.max(0, Math.round((raw / 300) * 100)))
+  // Hearts can drive raw negative; floor at 0 before the curve.
+  const positive = Math.max(0, raw)
+  return Math.max(0, Math.min(100, Math.round(100 * (1 - Math.exp(-positive / CHAOS_SCALE)))))
 }
 
 export function sanitiseSlug(raw: string | null | undefined): string {

@@ -219,12 +219,22 @@ invalid value:
 > pre-1990 years on the feed and chaos counts while the map — which used its own
 > regex — kept working, producing a confusing "only the map filters" bug.
 
-**Chaos Index formula** (`lib/utils.ts`):
+**Chaos Index formula** (`lib/utils.ts` — the only place the aggregate is
+computed; `/api/chaos` and the SSR homepage both call it):
 ```
-raw = Σ (severity × weight)
-  dagger ×2.0 · clown ×1.0 · heart ×−1.0 · custom/culture ×0
-score = clamp(round(raw / 300 × 100), 0, 100)
+raw   = Σ (severity × weight), floored at 0
+  dagger ×3.0 · clown ×1.5 · heart ×−1.0 · custom/culture ×0
+score = round(100 × (1 − e^(−raw / CHAOS_SCALE)))        CHAOS_SCALE = 300
 ```
+> Weights corrected July 2026 — this block previously said `dagger ×2.0 · clown
+> ×1.0`, which never matched the code (`utils.ts` and `stage2_writer.py` have
+> always used 3.0 / 1.5).
+>
+> Scoring rebalanced the same day. It was `clamp(round(raw / 300 × 100), 0, 100)`
+> — linear with a hard cliff, so raw 300 (about 20 severity-5 daggers) pegged a
+> year at 100 for good; 2026 read 87 by July. The curve now has diminishing
+> returns and approaches 100 without reaching it: raw 300 → 63, Apocalyptic
+> (≥80) needs raw ≈ 483. 2026 reads 58.
 Descriptors: `<20` Quiet · `<40` Simmering · `<60` Elevated · `<80` Critical ·
 `≥80` Apocalyptic.
 
