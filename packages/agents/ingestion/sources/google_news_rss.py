@@ -53,6 +53,11 @@ BLOCK_MARKERS = [
 PER_KEYWORD_DELAY = (4.0, 6.0)  # polite random delay between keyword queries (s)
 REQUEST_TIMEOUT = 20
 
+# Hard cap on redirect resolutions in one fetch. Steady state is ~50 (only
+# post-watermark entries are resolved), so this only binds on a cold start or a
+# watermark reset — the cases where an unbounded fetch would eat the whole pass.
+MAX_RESOLVES_PER_FETCH = 120
+
 
 def _classify_block(status: int | None, body_snippet: str) -> str | None:
     """Mirror smoke_test.py::_classify_block."""
@@ -121,16 +126,18 @@ class GoogleNewsRSSSource:
 
     def fetch(self, since: date | None) -> list[Candidate]:
         """
-        `since` is accepted for Source protocol conformance but not used to
-        narrow the query — Google News RSS date operators break the feed
-        (smoke-test-proven). RecencyFilter (§5.1) applies the real window
-        downstream.
+        `since` cannot narrow the QUERY — Google News RSS date operators break
+        the feed (smoke-test-proven) — but it does narrow how much work we do
+        locally. See the resolution-order note below.
 
         Issues one "yishun {keyword}" query per entry in YISHUN_KEYWORDS,
         with a polite random delay between queries.
         """
         candidates: list[Candidate] = []
         seen_urls: set[str] = set()
+        seen_raw: set[str] = set()
+        resolves = 0
+        skipped_stale = 0
 
         for i, keyword in enumerate(YISHUN_KEYWORDS):
             query = f"yishun {keyword}"
@@ -141,12 +148,46 @@ class GoogleNewsRSSSource:
                 if not raw_url:
                     continue
 
+                # The same article surfaces under several keywords. Dedup on the
+                # wrapper before resolving; identical wrappers are the common case.
+                if raw_url in seen_raw:
+                    continue
+                seen_raw.add(raw_url)
+
                 title = _entry_title(entry)
                 summary = strip_html(entry.get("summary", "") or entry.get("description", ""))
                 if not content_matches_keywords(f"{title} {summary}"):
                     continue
 
+                # ── Recency BEFORE redirect resolution ───────────────────────
+                # _resolve_redirect is a network round-trip per entry, and this
+                # feed returns ~650 entries of which ~50 are newer than the
+                # watermark. Resolving first meant ~600 HTTP calls whose results
+                # RecencyFilter discarded seconds later — that alone consumed the
+                # entire 900s pass budget and starved the sources queued behind
+                # this one. The RSS entry already carries its own date, so
+                # staleness is knowable for free.
+                #
+                # Dateless entries are NEVER skipped here: routing them to review
+                # rather than dropping them is deliberate (INGESTION_DESIGN §5.1),
+                # and a missing pubDate must not become a silent delete.
+                published_at = _entry_published_at(entry)
+                if since is not None and published_at is not None and published_at <= since:
+                    skipped_stale += 1
+                    continue
+
+                if resolves >= MAX_RESOLVES_PER_FETCH:
+                    # Safety valve, not an expected path: a watermark reset would
+                    # otherwise make one pass try to resolve the whole feed.
+                    logger.warning(
+                        "google_news_rss: hit MAX_RESOLVES_PER_FETCH=%d — "
+                        "%d candidate(s) left unresolved this pass",
+                        MAX_RESOLVES_PER_FETCH, len(feed.entries),
+                    )
+                    break
+
                 real_url = _resolve_redirect(raw_url)
+                resolves += 1
                 if real_url in seen_urls:
                     continue
                 seen_urls.add(real_url)
@@ -157,11 +198,19 @@ class GoogleNewsRSSSource:
                     url=real_url,
                     source_name=_gnews_source_name(entry),
                     source_type="rss",
-                    published_at=_entry_published_at(entry),
+                    published_at=published_at,
                     discovered_via="google_news_rss",
                 ))
+
+            if resolves >= MAX_RESOLVES_PER_FETCH:
+                break
 
             if i < len(YISHUN_KEYWORDS) - 1:
                 time.sleep(random.uniform(*PER_KEYWORD_DELAY))
 
+        logger.info(
+            "google_news_rss: %d candidate(s); %d resolved, %d stale entries skipped "
+            "before resolution",
+            len(candidates), resolves, skipped_stale,
+        )
         return candidates

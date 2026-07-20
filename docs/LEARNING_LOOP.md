@@ -39,6 +39,31 @@ North Star; **it is the guardrail that keeps autonomy from decaying into abdicat
 distinction — autonomy (human does only what needs a human) vs. abdication (no human, silent
 rot) — is the spine of everything below.
 
+> ### ⚠️ Operator override — July 2026 (recorded, not silently applied)
+>
+> The paragraph above says crime and named-individual content are reviewed "every time,
+> forever," and §3 lists them as permanently ineligible for auto-publish. **The operator has
+> deliberately overridden that.** Auto-publish (`ops/auto_publish.py`) is a literal
+> `agent_confidence >= 0.95` threshold with **no classification carve-out** — dagger content and
+> named individuals auto-publish like anything else when they clear the bar.
+>
+> This is the site owner's editorial call, taken with the tradeoff stated. It is written here
+> rather than quietly implemented, because a doc that contradicts the code is worse than either.
+>
+> **What the override does NOT touch.** The four hardcoded legal guardrails still hold, and the
+> confidence threshold cannot bypass them: ≥1 source URL, no `type='signal'` URL ever quoted,
+> political content forced to `confidence = 0` by Stage 2 (so it can never reach 0.95), and a
+> real `incident_date`. A draft failing any gate is **never rejected** — it waits for the
+> operator. The failure mode stays "a human looks at it".
+>
+> **The human loop itself is intact and still load-bearing**, which is what keeps this an
+> override rather than an abandonment of §0: every auto-publish writes a `training_signals` row
+> (`decided_by='agent'`), and an operator unpublishing an auto-published incident is the
+> correction signal `learning_snapshots.auto_publish_reverted` tracks. Rising reverts mean 0.95
+> was too low. Reverting the override is one env var: `AUTO_PUBLISH_CONFIDENCE=2.0`.
+>
+> See `docs/AUTONOMY.md` §2 for the full gate table.
+
 ### Build philosophy: towards utopia, not utopia on day one
 
 Every phase ships in its simplest *real* form, behind an interface that can grow toward the
@@ -120,6 +145,26 @@ an approval gate.**
 
 Domains/sources earn or lose standing based on operator outcomes. Read back each run to weight
 candidate confidence.
+
+> **Status: the write side was missing until July 2026 — the loop was open.**
+> `ingestion/learning.py` has always *read* this table and nudged candidate confidence by ±0.10
+> from `trust_score`. **Nothing ever wrote it.** Every domain therefore resolved to the 0.500
+> default, both thresholds (0.700 / 0.300) were unreachable, and the nudge was a permanent no-op.
+> The loop drawn closed in §5 below was, in code, a straight line ending in a table nobody filled.
+>
+> `ops/learning_monitor.rebuild_source_reputation()` now supplies the write side, recomputing
+> trust daily from operator verdicts with Laplace smoothing (Q-L2 resolved: simple ratio, smoothed):
+>
+> ```
+> trust = (approvals + 1) / (approvals + rejections + 2)
+> ```
+>
+> Smoothing means one rejection cannot send a new domain to zero, and the thresholds have to be
+> *earned* — roughly 5 clean approvals to clear 0.700. It is a full recompute rather than
+> incremental counters: idempotent, self-healing after a missed run, and immune to the
+> double-count-on-retry bug that incremental counters invite. Agent auto-approvals
+> (`decided_by='agent'`) are excluded — otherwise a domain could bootstrap its own reputation and
+> then use that reputation to clear the confidence bar.
 
 ```sql
 CREATE TABLE source_reputation (

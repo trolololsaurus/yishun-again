@@ -20,15 +20,10 @@ KNOWN v1 GAPS (flagged, not fixed here — see chat for detail):
     action='new'|'update'|'skip'. This orchestrator routes on `action`,
     per the build instruction to mirror pipeline.py's real
     new/update/skip semantics.
-  - action='skip' is handled defensively but is currently unreachable —
-    consolidation/check.py's implementation never returns it. Exact-URL
-    duplicates are caught earlier by dedup.is_duplicate.
   - signal_summary (learning.load_recent_signal_patterns) is loaded once
     per pass and threaded into the Stage 2 input dict as
-    "learning_context", but filters/stage2_writer.py's
-    _build_user_message() does not currently read that key — it has no
-    injection hook. The load-once wiring is in place per spec; consuming
-    it requires a small follow-up edit to stage2_writer.py.
+    "learning_context". CLOSED: stage2_writer._build_user_message() now
+    reads that key (stage2_writer.py:302).
   - edmw_signal_count is 1 for a signal candidate, else 0. Signal detection
     goes through classifiers.source_allowlist.is_signal_source, which accepts
     both vocabulary spellings AND falls back to a domain lookup — a plain
@@ -54,6 +49,24 @@ from ingestion.contracts import Candidate, IngestionReport, Source, SourceResult
 from orchestrator.herald_agent import check_milestones
 
 logger = logging.getLogger(__name__)
+
+
+def _log(activity, level: str, event: str, message: str,
+         source_name: str | None = None, **detail) -> None:
+    """
+    Forward one pipeline event to the ops activity log, if a run was supplied.
+
+    `activity` is optional so run_ingestion_pass keeps working standalone (tests,
+    CLI, dry runs) with no ops tables present. Wrapped because the orchestrator's
+    contract is that it never raises — an observability failure must not become
+    an ingestion failure.
+    """
+    if activity is None:
+        return
+    try:
+        activity.event(level, event, message, source_name=source_name, **detail)
+    except Exception as exc:                      # noqa: BLE001
+        logger.debug("activity logging failed (non-fatal): %s", exc)
 
 
 def _classify_error(exc: Exception) -> str | None:
@@ -82,6 +95,7 @@ def run_ingestion_pass(
     dry_run: bool = False,
     max_duration_seconds: int = 1200,
     circuit_breaker_n: int = 5,
+    activity=None,
 ) -> IngestionReport:
     started_at = now
     per_source: list[SourceResult] = []
@@ -127,6 +141,22 @@ def run_ingestion_pass(
             if not source.enabled:
                 continue
 
+            # Safety: deadline check BEFORE the fetch, not only inside the
+            # candidate loop. Without this a pass could not abort between
+            # sources, so an over-running pass kept starting new fetches (each
+            # of which can itself sleep for a minute-plus) long after its budget
+            # was gone. Remaining sources are recorded as unprocessed rather
+            # than silently dropped.
+            if datetime.now(timezone.utc) >= deadline:
+                abort_pass = (
+                    f"aborted before '{source.name}': max_duration_seconds="
+                    f"{max_duration_seconds} reached"
+                )
+                degraded = True
+                _log(activity, "anomaly", "pass_deadline",
+                     f"pass deadline hit before fetching {source.name}", source.name)
+                break
+
             if budget_halted:
                 # Honest accounting (§7) — this source was not processed at
                 # all this pass. Watermark is left untouched (no
@@ -141,8 +171,14 @@ def run_ingestion_pass(
 
             watermark = state_store.get(source.name, client=client)
 
+            # Don't spend the retry backoff if there isn't time left to use the
+            # result anyway.
+            seconds_left = (deadline - datetime.now(timezone.utc)).total_seconds()
+            backoff = fallback.BACKOFF_SECONDS if seconds_left > fallback.BACKOFF_SECONDS * 2 else 0
+
             candidates, result = fallback.run_with_fallback(
                 source.name, lambda: source.fetch(since=watermark),
+                backoff_seconds=backoff,
             )
 
             if candidates is None:
@@ -150,6 +186,14 @@ def run_ingestion_pass(
                 # leave watermark UNCHANGED (§6 invariant).
                 per_source.append(result)
                 degraded = True
+                # Req #8 — a block is never silent. This is the row the
+                # supervisor and maintenance agents read to decide whether a
+                # source is having a bad day or has been dead for a week.
+                _log(activity,
+                     "anomaly" if result.status == "blocked" else "warning",
+                     f"source_{result.status}",
+                     f"{source.name}: {result.reason or result.status}",
+                     source.name, reason=result.reason, status=result.status)
                 if not dry_run:
                     state_store.update(source.name, watermark, result.status, result.reason, client=client)
                 continue
@@ -166,7 +210,23 @@ def run_ingestion_pass(
             for candidate in fresh + dateless:
                 is_dateless = candidate.published_at is None
 
-                # ── seen_urls + dedup FIRST (§5.2, in-memory before DB) ──────
+                # ── Safety: max-duration timeout ─────────────────────────────
+                # Checked before dedup, not after. A pass where every candidate
+                # is a duplicate `continue`d past the old check entirely and so
+                # could never abort — it just made DB round-trips until the
+                # source list ran out, which is the exact shape of an
+                # accidentally-unbounded pass.
+                if datetime.now(timezone.utc) >= deadline:
+                    abort_pass = (
+                        f"aborted: max_duration_seconds={max_duration_seconds} reached "
+                        f"— source '{source.name}' watermark not advanced"
+                    )
+                    degraded = True
+                    _log(activity, "anomaly", "pass_deadline",
+                         f"pass deadline hit mid-source {source.name}", source.name)
+                    break
+
+                # ── seen_urls + dedup (§5.2, in-memory before DB) ────────────
                 try:
                     is_dup = dedup.is_duplicate(candidate, client, seen_urls)
                 except dedup.InfraError as exc:
@@ -321,6 +381,8 @@ def run_ingestion_pass(
                               else "Stage 1 blocked by billing — operator action needed")
                     logger.warning("run_ingestion_pass: %s", exc)
                     notes.append(f"{source.name}: remaining candidates skipped — {reason}.")
+                    _log(activity, "anomaly", "stage1_halt", f"{reason} — pass halted",
+                         source.name, detail_reason=str(exc))
                     break
 
                 except Exception as exc:
@@ -337,12 +399,19 @@ def run_ingestion_pass(
                             )
                             degraded = True
                             logger.error("run_ingestion_pass: %s", abort_pass)
+                            _log(activity, "anomaly", "circuit_breaker",
+                                 f"{consecutive[err_class]} consecutive {err_class} failures — pass aborted",
+                                 source.name, error_class=err_class)
                             break
                     continue
 
             result.novel = novel_count
             result.queued = queued_count
             per_source.append(result)
+            _log(activity, "success", "source_ok",
+                 f"{source.name}: fetched={result.fetched} fresh={result.fresh} "
+                 f"novel={novel_count} queued={queued_count}",
+                 source.name, fetched=result.fetched, queued=queued_count)
 
             if not dry_run and not abort_pass:
                 state_store.update(source.name, max_published_at, "ok", client=client)

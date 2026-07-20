@@ -147,8 +147,19 @@ class Stage1RpmThrottle:
 
     WINDOW = 60.0   # rolling window width in seconds
 
+    # Absolute ceiling on one wait_if_needed() call. The rolling window prunes
+    # on its own, so in normal operation this is never reached — it exists
+    # because the loop below is the only unbounded `while True` on the hot path,
+    # and an unattended daily pass must not be able to hang on it.
+    MAX_WAIT_SECONDS = 90.0
+
     def __init__(self, rpm: int | None = None) -> None:
-        self._rpm = rpm if rpm is not None else RPM_LIMIT
+        rpm = rpm if rpm is not None else RPM_LIMIT
+        # A misconfigured STAGE1_RPM=0 made `len(window) < 0` permanently false,
+        # so the throttle slept in 0.1s steps forever — a real infinite loop
+        # reachable from an env var typo. Floor at 1: throttled to a crawl is
+        # recoverable, hung is not.
+        self._rpm = max(1, int(rpm))
         self._window: deque = deque()   # monotonic timestamps
 
     def _prune(self) -> None:
@@ -166,7 +177,15 @@ class Stage1RpmThrottle:
             self._prune()
             if len(self._window) < self._rpm:
                 return total_slept
+            if total_slept >= self.MAX_WAIT_SECONDS:
+                logger.warning(
+                    "Stage 1 RPM: waited %.1fs (cap %.0fs) and the window has not "
+                    "cleared — proceeding anyway; a 429 is recoverable, a hang is not.",
+                    total_slept, self.MAX_WAIT_SECONDS,
+                )
+                return total_slept
             sleep_for = max((self._window[0] + self.WINDOW) - time.monotonic() + 0.1, 0.1)
+            sleep_for = min(sleep_for, self.MAX_WAIT_SECONDS - total_slept)
             logger.info(
                 "Stage 1 RPM: %d/%d requests in window — sleeping %.1fs for headroom",
                 len(self._window), self._rpm, sleep_for,
