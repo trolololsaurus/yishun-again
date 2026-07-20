@@ -63,13 +63,14 @@ check("empty scrape returns []", LegacyScraperSource("x", lambda: []).fetch(sinc
 
 # ── the live registry ───────────────────────────────────────────────────────
 names = [s.name for s in srcmod.get_enabled_sources()]
-check("live registry has all 13 non-signal sources (Phases 1-2)",
+check("live registry has all 14 sources + Google News (Phases 1-3)",
       set(names) == {"cna", "mothership", "straits_times", "mustsharenews",
                      "the_independent", "yahoo", "asiaone", "stomp", "zaobao",
                      "shinmin", "berita_harian", "tamil_murasu",
-                     "google_news_rss", "reddit"})
-check("EDMW (signal) stays unregistered until guardrail #2 handling (Phase 3)",
-      "edmw" not in set(names))
+                     "google_news_rss", "reddit", "edmw"})
+check("EDMW is registered as a SIGNAL source (never a quoted source)",
+      any(s.name == "edmw" and s._source_type == "signal"
+          for s in srcmod.get_enabled_sources()))
 check("source names are unique (each keys its own pipeline_state watermark)",
       len(names) == len(set(names)))
 check("every registered source satisfies the Source protocol",

@@ -15,12 +15,14 @@ The search endpoint (403) is not used.
 import json
 import logging
 import sys
+import re
 import time
+from datetime import date
 
 import httpx
 from bs4 import BeautifulSoup
 
-from . import BROWSER_HEADERS, content_matches_keywords
+from . import BROWSER_HEADERS, content_matches_keywords, raise_scrape_failure
 
 logger = logging.getLogger(__name__)
 
@@ -90,11 +92,30 @@ def _parse_threads(html: str, debug: bool = False) -> list[dict]:
                 elif label == "views":
                     views = value
 
+        # Thread START date, read from the LISTING only — XenForo renders it as
+        # <li class="structItem-startDate"><time datetime="...ISO..."> in the row.
+        # This is thread metadata, the same class of data as the reply/view
+        # counts; the thread page is never fetched and post content is never
+        # read. Without a date the candidate is dateless: it would bypass the
+        # recency watermark and be re-processed by Stage 1/2 on every pass.
+        started_at = None
+        start_cell = row.find("li", class_="structItem-startDate")
+        time_tag = start_cell.find("time") if start_cell else None
+        stamp = time_tag.get("datetime") if time_tag else None
+        if stamp:
+            m = re.match(r"(\d{4})-(\d{2})-(\d{2})", stamp)
+            if m:
+                try:
+                    started_at = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                except ValueError:
+                    started_at = None
+
         threads.append({
-            "title":   title,
-            "url":     url,
-            "replies": replies,
-            "views":   views,
+            "title":      title,
+            "url":        url,
+            "replies":    replies,
+            "views":      views,
+            "started_at": started_at,
         })
 
     return threads
@@ -113,8 +134,10 @@ def scrape(debug: bool = False) -> list[dict]:
             resp = client.get(_FORUM_URL, timeout=_REQUEST_TIMEOUT)
             resp.raise_for_status()
         except Exception as exc:
+            # Raise rather than returning [] — a blocked or moved forum must not
+            # look like "no Yishun chatter". See scrapers.raise_scrape_failure.
             logger.error("EDMW fetch failed: %s", exc)
-            return results
+            raise_scrape_failure(SOURCE_NAME, exc)
 
         threads = _parse_threads(resp.text, debug=debug)
         logger.debug("EDMW: %d total threads before keyword filter", len(threads))
@@ -133,11 +156,12 @@ def scrape(debug: bool = False) -> list[dict]:
                 f"Views: {thread['views']}"
             )
             results.append({
-                "title":       thread["title"],
-                "content":     content,
-                "url":         thread["url"],
-                "source_name": SOURCE_NAME,
-                "source_type": SOURCE_TYPE,
+                "title":        thread["title"],
+                "content":      content,
+                "url":          thread["url"],
+                "source_name":  SOURCE_NAME,
+                "source_type":  SOURCE_TYPE,
+                "published_at": thread.get("started_at"),
             })
 
     logger.info("EDMW: %d Yishun thread signal(s)", len(results))
