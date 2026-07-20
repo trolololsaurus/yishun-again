@@ -177,6 +177,112 @@ export interface ScraperHealth {
   avg_duration_7d:   number | null
 }
 
+// ── Monthly orchestrator report ─────────────────────────────────────────────
+// Shape written by packages/agents/ops/monthly_report.py. Every section is
+// optional and carries `available`: a section whose table could not be read is
+// {available: false, reason}, which the page must render as "no data for this
+// period" rather than as zero — a failed query and a quiet month are not the
+// same fact.
+
+export interface ReportSection {
+  available?: boolean
+  reason?:    string
+}
+
+export interface MonthlyReportBody {
+  period?: {
+    start?: string; end?: string; days?: number
+    generated_at?: string; trigger?: string
+  }
+  ingestion?: ReportSection & {
+    passes?: number; total_queued?: number
+    degraded_passes?: number; degraded_rate?: number | null
+    per_source?: {
+      source: string; passes: number; fetched: number; fresh: number; novel: number
+      queued: number; blocked: number; unavailable: number; degraded: number
+      last_reason?: string | null
+    }[]
+    sources_blocked?: string[]
+  }
+  publishing?: ReportSection & {
+    published?: number; auto_published?: number; operator_approved?: number
+    auto_share?: number | null; split_available?: boolean
+    by_classification?: Record<string, number>
+    by_severity?: Record<string, number>
+    mean_severity?: number | null
+    recent?: {
+      title?: string; slug?: string; classification?: string
+      severity?: number; published_at?: string; auto?: boolean
+    }[]
+  }
+  operator?: ReportSection & {
+    by_action?: Record<string, number>
+    operator_decisions?: number; approve?: number; edit_approve?: number
+    reject?: number; unpublish?: number
+    agent_decisions?: number; reverted?: number
+    reviews_saved?: number; net_reviews_saved?: number
+    minutes_saved?: number; minutes_per_review?: number
+    autonomy_share?: number | null
+  }
+  learning?: ReportSection & {
+    captured?: boolean; snapshots?: number; captured_at?: string
+    sample_count?: number
+    agreement_rate?: number | null; agreement_delta?: number | null
+    mean_confidence?: number | null; confidence_delta?: number | null
+    edit_rate?: number | null; reject_rate?: number | null
+    auto_publish_count?: number; auto_publish_reverted?: number
+    verdict?: string
+    previous?: { captured_at?: string; agreement_rate?: number | null; verdict?: string } | null
+    agreement_vs_previous_month?: number | null
+  }
+  reliability?: ReportSection & {
+    runs?: number; runs_readable?: boolean
+    ok?: number; degraded?: number; failed?: number; running?: number
+    by_agent?: {
+      agent: string; runs: number; ok: number; degraded: number; failed: number
+      running: number; avg_duration_ms: number | null
+    }[]
+    events?: { error?: number; anomaly?: number }
+    top_events?: { event: string; level: string; count: number }[]
+  }
+  health?: ReportSection & {
+    checks?: number
+    components?: {
+      component: string; checks: number; worst_status: string
+      last_status: string | null; last_checked_at: string | null; message: string | null
+    }[]
+    worst_status?: string | null
+    cost_guard?: {
+      status?: string; checked_at?: string | null; message?: string | null
+      detail?: Record<string, unknown>
+    } | null
+  }
+  notifications?: ReportSection & {
+    total?: number; sent?: number
+    by_kind?: {
+      kind: string; total: number; sent: number; suppressed: number
+      failed: number; disabled: number; pending: number
+    }[]
+  }
+  previous_period?: {
+    start?: string; end?: string
+    published?: number | null; auto_published?: number | null
+    operator_decisions?: number | null; total_queued?: number | null; passes?: number | null
+  }
+  changes?: Record<string, number>
+  warnings?: string[]
+}
+
+export interface MonthlyReport {
+  id:           string
+  created_at:   string
+  period_start: string
+  period_end:   string
+  report:       MonthlyReportBody
+  summary_text: string
+  emailed_at:   string | null
+}
+
 // Approve request body sent from QueueCard
 export interface ApproveBody {
   title:           string

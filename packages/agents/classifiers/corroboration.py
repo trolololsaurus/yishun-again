@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 MSM_DOMAINS = [
     "channelnewsasia", "straitstimes", "mothership", "stomp",
     "mustsharenews", "theindependent", "zaobao", "shinmin",
-    "beritaharian", "tamilmurasu", "yahoo", "asiaone", "jom",
+    "beritaharian", "tamilmurasu", "yahoo", "asiaone",
 ]
 
 

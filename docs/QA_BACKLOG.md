@@ -149,6 +149,77 @@ Merges didn't bump the count → lightning under-counts. **Status:** `cleanup_co
 
 ---
 
+## Addendum — July 2026 autonomy sweep
+
+Found while wiring the daily unattended pass (`docs/AUTONOMY.md`). All five were
+live defects, not hypotheticals.
+
+### A1 — `Stage1RpmThrottle.wait_if_needed` could loop forever ✅
+`filters/stage1_quota.py`. With `STAGE1_RPM=0`, `len(window) < self._rpm` is never
+true, so the throttle slept in 0.1 s steps indefinitely — a genuine infinite loop
+reachable from an env-var typo, on the hot path of every Stage 1 call.
+**Fixed:** RPM floored at 1; `MAX_WAIT_SECONDS = 90` cap per call. A 429 is
+recoverable, a hang is not.
+
+### A2 — Google News consumed the entire pass budget ✅
+`ingestion/sources/google_news_rss.py`. `_resolve_redirect` (one HTTP round-trip
+each) ran on all ~650 feed entries *before* `RecencyFilter` discarded ~600 of
+them as stale. A dry run took **909 s** and hit its deadline inside this source,
+so `reddit` and `edmw` never ran at all — the two sources ordered behind it were
+being silently starved on every pass.
+**Fixed:** filter on the RSS entry's own `pubDate` before resolving; dedup on the
+wrapper URL first; `MAX_RESOLVES_PER_FETCH = 120` for cold starts. **909 s → 59 s**,
+the remainder being the mandatory politeness delay. Dateless entries are still
+never dropped.
+
+### A3 — The pass deadline could not stop a pass ✅
+`ingestion/orchestrator.py`. `max_duration_seconds` was checked in exactly one
+place: inside the candidate loop, *after* dedup. So (a) a pass could not abort
+between sources and kept starting new fetches long after its budget was gone, and
+(b) a pass where every candidate was a duplicate `continue`d past the check and
+never evaluated it at all.
+**Fixed:** checked before each source's fetch and before dedup. `fallback`'s 30 s
+retry backoff is now skipped when the deadline is near (15 sources × 30 s = 7.5 min
+of sleep that was entirely untracked against the budget).
+
+### A4 — `source_reputation` had no writer — the learning loop was open ✅
+`ingestion/learning.py` reads the table every pass and nudges confidence ±0.10 from
+`trust_score`. **Nothing in the repository ever wrote it.** Every domain resolved to
+the 0.500 default, both thresholds (0.700 / 0.300) were unreachable, and the nudge
+was a permanent no-op. The loop drawn closed in `LEARNING_LOOP.md` §5 was, in code,
+a line ending in an empty table.
+**Fixed:** `ops/learning_monitor.rebuild_source_reputation()` recomputes trust daily
+from operator verdicts (Laplace-smoothed ratio, agent decisions excluded).
+
+### A5 — `_job_jom` scheduled a scraper that does not exist ✅
+`main.py`. `scrape_jom.py` was deleted back in v1.4, but the job stayed registered
+on a 360-minute interval, throwing `ModuleNotFoundError` on every fire and logging
+it as a scraper failure — permanent noise in exactly the log an operator would scan
+for real breakage. The `Jom` seed row also still sat in `sources`.
+**Fixed:** job removed, remaining `jom` references cleared from `MSM_DOMAINS` lists
+and `scrape_discovery`, seed row deleted in migration 011.
+
+### Still open from this sweep
+- **A6 — ephemeral budget file** 🔴 `ingestion/stage1_daily_usage.json` and
+  `classifiers/calibration_log.json` live on Cloud Run's ephemeral disk and reset on
+  container replacement, so the Stage 1 RPD ceiling cannot be enforced *across*
+  passes in production. Near-harmless at one pass/day (usage is far below the cap and
+  the container is replaced between passes anyway); would matter if cadence increases.
+  **Fix:** move both to Supabase.
+- **A7 — `war-room /api/autonomy` proxy is broken** 🔴 `app/api/autonomy/route.ts`
+  calls `${AGENTS_INTERNAL_URL}/autonomy/status` but sends no `X-Ops-Token`, and
+  `AGENTS_INTERNAL_URL` is in neither `.env.local` nor `.env.local.example`. The
+  agents endpoint requires that header, so this returns 401/422 whenever configured.
+  The autonomy table on `/analytics` has therefore never rendered live data.
+- **A8 — `autonomy_tracker.py` bypasses the shared client** 🟡 Uses
+  `os.environ['SUPABASE_URL']` directly, raising `KeyError` instead of the friendly
+  `EnvironmentError` every other module raises.
+- **A9 — `ingestion/orchestrator.py` has no test** 🟡 No coverage of the circuit
+  breaker, deadline abort, `Stage1HaltError`, or the `dedup.InfraError` whole-pass
+  abort — the exact paths that keep an unattended pass bounded.
+
+---
+
 ## Suggested execution order
 1. **C1–C4** — legal guardrails ("never remove") + dead analytics. Highest legal/data risk.
 2. **H1–H5** — operator-action data corruption (damage on every click).

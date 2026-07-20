@@ -38,7 +38,6 @@ _KNOWN_DOMAINS = {
     "stomp.straitstimes.com",
     "mustsharenews.com",
     "theindependent.sg",
-    "jom.media",
     "sg.news.yahoo.com", "yahoo.com",
     "asiaone.com",
     "zaobao.com.sg",

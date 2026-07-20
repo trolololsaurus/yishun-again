@@ -34,7 +34,7 @@ MODEL_WRITE    = "claude-sonnet-4-6"
 _MSM_DOMAINS = [
     "channelnewsasia", "straitstimes", "mothership", "stomp",
     "mustsharenews", "theindependent", "zaobao", "shinmin",
-    "beritaharian", "tamilmurasu", "yahoo", "asiaone", "jom",
+    "beritaharian", "tamilmurasu", "yahoo", "asiaone",
 ]
 
 # ── Haiku system prompt ─────────────────────────────────────────────────────

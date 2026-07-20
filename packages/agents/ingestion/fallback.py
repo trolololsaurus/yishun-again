@@ -71,11 +71,17 @@ def run_with_fallback(
             fetched=0, fresh=0, novel=0, queued=0, reason=str(exc),
         )
     except SourceUnavailableError as exc:
+        # backoff_seconds=0 skips the retry sleep entirely. The orchestrator
+        # passes 0 when the pass deadline is close: with 15 sources a 30s
+        # backoff each is 7.5 minutes of pure sleep, which used to be spent
+        # entirely outside the deadline check and could push a pass past its
+        # budget without a single candidate being processed.
         logger.warning(
             "FallbackLadder: %s unavailable — backing off %ds then retrying once: %s",
             source_name, backoff_seconds, exc,
         )
-        time.sleep(backoff_seconds)
+        if backoff_seconds > 0:
+            time.sleep(backoff_seconds)
         try:
             candidates = fetch()
             return candidates, SourceResult(

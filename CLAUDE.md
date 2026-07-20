@@ -27,7 +27,18 @@ yishun-again/
 │   │   ├── writers/        # Incident draft generation
 │   │   ├── art/            # Pixel art prompt gen + Modal.run calls
 │   │   ├── cards/          # Share card generation
-│   │   └── orchestrator/   # LangGraph 0.1.x orchestrator
+│   │   ├── orchestrator/   # Herald (milestone) agent
+│   │   └── ops/            # Autonomy layer — see docs/AUTONOMY.md
+│   │       ├── daily.py            # THE daily chain (Cloud Scheduler entry)
+│   │       ├── activity.py         # agent_runs / agent_events logging
+│   │       ├── notify.py           # operator email + dedup ledger
+│   │       ├── auto_publish.py     # >=0.95 confidence gate
+│   │       ├── learning_monitor.py # confidence/agreement deltas
+│   │       ├── supervisor.py       # scraper fleet watchdog
+│   │       ├── integrity.py        # dupes + hallucination checks
+│   │       ├── maintenance.py      # plain-English failure digest
+│   │       ├── backend_health.py   # component health + cost guard
+│   │       └── monthly_report.py   # 30-day summary, 1st of month
 │   ├── db/           # Supabase schema, migrations, types
 │   └── shared/       # Shared types, constants, utils
 └── infra/
@@ -53,9 +64,19 @@ npm audit           # Dependency security check (run before deploy)
 ```bash
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8080   # Dev server
-pytest                                   # Run tests
-pytest tests/test_stage1.py             # Run single test file
 ```
+
+**Tests are standalone scripts, not pytest modules.** Each `test_*.py` in
+`packages/agents/` runs top-level assertions via a `check(name, cond)` helper and
+ends in `raise SystemExit(1 if failed else 0)`. Running `pytest` on them fails at
+collection (the module-level `SystemExit` aborts the run). Run them directly:
+
+```bash
+./.venv/Scripts/python.exe test_stage2_guardrails.py   # one file
+for f in test_*.py; do ./.venv/Scripts/python.exe "$f" || echo "FAIL $f"; done
+```
+
+All are offline — no network, no API keys, no DB.
 
 ### Deployment
 
@@ -64,8 +85,13 @@ pytest tests/test_stage1.py             # Run single test file
 vercel deploy --prod
 
 # Agents backend (Cloud Run, Singapore region)
-gcloud run deploy yishun-agents --source . --region asia-southeast1 --platform managed
+gcloud run deploy yishun-agents --source packages/agents \
+  --region asia-southeast1 --platform managed --no-allow-unauthenticated \
+  --timeout=3600 --memory=1Gi --min-instances=0 --max-instances=2
 ```
+
+`--timeout=3600` is required — a daily pass runs 5–20 min, well past the 300 s
+default. `--min-instances=0` is the cost control (see `docs/AUTONOMY.md` §6).
 
 ---
 
@@ -117,10 +143,30 @@ Execute strictly in sequence — do not skip ahead:
 ```
 Scrape Agent → Stage 1 Filter (Gemini) → Stage 2 Writer (Claude) → Corroboration Agent → war_room_queue
                                                                                               ↓
-                                                                               Operator reviews in War Room
-                                                                                              ↓
+                                                                            confidence >= 0.95 ? ──yes──→ auto-publish
+                                                                                              ↓ no              ↓
+                                                                               Operator reviews in War Room ←──┘
+                                                                                              ↓         (training signal)
                                                                                Approve → Art Agent → Publish
 ```
+
+**The pipeline is autonomous as of July 2026.** One Cloud Scheduler job at
+**14:58 SGT daily** POSTs `/orchestrator/daily`, which runs eight agents in a
+fixed order (`ops/daily.py`): ingestion → auto-publish → integrity → supervisor
+→ learning monitor → backend health → maintenance digest → monthly report (1st
+only). Steps are failure-isolated: one agent crashing does not cost you the rest.
+
+**Read `docs/AUTONOMY.md` before changing any of this.** It documents the
+auto-publish gates, the alert throttling, the exit conditions, the cost model,
+and the runbook (including the `AUTO_PUBLISH_CONFIDENCE=2.0` panic switch).
+
+Two things that are easy to get wrong:
+- **Production does NOT use APScheduler.** `ENABLE_INPROCESS_SCHEDULER` is false.
+  Cloud Run scales to zero, so an in-process scheduler simply does not fire
+  unless you pay ~$15-25/mo for `min-instances=1` + CPU-always-allocated.
+- **`ops/` must never raise.** Every module there swallows its own exceptions and
+  degrades to stdlib logging. An observability layer that can crash the pipeline
+  it observes turns a logging outage into a data outage.
 
 **Stage 1 (Gemini):** Fast noise rejection. Pass threshold: confidence ≥ 0.4. Target 60–70% rejection of raw scrape volume.
 
@@ -131,7 +177,7 @@ Scrape Agent → Stage 1 Filter (Gemini) → Stage 2 Writer (Claude) → Corrobo
 - EDMW + MSM corroboration → standard incident, EDMW count shown as "Forum buzz"
 - MSM only → standard incident, no EDMW reference
 
-**Scraping:** 14 sources are wired into the live pipeline via `ingestion/sources/`
+**Scraping:** 15 sources are wired into the live pipeline via `ingestion/sources/`
 (`get_enabled_sources()`): **RSS-dated** — CNA, Mothership, Straits Times,
 MustShareNews, The Independent, Yahoo, Reddit; **HTML-scraped** — AsiaOne, Stomp,
 Zaobao, Shin Min, Berita Harian, Tamil Murasu, whose listing pages carry no date,
@@ -143,8 +189,17 @@ A source must supply `published_at` to be registered: a dateless candidate
 bypasses the recency watermark, is re-processed by Stage 1/2 every pass, and
 can't be approved until an operator sets the date by hand (QA H3).
 
-EDMW/HWZ is the one scraper NOT registered — it needs guardrail #2 handling
-first (title + thread stats only, never quote content, URL never in `source_urls`).
+**EDMW/HWZ is registered** (Phase 3, commit `522e09d`) as `source_type='signal'`.
+Guardrail #2 is enforced in `orchestrator.py` via
+`source_allowlist.is_signal_source()` — never a plain `== 'edmw'`, because
+`scrape_edmw` emits the canonical `'signal'` and that vocabulary mismatch
+silently breached the guardrail once already (`92d6305`).
+
+`google_news_rss` filters candidates on the RSS entry's own `pubDate` **before**
+resolving Google redirect wrappers. Resolving first meant ~600 wasted HTTP
+round-trips per pass on entries the recency filter then discarded — that alone
+consumed the entire pass budget and starved the sources queued behind it
+(909 s → 59 s). `MAX_RESOLVES_PER_FETCH` caps a cold start.
 
 Scrapers **raise** `ScraperError`/`ScraperBlocked` on a source-level failure
 rather than returning `[]`; the adapters translate those to
@@ -186,6 +241,19 @@ Recent additions: **008** expands `incidents.latest_source_role` to include
 `training_signals.action` CHECK (the War Room unpublish route writes it — before 009
 those inserts were silently rejected). The lack of a migration runner is tracked as
 QA M15.
+
+**011 (autonomy/ops)** adds `agent_runs`, `agent_events`, `notifications`,
+`learning_snapshots`, `monthly_reports`, `backend_health_checks`; extends
+`training_signals.action` with `auto_approve` / `auto_publish_reverted` and adds
+`decided_by` (`operator` | `agent`); and retires the Jom seed row. It also
+backfills `CREATE TABLE IF NOT EXISTS` for **`scraper_health` and `milestones`**,
+which existed in the live DB but only as DDL inside the TechSpec — no migration
+file had ever captured them, so a rebuild-from-migrations was impossible.
+
+⚠️ Same failure mode as 009: without 011's CHECK update, every autonomous
+decision insert is silently rejected and the learning loop records nothing.
+The agents degrade gracefully when the ops tables are missing (they log to
+stdout and continue) — so a missing migration looks like silence, not an error.
 
 **RLS note:** `incidents` anon reads are filtered to `is_published = TRUE`
 (`anon_read_published_incidents`), so the **publishable key cannot see drafts at all** —

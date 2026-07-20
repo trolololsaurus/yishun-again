@@ -4,7 +4,9 @@ uvicorn[standard]==0.29.0
 
 # ── Config ─────────────────────────────────────────────────────────────────
 python-dotenv==1.0.1
-pydantic==2.7.1
+# Same story as httpx below: google-genai 2.12.1 needs pydantic>=2.11, so the old
+# 2.7.1 pin was uninstallable from scratch. 2.13.4 is what the working venv runs.
+pydantic==2.13.4
 pydantic-settings==2.3.0
 
 # ── Scheduling (spec: APScheduler 3.x) ─────────────────────────────────────
@@ -23,7 +25,12 @@ anthropic==0.40.0
 google-genai==2.12.1
 
 # ── HTTP + scraping ─────────────────────────────────────────────────────────
-httpx==0.27.0
+# 0.28.1 is a floor, not a preference: google-genai 2.12.1 requires httpx>=0.28.1.
+# The old 0.27.0 pin made this file UNINSTALLABLE from scratch after the
+# 2026-07 Groq -> Gemini migration (pip: ResolutionImpossible). It went unnoticed
+# because the local venv had already been upgraded in place, so only a clean
+# build — i.e. the first Cloud Run deploy — ever hit it.
+httpx==0.28.1
 beautifulsoup4==4.12.3
 lxml==6.1.1
 # RSS-first for CNA / Mothership

@@ -49,3 +49,6 @@ packages/agents/cleanup_*.py
 packages/agents/reconsolidate_*.py
 .vercel
 .env*
+
+# Browser-automation scratch output (page snapshots from MCP tooling)
+.playwright-mcp/
