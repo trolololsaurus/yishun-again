@@ -3,6 +3,7 @@
 from scrapers import (
     scrape_asiaone,
     scrape_beritaharian,
+    scrape_edmw,
     scrape_mothership,
     scrape_mustsharenews,
     scrape_reddit,
@@ -42,8 +43,12 @@ def get_enabled_sources() -> list:
     (QA H3). The RSS sources read it from the feed; the HTML sources resolve it
     from the article (URL path, else meta tags).
 
-    Still unregistered: EDMW (signal). It needs guardrail #2 handling — its URL
-    must never reach source_urls — before it can be enabled (Phase 3).
+    SIGNAL:         EDMW/HWZ — corroboration count only, never a quoted source
+                    (guardrail #2). Its date comes from the thread's start time in
+                    the LISTING markup; the thread page is never fetched and post
+                    content is never read.
+
+    All 14 scrapers are now registered (Phase 3 complete).
 
     Add new adapters here as they're built; main.py's pipeline job/endpoint
     don't need to change.
@@ -98,6 +103,17 @@ def get_enabled_sources() -> list:
             GoogleNewsRSSSource(),
             LegacyScraperSource(
                 "reddit", scrape_reddit.scrape, source_type="reddit",
+            ),
+            # SIGNAL — never a quoted source. Its URL must never reach
+            # source_urls (guardrail #2); it contributes edmw_signal_count only,
+            # and an EDMW-only item stays in the queue until an operator attaches
+            # an MSM source. Enforced in three independent places: the
+            # orchestrator (is_signal_source), the allowlist (domain type
+            # 'signal' is stripped), and Stage 2's multi-source formatter (signal
+            # articles are never rendered into the prompt).
+            LegacyScraperSource(
+                "edmw", scrape_edmw.scrape,
+                source_name="HWZ EDMW", source_type="signal",
             ),
         ) if s.enabled
     ]
