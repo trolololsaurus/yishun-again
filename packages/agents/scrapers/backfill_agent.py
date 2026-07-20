@@ -731,6 +731,14 @@ def _build_incident_row(draft: dict, item: dict) -> Optional[dict]:
 
     hype = 1 if item.get("source_type") == "reference" else draft.get("hype_meter", 0)
 
+    # Every corroborating source, de-duplicated and order-preserving. Previously
+    # hardcoded to [item["url"]] with corroboration_count=1 and an empty timeline,
+    # which discarded multi-source stories entirely (and zeroed the lightning
+    # meter, since bolts = corroboration_count - 1).
+    source_urls = list(dict.fromkeys(
+        u for u in (draft.get("source_urls") or item.get("source_urls") or [item.get("url", "")]) if u
+    )) or [item.get("url", "")]
+
     # Coordinates come ONLY from the deterministic OneMap geocoder — never
     # from Stage 2's LLM output (it used to guess the Yishun centre point,
     # which stacked every pin at 1.4295/103.835). No geocode → no pin.
@@ -760,9 +768,9 @@ def _build_incident_row(draft: dict, item: dict) -> Optional[dict]:
         "area_name":           draft.get("area_name"),
         "latitude":            lat,
         "longitude":           lon,
-        "source_urls":         [item["url"]],
+        "source_urls":         source_urls,
         "hype_meter":          hype,
-        "corroboration_count": 1,
+        "corroboration_count": len(source_urls),
         "edmw_signal_count":   0,
         "seo_title":           draft.get("seo_title", ""),
         "seo_description":     draft.get("seo_description", ""),
@@ -776,7 +784,7 @@ def _build_incident_row(draft: dict, item: dict) -> Optional[dict]:
         "published_at":        published_at,     # ← source date, not NOW()
         "is_developing":       False,
         "update_count":        0,
-        "source_timeline":     [],
+        "source_timeline":     item.get("source_timeline") or [],
         "latest_source_role":  "initial",
         "is_milestone":        False,
     }
@@ -1461,9 +1469,15 @@ def process_candidates(
 
         # ── Stage 2 ──────────────────────────────────────────────────────────
         try:
+            # Preserve the caller's aggregated source list. seed_backfill groups a
+            # story's URLs into ONE candidate (item["source_urls"] = every fetched
+            # source); collapsing to [url] here silently dropped every corroborating
+            # source, so published incidents shipped with 1 source_url and
+            # corroboration_count=1 no matter how many were fetched.
+            aggregated = list(dict.fromkeys(u for u in (item.get("source_urls") or []) if u))
             stage2_input = {
                 **item,
-                "source_urls":       [] if is_wiki else [url],
+                "source_urls":       [] if is_wiki else (aggregated or [url]),
                 "edmw_signal_count": 0,
             }
             draft = write_stage2(stage2_input)
