@@ -11,7 +11,7 @@ import time
 import httpx
 from bs4 import BeautifulSoup
 
-from . import BROWSER_HEADERS, content_matches_keywords, strip_html
+from . import BROWSER_HEADERS, content_matches_keywords, resolve_published_at, strip_html
 
 logger = logging.getLogger(__name__)
 
@@ -89,13 +89,20 @@ def scrape() -> list[dict]:
             time.sleep(_DELAY)
             content = _fetch_body(client, url) or title
 
+            # Listing pages carry no date, so resolve it from the article itself.
+            # A dateless candidate bypasses the recency watermark, is re-processed
+            # by Stage 1/2 every pass, and cannot be approved until an operator
+            # sets the date by hand (QA H3).
+            published_at = resolve_published_at(url)
+
             seen_urls.add(url)
             results.append({
-                "title":       title,
-                "content":     content,
-                "url":         url,
-                "source_name": SOURCE_NAME,
-                "source_type": SOURCE_TYPE,
+                "title":        title,
+                "content":      content,
+                "url":          url,
+                "source_name":  SOURCE_NAME,
+                "source_type":  SOURCE_TYPE,
+                "published_at": published_at,
             })
 
     logger.info("AsiaOne: %d Yishun items", len(results))

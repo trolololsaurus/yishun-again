@@ -15,15 +15,18 @@ import time
 import httpx
 from bs4 import BeautifulSoup
 
-from . import BROWSER_HEADERS, content_matches_keywords, strip_html
+from . import BROWSER_HEADERS, content_matches_keywords, resolve_published_at, strip_html
 
 logger = logging.getLogger(__name__)
 
 SOURCE_NAME = "Stomp"
 SOURCE_TYPE = "msm"
 
-_BASE_URL   = "https://stomp.straitstimes.com"
-_SEARCH_URL = "https://stomp.straitstimes.com/search"
+# Stomp moved off stomp.straitstimes.com to its own domain, and its search is
+# now WordPress-style (?s=). The old /search?q= path 302s to www.stomp.sg/search
+# and 404s, so every run failed with "search request failed — skipping run".
+_BASE_URL   = "https://www.stomp.sg"
+_SEARCH_URL = "https://www.stomp.sg/"
 _CONTENT_LIMIT  = 3_000
 _REQUEST_TIMEOUT = 15
 _INTER_REQUEST_DELAY = 2  # seconds between article fetches
@@ -91,7 +94,7 @@ def scrape() -> list[dict]:
 
     with httpx.Client(headers=BROWSER_HEADERS, follow_redirects=True) as client:
         # Search Stomp for 'yishun'
-        resp = _fetch(client, f"{_SEARCH_URL}?q=yishun")
+        resp = _fetch(client, f"{_SEARCH_URL}?s=yishun")
         if not resp:
             logger.warning("Stomp: search request failed — skipping run")
             return results
@@ -112,12 +115,19 @@ def scrape() -> list[dict]:
             if not content:
                 content = title  # use title as fallback so Stage 1 can still judge
 
+            # Listing pages carry no date, so resolve it from the article itself.
+            # A dateless candidate bypasses the recency watermark, is re-processed
+            # by Stage 1/2 every pass, and cannot be approved until an operator
+            # sets the date by hand (QA H3).
+            published_at = resolve_published_at(url)
+
             results.append({
-                "title":       title,
-                "content":     content,
-                "url":         url,
-                "source_name": SOURCE_NAME,
-                "source_type": SOURCE_TYPE,
+                "title":        title,
+                "content":      content,
+                "url":          url,
+                "source_name":  SOURCE_NAME,
+                "source_type":  SOURCE_TYPE,
+                "published_at": published_at,
             })
 
     logger.info("Stomp: %d Yishun items", len(results))

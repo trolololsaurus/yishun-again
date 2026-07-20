@@ -63,15 +63,65 @@ check("empty scrape returns []", LegacyScraperSource("x", lambda: []).fetch(sinc
 
 # ── the live registry ───────────────────────────────────────────────────────
 names = [s.name for s in srcmod.get_enabled_sources()]
-check("live registry has all Phase-1 + 2a sources",
+check("live registry has all 13 non-signal sources (Phases 1-2)",
       set(names) == {"cna", "mothership", "straits_times", "mustsharenews",
-                     "the_independent", "yahoo", "google_news_rss", "reddit"})
-check("dateless HTML scrapers stay unregistered (Phase 2b) and EDMW (Phase 3)",
-      not ({"asiaone", "stomp", "zaobao", "shinmin", "beritaharian",
-            "tamilmurasu", "edmw"} & set(names)))
+                     "the_independent", "yahoo", "asiaone", "stomp", "zaobao",
+                     "shinmin", "berita_harian", "tamil_murasu",
+                     "google_news_rss", "reddit"})
+check("EDMW (signal) stays unregistered until guardrail #2 handling (Phase 3)",
+      "edmw" not in set(names))
+check("source names are unique (each keys its own pipeline_state watermark)",
+      len(names) == len(set(names)))
 check("every registered source satisfies the Source protocol",
       all(hasattr(s, "name") and hasattr(s, "enabled") and callable(getattr(s, "fetch", None))
           for s in srcmod.get_enabled_sources()))
+
+# ── resolve_published_at: the Phase-2b date helper (no network) ─────────────
+import io  # noqa: E402
+from contextlib import contextmanager  # noqa: E402
+from unittest import mock  # noqa: E402
+import scrapers as scrapers_pkg  # noqa: E402
+
+@contextmanager
+def fake_html(body: str | None):
+    """Patch urlopen to serve `body`, or raise when body is None."""
+    class _Resp:
+        def read(self, *_a): return body.encode("utf-8")
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    def _open(*_a, **_k):
+        if body is None:
+            raise OSError("connection refused")
+        return _Resp()
+    with mock.patch.object(scrapers_pkg.urllib.request, "urlopen", _open):
+        yield
+
+from datetime import date as _d  # noqa: E402
+rpa = scrapers_pkg.resolve_published_at
+
+# 1. Date in the URL path — resolved with NO request at all.
+with fake_html(None):   # any fetch would raise, proving none happens
+    check("URL-path date resolved without fetching",
+          rpa("https://mothership.sg/2026/07/16/some-story/") == _d(2026, 7, 16))
+
+# 2. Meta tags
+with fake_html('<meta property="article:published_time" content="2026-07-11T18:03:00+08:00">'):
+    check("article:published_time parsed", rpa("https://x.example/story") == _d(2026, 7, 11))
+with fake_html('{"datePublished":"2026-06-30T09:00:00Z"}'):
+    check("JSON-LD datePublished parsed", rpa("https://x.example/story") == _d(2026, 6, 30))
+with fake_html('<time datetime="2026-05-03">3 May</time>'):
+    check("<time datetime> parsed", rpa("https://x.example/story") == _d(2026, 5, 3))
+
+# 3. Failure modes never raise — they yield None (dateless -> routed to review)
+with fake_html("<html><body>no date anywhere</body></html>"):
+    check("no date in page -> None", rpa("https://x.example/story") is None)
+with fake_html(None):
+    check("fetch failure -> None (never raises)", rpa("https://x.example/story") is None)
+check("empty url -> None", rpa("") is None)
+with fake_html('<meta property="article:published_time" content="not-a-date">'):
+    check("unparseable date -> None", rpa("https://x.example/story") is None)
+with fake_html('<meta property="article:published_time" content="2026-13-45">'):
+    check("out-of-range date -> None (no crash)", rpa("https://x.example/story") is None)
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

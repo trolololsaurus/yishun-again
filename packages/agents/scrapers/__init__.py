@@ -7,6 +7,9 @@ import logging
 import os
 import re
 import time
+import urllib.request
+from datetime import date
+
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
@@ -65,6 +68,72 @@ def strip_html(text: str) -> str:
     if not text or "<" not in text:
         return (text or "").strip()
     return BeautifulSoup(text, "lxml").get_text(separator=" ", strip=True)
+
+
+# ── Article publication-date resolution ──────────────────────────────────────
+# The HTML-scraped sources (AsiaOne, Stomp, Zaobao, Shin Min, Berita Harian,
+# Tamil Murasu) list articles without dates. A candidate with no published_at is
+# "dateless": it bypasses the recency watermark, is re-processed by Stage 1/2 on
+# every pass, and cannot be approved until an operator sets the date by hand
+# (QA H3). Resolving the date is therefore the gate on using those sources live.
+#
+# Same precedence seed_backfill.fetch_article uses: the URL path first (free, no
+# request), then the article's own meta tags. Deliberately NO LLM fallback —
+# this runs on every live pass, unlike the one-off backfill.
+
+_PUB_META_PATTERNS = [
+    r'property=["\']article:published_time["\'][^>]+content=["\']([^"\']+)',
+    r'"datePublished"\s*:\s*"([^"]+)"',
+    r'itemprop=["\']datePublished["\'][^>]+content=["\']([^"\']+)',
+    r'<time[^>]+datetime=["\']([^"\']+)',
+]
+_URL_DATE_RE  = re.compile(r"/(\d{4})/(\d{1,2})/(\d{1,2})(?:/|\b)")
+_ISO_DATE_RE  = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
+_HTML_READ_CAP = 400_000   # bytes; the meta tags live in <head>
+
+
+def _safe_date(y, m, d) -> date | None:
+    try:
+        return date(int(y), int(m), int(d))
+    except (TypeError, ValueError):
+        return None
+
+
+def resolve_published_at(url: str, *, timeout: int = 10) -> date | None:
+    """
+    Best-effort publication date for an article URL.
+
+    Returns a date, or None when it genuinely cannot be determined. NEVER
+    raises: a failure yields None and the candidate is treated as dateless —
+    routed to review, never dropped (RecencyFilter §5.1, Q2=2b).
+    """
+    if not url:
+        return None
+
+    # 1. Date in the URL path (e.g. /2026/07/16/) — no request needed.
+    m = _URL_DATE_RE.search(url)
+    if m and (found := _safe_date(*m.groups())):
+        return found
+
+    # 2. The article's own metadata.
+    try:
+        req = urllib.request.Request(url, headers=BROWSER_HEADERS)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            html = resp.read(_HTML_READ_CAP).decode("utf-8", errors="ignore")
+    except Exception as exc:
+        logger.debug("resolve_published_at: fetch failed for %s: %s", url[:80], exc)
+        return None
+
+    for pat in _PUB_META_PATTERNS:
+        hit = re.search(pat, html, re.IGNORECASE)
+        if not hit:
+            continue
+        iso = _ISO_DATE_RE.match(hit.group(1).strip())
+        if iso and (found := _safe_date(*iso.groups())):
+            return found
+
+    logger.debug("resolve_published_at: no date found for %s", url[:80])
+    return None
 
 
 # ── Translation helper ────────────────────────────────────────────────────────

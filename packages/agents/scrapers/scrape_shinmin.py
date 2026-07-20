@@ -14,7 +14,7 @@ import time
 import httpx
 from bs4 import BeautifulSoup
 
-from . import BROWSER_HEADERS, content_matches_lang, strip_html, translate_article
+from . import BROWSER_HEADERS, content_matches_lang, resolve_published_at, strip_html, translate_article
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +103,12 @@ def scrape() -> list[dict]:
                 logger.warning("Shinmin translation failed (%s): %s — skipping", url, exc)
                 continue
 
+            # Listing pages carry no date, so resolve it from the article itself.
+            # A dateless candidate bypasses the recency watermark, is re-processed
+            # by Stage 1/2 every pass, and cannot be approved until an operator
+            # sets the date by hand (QA H3).
+            published_at = resolve_published_at(url)
+
             seen_urls.add(url)
             results.append({
                 "title":           en_title,
@@ -111,6 +117,7 @@ def scrape() -> list[dict]:
                 "source_name":     SOURCE_NAME,
                 "source_type":     SOURCE_TYPE,
                 "translated_from": _LANG,
+                "published_at":    published_at,
             })
 
     logger.info("Shinmin: %d Yishun items", len(results))
