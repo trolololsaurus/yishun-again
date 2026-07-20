@@ -63,11 +63,12 @@ check("empty scrape returns []", LegacyScraperSource("x", lambda: []).fetch(sinc
 
 # ── the live registry ───────────────────────────────────────────────────────
 names = [s.name for s in srcmod.get_enabled_sources()]
-check("live registry has all 5 Phase-1 sources",
-      set(names) == {"cna", "mothership", "straits_times", "google_news_rss", "reddit"})
-check("dateless-only scrapers stay unregistered (asiaone/stomp/edmw etc.)",
-      not ({"asiaone", "stomp", "mustsharenews", "theindependent", "yahoo",
-            "zaobao", "shinmin", "beritaharian", "tamilmurasu", "edmw"} & set(names)))
+check("live registry has all Phase-1 + 2a sources",
+      set(names) == {"cna", "mothership", "straits_times", "mustsharenews",
+                     "the_independent", "yahoo", "google_news_rss", "reddit"})
+check("dateless HTML scrapers stay unregistered (Phase 2b) and EDMW (Phase 3)",
+      not ({"asiaone", "stomp", "zaobao", "shinmin", "beritaharian",
+            "tamilmurasu", "edmw"} & set(names)))
 check("every registered source satisfies the Source protocol",
       all(hasattr(s, "name") and hasattr(s, "enabled") and callable(getattr(s, "fetch", None))
           for s in srcmod.get_enabled_sources()))
