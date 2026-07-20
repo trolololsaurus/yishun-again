@@ -8,6 +8,7 @@ Moved here unchanged from scrapers/backfill_agent.py's private _build_queue_row
 build_queue_row() instead of defining its own copy.
 """
 
+from classifiers.source_allowlist import check_source_urls
 from consolidation.check import ConsolidationResult
 
 
@@ -71,6 +72,20 @@ def build_queue_row(
     # row. The sources themselves are still recorded in source_urls and
     # source_timeline.
     raw_content.pop("source_articles", None)
+
+    # Guardrail #2 + allowlist. A signal URL (EDMW/HWZ) can never be a quoted
+    # source, so it is removed outright. A URL from a domain outside the
+    # operator-approved `sources` table is KEPT — stripping it could take an
+    # incident's last source and break guardrail #1 — but recorded so the War
+    # Room can surface it and the operator can approve the domain or re-source.
+    allow = check_source_urls(raw_content.get("source_urls") or [])
+    if raw_content.get("source_urls") is not None:
+        raw_content["source_urls"] = allow["kept"]
+    if allow["dropped_signal"] or allow["unapproved"]:
+        raw_content["_source_allowlist"] = {
+            "dropped_signal": allow["dropped_signal"],
+            "unapproved":     allow["unapproved"],
+        }
 
     row = {
         "raw_content": raw_content,

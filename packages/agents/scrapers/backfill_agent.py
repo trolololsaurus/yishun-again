@@ -739,6 +739,13 @@ def _build_incident_row(draft: dict, item: dict) -> Optional[dict]:
         u for u in (draft.get("source_urls") or item.get("source_urls") or [item.get("url", "")]) if u
     )) or [item.get("url", "")]
 
+    # Guardrail #2: a signal URL (EDMW/HWZ) is never a quoted source. Unapproved
+    # domains are kept and flagged rather than dropped — see
+    # classifiers.source_allowlist. Fall back to the original list if filtering
+    # would empty it, so guardrail #1 (>= 1 source URL) can never be broken here.
+    from classifiers.source_allowlist import check_source_urls
+    source_urls = check_source_urls(source_urls)["kept"] or source_urls
+
     # Coordinates come ONLY from the deterministic OneMap geocoder — never
     # from Stage 2's LLM output (it used to guess the Yishun centre point,
     # which stacked every pin at 1.4295/103.835). No geocode → no pin.
