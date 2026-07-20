@@ -131,7 +131,26 @@ Scrape Agent → Stage 1 Filter (Gemini) → Stage 2 Writer (Claude) → Corrobo
 - EDMW + MSM corroboration → standard incident, EDMW count shown as "Forum buzz"
 - MSM only → standard incident, no EDMW reference
 
-**Scraping:** RSS-first for CNA/Mothership. Reddit via public JSON API (`/search.json?q=yishun&sort=new`). HWZ HTML scraping — title + thread stats only, never quote content.
+**Scraping:** 14 sources are wired into the live pipeline via `ingestion/sources/`
+(`get_enabled_sources()`): **RSS-dated** — CNA, Mothership, Straits Times,
+MustShareNews, The Independent, Yahoo, Reddit; **HTML-scraped** — AsiaOne, Stomp,
+Zaobao, Shin Min, Berita Harian, Tamil Murasu, whose listing pages carry no date,
+so `scrapers.resolve_published_at()` reads it from the article (URL path, else
+meta tags); **corroboration** — Google News RSS, which aggregates arbitrary
+publishers and is the main discovery channel in practice.
+
+A source must supply `published_at` to be registered: a dateless candidate
+bypasses the recency watermark, is re-processed by Stage 1/2 every pass, and
+can't be approved until an operator sets the date by hand (QA H3).
+
+EDMW/HWZ is the one scraper NOT registered — it needs guardrail #2 handling
+first (title + thread stats only, never quote content, URL never in `source_urls`).
+
+Scrapers **raise** `ScraperError`/`ScraperBlocked` on a source-level failure
+rather than returning `[]`; the adapters translate those to
+`SourceBlockedError`/`SourceUnavailableError`. An empty result therefore means
+"no Yishun news", not "something broke quietly" — Stomp sat silently dead for
+weeks under the old behaviour.
 
 ---
 
@@ -143,7 +162,21 @@ Key tables: `incidents`, `sources`, `war_room_queue`, `utm_events`, `training_si
 
 Full schema with exact SQL: `docs/YishunAgain_TechSpec_v1_9.md` §3.
 
-**Sources seed data** (18 sources) is in the spec — run as part of Step 1 migration.
+**Sources seed data** (16 rows) is in the spec — run as part of Step 1 migration.
+The live table has since grown to **43**: the 16 seeded scrape targets plus 26
+citation-only domains approved after the July-2026 allowlist audit (government
+and court records, SG media, foreign outlets). Citation-only rows are
+`type='msm'`, `is_active=false`, `scrape_interval_minutes=0` — quotable but never
+scraped. `type='msm'` rather than `'reference'` is deliberate:
+`backfill_agent.py` excludes `reference` URLs from `source_urls`, which would
+silently drop court judgments and police releases as citations.
+
+**Source allowlist** (`classifiers/source_allowlist.py`): every `source_url` is
+checked against this table. A `type='signal'` domain is **removed** (guardrail
+#2); a domain that is unknown or not `approved_by_operator` is **kept and
+flagged** in `raw_content._source_allowlist` for operator review — stripping it
+could take an incident's last source and break guardrail #1. Matching is
+suffix-aware, so `cnalifestyle.channelnewsasia.com` inherits CNA's approval.
 
 **Migrations are hand-applied in the Supabase SQL Editor (no runner).** Apply in
 order; the live DB depends on `006_phase1_apply_now.sql` + `007` + `009` having all
