@@ -30,6 +30,8 @@ from dotenv import load_dotenv
 
 from consolidation.rules import (
     CANDIDATE_FETCH_LIMIT,
+    EARLY_EXIT_CONFIDENCE,
+    MAX_JUDGEMENTS_PER_CANDIDATE,
     MIN_KEYWORD_OVERLAP,
     QUEUE_FETCH_LIMIT,
     RELATED_LINK_THRESHOLD,
@@ -245,20 +247,40 @@ def check(candidate: dict, supabase_client=None) -> ConsolidationResult:
     if not published and not queued:
         return ConsolidationResult(action="new", matched_incident_id=None)
 
-    # ── Keyword pre-filter (tag each comparison row with its kind) ────────────
+    # ── Keyword pre-filter, ranked and capped ────────────────────────────────
+    # Score every eligible pair by keyword overlap, then judge only the top
+    # MAX_JUDGEMENTS_PER_CANDIDATE. The cap is what keeps this the pipeline's
+    # dominant cost from scaling with the archive: a genuine same-incident
+    # report shares the distinctive tokens, so it ranks near the top, while the
+    # long tail of one-shared-common-word pairs (the bulk of the fan-out) is
+    # dropped. sort() is stable, so equal-overlap ties keep the published-before-
+    # queue, recency-desc order the pools arrived in.
     candidate_text = f"{candidate.get('title', '')} {candidate.get('summary', candidate.get('content', ''))}"
     candidate_kw   = extract_keywords(candidate_text)
 
-    candidates_to_judge: list[tuple[str, dict]] = []
+    scored: list[tuple[int, str, dict]] = []
     for kind, pool in (("published", published), ("queue", queued)):
         for rec in pool:
             rec_text = f"{rec['title']} {rec['summary']}"
-            if keyword_overlap(candidate_kw, extract_keywords(rec_text)) >= MIN_KEYWORD_OVERLAP:
-                candidates_to_judge.append((kind, rec))
+            overlap = keyword_overlap(candidate_kw, extract_keywords(rec_text))
+            if overlap >= MIN_KEYWORD_OVERLAP:
+                scored.append((overlap, kind, rec))
 
-    if not candidates_to_judge:
+    if not scored:
         logger.debug("Consolidation: no keyword overlap with any published/queued item — new")
         return ConsolidationResult(action="new", matched_incident_id=None)
+
+    scored.sort(key=lambda t: t[0], reverse=True)
+    candidates_to_judge = [(kind, rec) for _, kind, rec in scored[:MAX_JUDGEMENTS_PER_CANDIDATE]]
+    dropped = len(scored) - len(candidates_to_judge)
+    if dropped > 0:
+        # Never a silent cap: record how many plausible pairs went unjudged, so a
+        # missed duplicate can be traced here rather than looking like a model
+        # error. ops/integrity.py re-scans for duplicates and is the backstop.
+        logger.info(
+            "Consolidation: '%s' — judging top %d of %d overlapping record(s), %d dropped by cap",
+            candidate.get("title", "")[:50], len(candidates_to_judge), len(scored), dropped,
+        )
 
     # ── Claude judgement loop ─────────────────────────────────────────────────
     try:
@@ -272,10 +294,12 @@ def check(candidate: dict, supabase_client=None) -> ConsolidationResult:
     best_match_result: dict | None = None
     best_match_confidence: float   = 0.0
     related_links: list[RelatedLink] = []
+    judged = 0
 
-    for kind, rec in candidates_to_judge:
+    for i, (kind, rec) in enumerate(candidates_to_judge):
         try:
             judgement = _judge_pair(claude, candidate, rec)
+            judged += 1
         except Exception as exc:
             logger.warning("Consolidation: judge_pair failed for %s: %s", rec["id"], exc)
             continue
@@ -302,6 +326,21 @@ def check(candidate: dict, supabase_client=None) -> ConsolidationResult:
                     reason      = judgement.get("related_reason", ""),
                     link_type   = link_type,
                 ))
+
+        # Early exit: a near-certain same_incident match settles the action
+        # (UPDATE for a published match, SKIP for a queue one). Because pairs are
+        # judged in overlap-ranked order, this match is already the best target;
+        # the remaining lower-overlap pairs only hunt for secondary related-links
+        # and are not worth the API cost once the outcome is fixed.
+        if best_match_confidence >= EARLY_EXIT_CONFIDENCE:
+            logger.info(
+                "Consolidation: early exit after confident match (conf=%.2f) — %d pair(s) left unjudged",
+                best_match_confidence, len(candidates_to_judge) - (i + 1),
+            )
+            break
+
+    logger.debug("Consolidation: made %d Haiku judgement(s) for '%s'",
+                 judged, candidate.get("title", "")[:50])
 
     # ── Decision ─────────────────────────────────────────────────────────────
     if best_match and best_match_confidence >= UPDATE_MATCH_THRESHOLD:

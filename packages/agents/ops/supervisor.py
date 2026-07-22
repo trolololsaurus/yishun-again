@@ -325,9 +325,14 @@ def _compose_email(findings, reasons, checked: int) -> tuple[str, str]:
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
-def run(supabase_client=None, trigger: str = "scheduler") -> dict:
+def run(supabase_client=None, trigger: str = "scheduler", now=None) -> dict:
     """
     One supervision pass.
+
+    `now` defaults to the wall clock; it exists so a test can pin the reference
+    time. Without it, run()'s staleness checks read against real time while any
+    fixture is frozen, so a fixture that was "recent" when written silently rots
+    into a false anomaly a day later — which is exactly how this went red.
 
     Never raises: it runs unattended straight after the daily ingestion pass and
     must not be able to take down anything downstream of it.
@@ -344,7 +349,7 @@ def run(supabase_client=None, trigger: str = "scheduler") -> dict:
         client = _client(supabase_client)
         with AgentRun(AGENT, trigger=trigger, client=client) as run_ctx:
             try:
-                _supervise(run_ctx, client, stats)
+                _supervise(run_ctx, client, stats, now=now)
             except Exception as exc:              # noqa: BLE001
                 stats["errors"] += 1
                 run_ctx.error_("supervisor_failed", f"supervision pass failed: {exc}")
@@ -358,7 +363,7 @@ def run(supabase_client=None, trigger: str = "scheduler") -> dict:
     return stats
 
 
-def _supervise(run_ctx, client, stats: dict) -> None:
+def _supervise(run_ctx, client, stats: dict, now=None) -> None:
     state = load_pipeline_state(client)
     health = load_scraper_health(client)
     stuck = stale_runs(older_than_minutes=STUCK_RUN_MINUTES, client=client)
@@ -371,7 +376,7 @@ def _supervise(run_ctx, client, stats: dict) -> None:
         run_ctx.set_summary("No pipeline_state rows to supervise.")
         return
 
-    findings = classify_findings(pipeline_state=state, scraper_health=health, stuck=stuck)
+    findings = classify_findings(pipeline_state=state, scraper_health=health, stuck=stuck, now=now)
 
     for finding in findings:
         emit = run_ctx.anomaly if finding["level"] == "anomaly" else run_ctx.warn

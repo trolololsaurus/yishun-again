@@ -217,7 +217,9 @@ print("\nsupervisor — run():")
 
 healthy = FakeSupabase(pipeline_state=[state("cna"), state("stomp")])
 with mock.patch.object(sup, "notify", return_value=SENT) as notify_healthy:
-    stats = sup.run(supabase_client=healthy)
+    # Pin now=NOW: fixtures are built relative to NOW, so run() must judge
+    # staleness against the same clock or a day-old fixture reads as stale.
+    stats = sup.run(supabase_client=healthy, now=NOW)
 check("healthy fleet -> no email", notify_healthy.call_count == 0)
 check("healthy fleet -> counted, no anomalies",
       stats["sources_checked"] == 2 and stats["anomalies"] == 0 and stats["errors"] == 0)
@@ -227,7 +229,7 @@ broken = FakeSupabase(pipeline_state=[
     state("cna", "blocked", failures=4), state("stomp", "unavailable", failures=3),
     state("zaobao", "ok", hours_ago=99)])
 with mock.patch.object(sup, "notify", return_value=SENT) as notify_broken:
-    stats = sup.run(supabase_client=broken)
+    stats = sup.run(supabase_client=broken, now=NOW)
 check("serious anomaly -> exactly one email", notify_broken.call_count == 1)
 check("...sent as an anomaly", notify_broken.call_args.args[0] == "anomaly")
 kwargs = notify_broken.call_args.kwargs
