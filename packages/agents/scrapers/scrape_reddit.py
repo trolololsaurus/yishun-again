@@ -18,7 +18,15 @@ from . import ScraperError, content_matches_keywords, raise_scrape_failure, stri
 
 logger = logging.getLogger(__name__)
 
-SOURCE_TYPE    = "reddit"
+# Reddit is a SIGNAL, not a quoted source (operator decision, July 2026).
+# It is user-generated discussion, not verifiable journalism: its URL must never
+# enter source_urls (guardrail #2), and its post date is NOT an event date — a
+# thread reviving an old case carries a recent post date, so using it as the
+# incident date manufactured duplicate "new" cards for old events. As a signal,
+# reddit corroborates and surfaces leads, but the MSM source is the sole
+# authority for both the citation and the event date. Same tier as EDMW/HWZ;
+# is_signal_source() and Stage 2's multi-source formatter both key off 'signal'.
+SOURCE_TYPE    = "signal"
 _CONTENT_LIMIT = 3_000
 
 _BROWSER_UA = (
@@ -55,7 +63,7 @@ def _parse_feed(rss_url: str, source_name: str) -> list[dict]:
     if feed.bozo and not feed.entries:
         # Raise instead of returning [] — a dead source must not look
         # like "no Yishun news" (see scrapers.raise_scrape_failure).
-        raise ScraperError(f"{SOURCE_NAME}: feed parse failed")
+        raise ScraperError(f"{source_name}: feed parse failed")
 
     results = []
     for entry in feed.entries:

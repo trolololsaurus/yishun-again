@@ -42,15 +42,18 @@ check("keeps dateless as None (never infers a date)", cands[1].published_at is N
 check("stamps discovered_via with the source name", all(c.discovered_via == "mothership" for c in cands))
 check("carries source_type", all(c.source_type == "msm" for c in cands))
 
-# source_type override + per-item source_name (Reddit yields per-subreddit names)
+# source_type override + per-item source_name (Reddit yields per-subreddit names).
+# Reddit is a SIGNAL now: scrape_reddit emits 'signal', so the candidate is
+# signal-tier (never a quoted source, never the event date) while source_name
+# still carries the subreddit for the operator.
 rsrc = LegacyScraperSource("reddit", lambda: [
-    {"title": "R", "content": "c", "url": "https://r/1",
-     "source_name": "Reddit SingaporeRaw", "source_type": "reddit",
+    {"title": "R", "content": "c", "url": "https://reddit.com/r/singapore/1",
+     "source_name": "Reddit SingaporeRaw", "source_type": "signal",
      "published_at": date(2026, 7, 9)},
-], source_type="reddit")
+], source_type="signal")
 rc = rsrc.fetch(since=None)
 check("reddit: per-item source_name preserved", rc[0].source_name == "Reddit SingaporeRaw")
-check("reddit: source_type = reddit", rc[0].source_type == "reddit")
+check("reddit: source_type = signal (forum signal, not a source)", rc[0].source_type == "signal")
 
 # falls back to the configured source_name when the row omits one
 nsrc = LegacyScraperSource("straits_times", lambda: [
@@ -71,6 +74,19 @@ check("live registry has all 14 sources + Google News (Phases 1-3)",
 check("EDMW is registered as a SIGNAL source (never a quoted source)",
       any(s.name == "edmw" and s._source_type == "signal"
           for s in srcmod.get_enabled_sources()))
+check("Reddit is registered as a SIGNAL source (July 2026 — UGC, not a source)",
+      any(s.name == "reddit" and s._source_type == "signal"
+          for s in srcmod.get_enabled_sources()))
+
+# End-to-end: the reddit scraper emits the signal type and guardrail #2 catches
+# it, so a reddit URL can never reach source_urls and its post date is never an
+# incident date.
+from scrapers import scrape_reddit  # noqa: E402
+from classifiers.source_allowlist import is_signal_source, canonical_source_type  # noqa: E402
+check("reddit scraper emits the signal type", scrape_reddit.SOURCE_TYPE == "signal")
+check("reddit is recognised as signal by is_signal_source (guardrail #2)",
+      is_signal_source(scrape_reddit.SOURCE_TYPE, "https://www.reddit.com/r/singapore/x") is True)
+check("reddit type canonicalises to signal", canonical_source_type(scrape_reddit.SOURCE_TYPE) == "signal")
 check("source names are unique (each keys its own pipeline_state watermark)",
       len(names) == len(set(names)))
 check("every registered source satisfies the Source protocol",
