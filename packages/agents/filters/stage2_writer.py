@@ -543,6 +543,17 @@ def write_stage2(content: dict) -> dict:
         # Pass-through from input
         "edmw_signal_count":  content.get("edmw_signal_count", 0),
         "source_urls":        source_urls,
+        # Carry the candidate date through to consolidation. consolidation.check
+        # runs on this draft alone (not the orchestrator's `item`), and its
+        # _judge_pair uses date proximity to decide same-incident — but the date
+        # was never in the draft, so the judge always saw 'unknown' and lost that
+        # signal for every source. It bit reddit hardest: reddit titles are
+        # casual and overlap MSM headlines weakly, so the date was the
+        # disambiguator that would have linked a reddit post to its existing
+        # incident instead of minting a duplicate. Only added when present so a
+        # dateless item stays honestly dateless (and never overrides item['date']
+        # with an empty value in build_queue_row's {**item, **draft} merge).
+        **({"date": content["date"]} if content.get("date") else {}),
         # Legal guardrail #4 — political flag propagates to the queue row
         "political":          classification.get("political", False),
     }
