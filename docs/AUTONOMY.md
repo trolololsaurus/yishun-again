@@ -239,13 +239,37 @@ scheduler running.
 
 Expected steady state: Cloud Run a few cents/month, Cloud Scheduler free,
 Gemini Stage 1 within the free tier (~50–100 calls/day against 1,500 RPD),
-Anthropic Stage 2 the only real cost and proportional to genuinely novel Yishun
-stories — typically single digits per day.
+Anthropic the only real cost.
+
+### Consolidation was the cost driver — now bounded
+
+The largest single line item was **not** Stage 2 writing but consolidation
+dedup. For each candidate, `consolidation/check.py` ran one Haiku judgement per
+existing record sharing ≥1 keyword — and with `MIN_KEYWORD_OVERLAP=1` a single
+common 4-letter word qualifies. Against a 50-published + 50-queued pool that
+fanned out to as many as ~100 calls per candidate, and it grew with the archive:
+one live pass spent ~87 Haiku calls in 3 minutes, more than Stage 1 and Stage 2
+combined.
+
+It now **ranks** eligible pairs by keyword overlap and judges only the top
+`MAX_JUDGEMENTS_PER_CANDIDATE` (12), with an **early exit** once a ≥0.9
+same-incident match settles the action. Cost is `O(candidates)` instead of
+`O(candidates × archive size)`. Measured on the live archive: a candidate with
+60 eligible pairs made **1** call (early exit on its true match); a genuinely
+new candidate is capped at 12. A dropped low-overlap pair is a rare miss, and
+`ops/integrity.py` re-scans for duplicates every pass as the backstop.
 
 `ops/backend_health.py` estimates each day's spend from actual usage and alerts
 above `COST_ALERT_USD_PER_DAY` (default $2.00). It also flags the structural
 risk: **more than ~2 passes in 24 h**, which is how a runaway scheduler would
 announce itself.
+
+> **Known gap — consolidation calls are not yet in the cost estimate (A12).**
+> The guard counts Stage 1 calls and Stage 2 drafts but not consolidation
+> judgements, which even bounded are ~$0.05/candidate at Haiku rates — on the
+> order of a Stage 2 draft. The estimate therefore under-counts, though the cap
+> now makes that under-count bounded and small. Fixing it properly means
+> threading a judgement counter through `IngestionReport`; tracked, not yet done.
 
 > **Known gap — ephemeral filesystem.** `ingestion/stage1_daily_usage.json` and
 > `classifiers/calibration_log.json` live on Cloud Run's ephemeral disk and reset

@@ -234,6 +234,21 @@ Also fixed alongside: rows with no classification were scored as 0%-agreement in
 They are unclassifiable, not disagreements — now counted separately in
 `per_category._meta.unclassified`.
 
+### A12 — consolidation was the pipeline's dominant cost ✅ (accounting gap remains)
+`consolidation/check.py` ran one Haiku judgement per existing record sharing ≥1 keyword.
+With `MIN_KEYWORD_OVERLAP=1`, a single common 4-letter word makes a pair eligible, so a
+candidate fanned out to ~100 calls against a 50+50 pool — and it grew with the archive
+(~87 Haiku calls in 3 min on one live pass, more than Stage 1 + Stage 2 combined).
+**Fixed:** rank eligible pairs by keyword overlap, judge only the top
+`MAX_JUDGEMENTS_PER_CANDIDATE` (12), early-exit once a ≥0.9 same-incident match settles
+the action. Cost is now `O(candidates)` not `O(candidates × archive)`. Proven on the live
+archive: 60 eligible → 1 call (early exit); worst case capped at 12. `ops/integrity.py`
+backstops any dropped low-overlap dupe.
+**Still open:** `ops/backend_health.py` does not count consolidation judgements in its cost
+estimate (only Stage 1 calls + Stage 2 drafts), so req #12's guard under-counts by up to
+~$0.05/candidate. Bounded and small now that the cap is in place; a proper fix threads a
+judgement counter through `IngestionReport`.
+
 ### Still open from this sweep
 - **A6 — ephemeral budget file** 🔴 `ingestion/stage1_daily_usage.json` and
   `classifiers/calibration_log.json` live on Cloud Run's ephemeral disk and reset on

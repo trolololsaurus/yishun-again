@@ -6,6 +6,7 @@ step 2). These are the small, executable "rules" consolidation.check() applies
 before/around the Claude judgement call.
 """
 
+import os
 import re
 
 # Fetch up to this many recent published incidents for comparison.
@@ -24,8 +25,34 @@ QUEUE_FETCH_LIMIT = 50
 # skip the Claude call for that pair to save API cost.
 MIN_KEYWORD_OVERLAP = 1
 
+# Cap on Claude judgement calls per candidate.
+#
+# This is the pipeline's dominant cost. With MIN_KEYWORD_OVERLAP=1, a single
+# shared 4-letter word ("road", "fire", "block") makes a pair eligible, so
+# against a 50-published + 50-queued pool a candidate could fan out to ~100
+# Haiku calls — and the count grows with the archive. One live pass spent ~87
+# Haiku calls in 3 minutes here, more than Stage 1 and Stage 2 combined.
+#
+# Ranking the eligible pairs by keyword overlap and judging only the top N caps
+# cost at O(candidates) instead of O(candidates x archive size): a genuine
+# same-incident report shares the distinctive tokens (the act, names, the
+# block), so it sits near the top of the overlap ranking. A dropped low-overlap
+# pair is a rare miss, and ops/integrity.py is the backstop — it re-scans for
+# duplicate entries every pass and flags them for the operator.
+MAX_JUDGEMENTS_PER_CANDIDATE = int(os.getenv("CONSOLIDATION_MAX_JUDGEMENTS", "12"))
+
 # same_incident_confidence >= this → treat as an UPDATE to the matched incident.
 UPDATE_MATCH_THRESHOLD = 0.7
+
+# A same_incident match at or above this confidence settles the action (UPDATE
+# or SKIP), so stop judging the remaining lower-ranked pairs rather than paying
+# to hunt for secondary related-links once the outcome is fixed. Clamped to at
+# least UPDATE_MATCH_THRESHOLD: exiting on anything weaker could stop before a
+# stronger match that would have changed the decision.
+EARLY_EXIT_CONFIDENCE = max(
+    UPDATE_MATCH_THRESHOLD,
+    float(os.getenv("CONSOLIDATION_EARLY_EXIT_CONFIDENCE", "0.9")),
+)
 
 # same_incident_confidence >= this (but below UPDATE_MATCH_THRESHOLD) → possible
 # match, surfaced as a low-confidence related link instead of an update.
