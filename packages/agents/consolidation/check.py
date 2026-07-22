@@ -130,11 +130,15 @@ def _judge_pair(
     existing: dict,
 ) -> dict:
     """Ask Claude Haiku whether candidate and existing are the same incident."""
+    # `or`-chained rather than dict.get defaults: a key present but empty/None
+    # (a dateless candidate) must read 'unknown', not "" — otherwise the judge
+    # sees a blank date and can't tell it apart from a real one.
+    cand_date = candidate.get("incident_date") or candidate.get("date") or "unknown"
     user_msg = (
         f"NEW CANDIDATE:\n"
         f"Title: {candidate.get('title', '')}\n"
         f"Summary: {candidate.get('summary', candidate.get('content', ''))[:600]}\n"
-        f"Date: {candidate.get('incident_date', candidate.get('date', 'unknown'))}\n"
+        f"Date: {cand_date}\n"
         f"URL: {candidate.get('url', '')}\n\n"
         f"EXISTING PUBLISHED INCIDENT:\n"
         f"ID: {existing['id']}\n"

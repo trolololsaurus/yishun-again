@@ -249,6 +249,26 @@ estimate (only Stage 1 calls + Stage 2 drafts), so req #12's guard under-counts 
 ~$0.05/candidate. Bounded and small now that the cap is in place; a proper fix threads a
 judgement counter through `IngestionReport`.
 
+### A13 — candidate date never reached the consolidation judge ✅ (reddit residual open)
+`write_stage2()`'s result dict carried no `date`/`incident_date` key, and
+`consolidation.check` runs on that draft alone — so `_judge_pair` always read the candidate
+date as `'unknown'` and lost the date-proximity signal its own system prompt relies on, for
+**every source**. It surfaced on reddit: reddit titles are casual and overlap MSM headlines
+weakly, so the date was the disambiguator that would have linked a reddit post to its
+existing incident instead of minting a duplicate. The reddit scraper and adapter are fine —
+22/22 candidates carry `published_at`; the date was dropped downstream.
+**Fixed:** `write_stage2` threads `date` into its result when present (never overriding a
+real `item['date']` with an empty one in `build_queue_row`'s `{**item, **draft}` merge), and
+`_judge_pair` reads `incident_date or date or 'unknown'` so an empty value reads honestly as
+unknown. Covered by `test_consolidation_date.py`.
+**Still open — reddit dates are POST dates, not EVENT dates.** `published_at` from reddit RSS
+is when the thread was posted, which is correct for the recency watermark but wrong as the
+incident's event date: a reddit thread reviving an old case gets a recent date, so the final
+card can be mis-dated and an old event can look new. The threading fix mitigates the
+duplicate symptom (the judge now has a date and the prompt handles late/follow-up reports),
+but the clean fix is to derive the event date from content for reddit rather than default to
+the post date — a Stage-2 behaviour change that needs its own eval.
+
 ### Still open from this sweep
 - **A6 — ephemeral budget file** 🔴 `ingestion/stage1_daily_usage.json` and
   `classifiers/calibration_log.json` live on Cloud Run's ephemeral disk and reset on
