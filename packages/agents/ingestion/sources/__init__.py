@@ -32,7 +32,6 @@ def get_enabled_sources() -> list:
                     Tamil Murasu (date resolved per-article by
                     scrapers.resolve_published_at)
     CORROBORATION:  Google News RSS — cross-checks and catches misses.
-    SOCIAL:         Reddit (r/singapore, r/singaporeraw).
 
     Phases 1-2 of the adapter port (issue #23) — all 13 non-signal scrapers from
     the spec's "Live pipeline" inventory are now wired in.
@@ -43,10 +42,12 @@ def get_enabled_sources() -> list:
     (QA H3). The RSS sources read it from the feed; the HTML sources resolve it
     from the article (URL path, else meta tags).
 
-    SIGNAL:         EDMW/HWZ — corroboration count only, never a quoted source
-                    (guardrail #2). Its date comes from the thread's start time in
-                    the LISTING markup; the thread page is never fetched and post
-                    content is never read.
+    SIGNAL:         Reddit (r/singapore, r/singaporeraw) and EDMW/HWZ —
+                    corroboration count only, never a quoted source (guardrail
+                    #2), never the event date. MSM is the sole authority for the
+                    citation and the date. EDMW's date comes from the thread's
+                    start time in the LISTING markup; the thread page is never
+                    fetched and post content is never read.
 
     All 14 scrapers are now registered (Phase 3 complete).
 
@@ -101,16 +102,23 @@ def get_enabled_sources() -> list:
                 source_name="Tamil Murasu", source_type="msm",
             ),
             GoogleNewsRSSSource(),
-            LegacyScraperSource(
-                "reddit", scrape_reddit.scrape, source_type="reddit",
-            ),
-            # SIGNAL — never a quoted source. Its URL must never reach
-            # source_urls (guardrail #2); it contributes edmw_signal_count only,
-            # and an EDMW-only item stays in the queue until an operator attaches
-            # an MSM source. Enforced in three independent places: the
+            # SIGNAL sources — never a quoted source. Their URL must never reach
+            # source_urls (guardrail #2); they contribute the forum-signal count
+            # only, and a signal-only item stays in the queue until an operator
+            # attaches an MSM source. Enforced in three independent places: the
             # orchestrator (is_signal_source), the allowlist (domain type
             # 'signal' is stripped), and Stage 2's multi-source formatter (signal
             # articles are never rendered into the prompt).
+            #
+            # Reddit joined this tier in July 2026 (was 'reddit'): it is
+            # user-generated discussion, not verifiable journalism, and its post
+            # date is not an event date — treating it as a source manufactured
+            # duplicate cards for old events at recent post dates. MSM is the sole
+            # authority for the citation and the event date. scrape_reddit emits
+            # 'signal'; source_name still carries the subreddit for the operator.
+            LegacyScraperSource(
+                "reddit", scrape_reddit.scrape, source_type="signal",
+            ),
             LegacyScraperSource(
                 "edmw", scrape_edmw.scrape,
                 source_name="HWZ EDMW", source_type="signal",

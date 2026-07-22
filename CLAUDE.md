@@ -172,27 +172,32 @@ Two things that are easy to get wrong:
 
 **Stage 2 (Claude):** Classification, draft writing, severity scoring, pixel art prompt generation. Returns JSON — see spec §4.3 for exact schema and system prompts.
 
-**EDMW treatment:** EDMW signal is never a quoted source. Three tiers:
-- EDMW only → publishable with 👎 "unverified" badge, no lightning (corroboration_count = 0/1; the EDMW URL is never in `source_urls` per guardrail #2)
-- EDMW + MSM corroboration → standard incident, EDMW count shown as "Forum buzz"
-- MSM only → standard incident, no EDMW reference
+**Signal treatment (EDMW *and* Reddit):** a signal is never a quoted source and
+never the event date. Reddit joined this tier in July 2026 (was `'reddit'`) — it
+is user-generated discussion, not verifiable journalism, and its post date is not
+an event date (a thread reviving an old case carries a recent post date, which
+manufactured duplicate cards for old events). MSM is the sole authority for both
+the citation and the date. Three tiers:
+- Signal only → stays in the queue as unverified until an operator attaches an MSM source; never auto-publishes (signal URL is never in `source_urls` per guardrail #2, so guardrail #1's ≥1-source requirement is unmet)
+- Signal + MSM corroboration → standard incident; the signal count shows as "Forum buzz"
+- MSM only → standard incident, no signal reference
 
 **Scraping:** 15 sources are wired into the live pipeline via `ingestion/sources/`
-(`get_enabled_sources()`): **RSS-dated** — CNA, Mothership, Straits Times,
-MustShareNews, The Independent, Yahoo, Reddit; **HTML-scraped** — AsiaOne, Stomp,
+(`get_enabled_sources()`): **RSS-dated MSM** — CNA, Mothership, Straits Times,
+MustShareNews, The Independent, Yahoo; **HTML-scraped MSM** — AsiaOne, Stomp,
 Zaobao, Shin Min, Berita Harian, Tamil Murasu, whose listing pages carry no date,
 so `scrapers.resolve_published_at()` reads it from the article (URL path, else
-meta tags); **corroboration** — Google News RSS, which aggregates arbitrary
-publishers and is the main discovery channel in practice.
+meta tags); **corroboration** — Google News RSS, the main discovery channel in
+practice; **signal** — Reddit (r/singapore, r/singaporeraw) and EDMW/HWZ.
 
 A source must supply `published_at` to be registered: a dateless candidate
 bypasses the recency watermark, is re-processed by Stage 1/2 every pass, and
 can't be approved until an operator sets the date by hand (QA H3).
 
-**EDMW/HWZ is registered** (Phase 3, commit `522e09d`) as `source_type='signal'`.
-Guardrail #2 is enforced in `orchestrator.py` via
-`source_allowlist.is_signal_source()` — never a plain `== 'edmw'`, because
-`scrape_edmw` emits the canonical `'signal'` and that vocabulary mismatch
+**EDMW/HWZ and Reddit are registered as `source_type='signal'`** (EDMW Phase 3,
+commit `522e09d`; Reddit July 2026). Guardrail #2 is enforced in `orchestrator.py`
+via `source_allowlist.is_signal_source()` — never a plain `== 'edmw'`, because
+`scrape_edmw` and `scrape_reddit` both emit the canonical `'signal'` and that vocabulary mismatch
 silently breached the guardrail once already (`92d6305`).
 
 `google_news_rss` filters candidates on the RSS entry's own `pubDate` **before**
@@ -254,6 +259,13 @@ file had ever captured them, so a rebuild-from-migrations was impossible.
 decision insert is silently rejected and the learning loop records nothing.
 The agents degrade gracefully when the ops tables are missing (they log to
 stdout and continue) — so a missing migration looks like silence, not an error.
+
+**012 (reddit as signal)** flips the two reddit rows in `sources` to
+`type='signal'`. Reddit was reclassified from a quoted source to a signal (UGC,
+not journalism; post date ≠ event date). The code change (`scrape_reddit` emits
+`'signal'`) is what enforces it in the pipeline; 012 is the defensive layer so
+`classify()` resolves reddit domains to signal too. Not required for the code
+path to work.
 
 **RLS note:** `incidents` anon reads are filtered to `is_published = TRUE`
 (`anon_read_published_incidents`), so the **publishable key cannot see drafts at all** —

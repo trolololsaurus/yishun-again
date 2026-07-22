@@ -261,13 +261,18 @@ existing incident instead of minting a duplicate. The reddit scraper and adapter
 real `item['date']` with an empty one in `build_queue_row`'s `{**item, **draft}` merge), and
 `_judge_pair` reads `incident_date or date or 'unknown'` so an empty value reads honestly as
 unknown. Covered by `test_consolidation_date.py`.
-**Still open — reddit dates are POST dates, not EVENT dates.** `published_at` from reddit RSS
-is when the thread was posted, which is correct for the recency watermark but wrong as the
-incident's event date: a reddit thread reviving an old case gets a recent date, so the final
-card can be mis-dated and an old event can look new. The threading fix mitigates the
-duplicate symptom (the judge now has a date and the prompt handles late/follow-up reports),
-but the clean fix is to derive the event date from content for reddit rather than default to
-the post date — a Stage-2 behaviour change that needs its own eval.
+**Reddit post-date-vs-event-date — RESOLVED by reclassifying reddit as a signal.** ✅
+`published_at` from reddit RSS is the POST date, not the event date, so using it as the
+incident date made old events resurface as new cards. Operator decision (July 2026): reddit
+is user-generated discussion, not verifiable journalism — reclassified from `source_type='reddit'`
+to `'signal'` (same tier as EDMW). `scrape_reddit` now emits `'signal'`, so a reddit URL is
+stripped from `source_urls` (guardrail #2) and a reddit-only item can never publish; MSM is
+the sole authority for the citation and the event date. A reddit signal about an existing
+incident consolidates as forum buzz / a link rather than a duplicate. Migration **012**
+flips the two reddit rows in `sources` to `type='signal'` (defensive: makes `classify()`
+resolve reddit domains to signal too). The post date still drives the recency watermark, so
+old reddit posts aren't re-fetched. Verified live: 40/40 reddit candidates now come through
+as signal.
 
 ### Still open from this sweep
 - **A6 — ephemeral budget file** 🔴 `ingestion/stage1_daily_usage.json` and
