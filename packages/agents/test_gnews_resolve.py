@@ -20,6 +20,8 @@ from unittest import mock
 import importlib
 
 h = importlib.import_module("scrapers._gnews_helpers")
+gn = importlib.import_module("ingestion.sources.google_news_rss")
+from ingestion.contracts import SourceBlockedError, SourceUnavailableError
 
 PUBLISHER_URL = "https://www.channelnewsasia.com/singapore/yishun-fatal-accident-1234567"
 ARTICLE_ID = "CBMiZ2h0dHBzOi8vZXhhbXBsZS5vcmcvYXJ0aWNsZQ"  # opaque blob, not decodable
@@ -159,6 +161,87 @@ with _patch_client(get_handler=lambda url: _Resp(url=PUBLISHER_URL)):
 with _patch_client(get_handler=lambda url: _Resp(url="https://news.google.com/foo")):
     check("10 redirect back to g.news degrades to raw_url",
           h._resolve_redirect(LEGACY) == LEGACY)
+
+# ── 11/12. fetch() keyword-query failure isolation ───────────────────────────
+# WHY: Google News 503s from the Cloud Run datacenter IP intermittently and is
+# the DOMINANT discovery channel. One flaky keyword raising out of the bare loop
+# used to discard every candidate already gathered from earlier keywords (a
+# single 503 lost all 11). fetch() must now keep the successful candidates and
+# only raise SourceBlockedError when EVERY query fails.
+
+
+def _feed(idx):
+    """A one-entry feedparser-style stand-in whose entry matches YISHUN_KEYWORDS
+    and carries a unique wrapper URL so each keyword contributes one candidate.
+    No published_parsed -> published_at is None; with since=None nothing is
+    skipped as stale, so each success reliably yields exactly one candidate."""
+    entry = {
+        "link": f"https://news.google.com/rss/articles/BLOB{idx}?oc=5",
+        "title": f"Yishun incident {idx} - CNA",
+        "summary": "yishun something happened",
+    }
+    return mock.MagicMock(entries=[entry])
+
+
+def _fetch_factory(fail_at, exc_type):
+    """Return a _fetch_feed replacement that raises exc_type at the given
+    zero-based call indices and returns a fresh feed otherwise."""
+    state = {"n": 0}
+
+    def _fetch(query):
+        i = state["n"]
+        state["n"] += 1
+        if i in fail_at:
+            raise exc_type(f"boom on {query!r}")
+        return _feed(i)
+
+    return _fetch
+
+
+def _run_fetch(fail_at, exc_type):
+    """Run gn.fetch(None) fully offline: _fetch_feed / _resolve_redirect / sleep
+    all patched (no network, no real backoff)."""
+    with mock.patch.object(gn, "_fetch_feed", side_effect=_fetch_factory(fail_at, exc_type)), \
+         mock.patch.object(gn, "_resolve_redirect", side_effect=lambda u: u), \
+         mock.patch.object(gn.time, "sleep", lambda *a, **k: None):
+        return gn.GoogleNewsRSSSource().fetch(None)
+
+
+n_kw = len(gn.YISHUN_KEYWORDS)
+
+# 11: one MIDDLE keyword (index 1) blocks; the rest succeed. fetch() must NOT
+# raise, must keep every candidate from the successful keywords, and must not
+# lose the one gathered BEFORE the failing keyword (index 0).
+try:
+    got = _run_fetch(fail_at={1}, exc_type=SourceBlockedError)
+    raised_11 = False
+except Exception:
+    got, raised_11 = [], True
+check("11a one blocked keyword does not raise", raised_11 is False)
+check("11b successful keywords all kept (n-1 candidates)", len(got) == n_kw - 1)
+check("11c candidate gathered BEFORE the failure is preserved",
+      any(c.url == "https://news.google.com/rss/articles/BLOB0?oc=5" for c in got))
+
+# 12a: EVERY query fails with a transient error -> SourceBlockedError. Transient
+# errors don't trip the first-query fast path, so this exercises the
+# end-of-loop "nothing succeeded" raise.
+try:
+    _run_fetch(fail_at=set(range(n_kw)), exc_type=SourceUnavailableError)
+    err_12a = None
+except Exception as e:
+    err_12a = e
+check("12a all queries fail -> SourceBlockedError",
+      isinstance(err_12a, SourceBlockedError))
+
+# 12b: a hard block on the very FIRST query (nothing collected yet) fails fast
+# with SourceBlockedError — the full datacenter-IP-block case.
+try:
+    _run_fetch(fail_at={0}, exc_type=SourceBlockedError)
+    err_12b = None
+except Exception as e:
+    err_12b = e
+check("12b hard block on first query fails fast (SourceBlockedError)",
+      isinstance(err_12b, SourceBlockedError))
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
