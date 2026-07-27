@@ -70,6 +70,36 @@ def _log(activity, level: str, event: str, message: str,
         logger.debug("activity logging failed (non-fatal): %s", exc)
 
 
+def _make_merge_judge():
+    """
+    A judge(a, b) -> bool for clustering — 'are these two candidates the same
+    event?' — wrapping the SAME Haiku pair judge consolidation already uses, so
+    grouping and archive-dedup apply one consistent standard. Returns None if
+    Anthropic isn't configured (clustering then degrades to keyword-only). Each
+    call never raises out of `judge` (clustering treats a raise as "not same").
+    """
+    try:
+        from consolidation.check import _get_anthropic_client, _judge_pair
+        from consolidation.rules import UPDATE_MATCH_THRESHOLD
+        client = _get_anthropic_client()
+    except Exception as exc:                          # noqa: BLE001
+        logger.warning("clustering: no merge judge (%s) — keyword-only grouping", exc)
+        return None
+
+    def judge(a, b) -> bool:
+        ca = {"title": getattr(a, "title", ""), "summary": getattr(a, "content", ""),
+              "url": getattr(a, "url", ""),
+              "incident_date": a.published_at.isoformat() if getattr(a, "published_at", None) else ""}
+        ex = {"id": "cluster-peer", "title": getattr(b, "title", ""),
+              "summary": getattr(b, "content", ""),
+              "incident_date": b.published_at.isoformat() if getattr(b, "published_at", None) else ""}
+        j = _judge_pair(client, ca, ex)
+        return bool(j.get("same_incident")) and \
+            float(j.get("same_incident_confidence", 0.0)) >= UPDATE_MATCH_THRESHOLD
+
+    return judge
+
+
 def _classify_error(exc: Exception) -> str | None:
     """
     Return a circuit-breaker error class for systemic API failures, or None
@@ -445,12 +475,23 @@ def run_ingestion_pass(
         if shadow_cluster and passed_candidates:
             try:
                 from ingestion import clustering
-                clusters = clustering.cluster_candidates(passed_candidates)
+                # Use the CONFIRMED path (each merge LLM-gated) so the shadow logs
+                # the REAL grouping decisions, not the loose keyword pre-clusters
+                # (which over-merge — the reason confirmation exists). Bounded by
+                # CLUSTER_MAX_JUDGES, so shadow costs at most that many Haiku calls.
+                judge = _make_merge_judge()
+                if judge is not None:
+                    clusters, cstats = clustering.cluster_with_confirmation(passed_candidates, judge)
+                else:
+                    clusters, cstats = clustering.cluster_candidates(passed_candidates), {}
                 stats = clustering.summarize(clusters)
+                stats.update(cstats)
                 notes.append(
                     f"[shadow-cluster] {stats['candidates']} candidate(s) -> "
                     f"{stats['clusters']} cluster(s); {stats['multi_member_clusters']} multi-member, "
-                    f"~{stats['sonnet_drafts_saved_estimate']} Sonnet draft(s) would be saved."
+                    f"~{stats['sonnet_drafts_saved_estimate']} Sonnet draft(s) would be saved "
+                    f"(edges: {cstats.get('edges_confirmed', '?')} confirmed / "
+                    f"{cstats.get('edges_judged', '?')} judged)."
                 )
                 _log(activity, "info", "shadow_cluster", str(stats))
                 for cl in clusters:

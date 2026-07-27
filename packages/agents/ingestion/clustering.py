@@ -62,6 +62,30 @@ CLUSTER_MIN_OVERLAP = int(os.getenv("CLUSTER_MIN_OVERLAP", "2"))
 CLUSTER_DATE_WINDOW_DAYS = int(os.getenv("CLUSTER_DATE_WINDOW_DAYS", "3"))
 # Blast-radius cap: no single cluster may auto-merge more than this many members.
 CLUSTER_MAX_SIZE = int(os.getenv("CLUSTER_MAX_SIZE", "6"))
+# Ceiling on LLM merge-confirmation calls per pass (cost + latency bound). Edges
+# are judged in overlap-rank order, so genuine duplicates (which share the
+# distinctive tokens) are confirmed first; unjudged edges default to NO merge.
+CLUSTER_MAX_JUDGES = int(os.getenv("CLUSTER_MAX_JUDGES", "20"))
+
+# Generic Yishun-incident vocabulary that is NOT distinctive between events and
+# so must not, on its own, propose a merge. Shadow validation showed the pure
+# keyword pass chaining a beehive story, a car crash and a fatal fall into one
+# cluster because they all share "block"/"flat"/"fire"/"dead" inside the date
+# window and union-find fuses the transitive blob. Dropping these tokens from the
+# CLUSTERING keyword set (not consolidation's) cuts most false edges; the LLM
+# confirmation below is the real precision layer. Deliberately keeps act words
+# (stab, fire-as-verb is ambiguous but kept), names, and numbers (block 107, "42").
+_GENERIC_TOKENS = frozenset({
+    "block", "blk", "flat", "unit", "hdb", "resident", "residents", "void", "deck",
+    "road", "street", "avenue", "lane", "ring", "near", "along", "outside", "home",
+    "house", "estate", "carpark", "car", "park", "hospital", "hospitalised",
+    "sends", "sent", "after", "before", "found", "dead", "dies", "died", "death",
+    "fatal", "rushed", "scene", "case", "reported", "video", "footage", "viral",
+})
+
+
+def _kw(text: str) -> set[str]:
+    return extract_keywords(text) - _GENERIC_TOKENS
 
 
 def _is_signal(c) -> bool:
@@ -114,7 +138,7 @@ def cluster_candidates(
     if n <= 1:
         return [[c] for c in candidates]
 
-    kw = [extract_keywords(_text(c)) for c in candidates]
+    kw = [_kw(_text(c)) for c in candidates]
     dates = [_pub_date(c) for c in candidates]
     signal = [_is_signal(c) for c in candidates]
 
@@ -141,22 +165,9 @@ def cluster_candidates(
         if anchor[i]:
             groups.setdefault(uf.find(i), []).append(i)
 
-    # Attach each non-anchor (signal or dateless) member to its single best
-    # keyword-matching anchor cluster — never bridging two. Standalone if none.
-    anchor_roots = list(groups.keys())
-    for i in range(n):
-        if anchor[i]:
-            continue
-        best_root, best_score = None, min_overlap - 1
-        for root in anchor_roots:
-            # Score against the cluster's combined keywords (any member).
-            score = max(keyword_overlap(kw[i], kw[m]) for m in groups[root])
-            if score > best_score:
-                best_root, best_score = root, score
-        if best_root is not None:
-            groups[best_root].append(i)
-        else:
-            groups[id(candidates[i])] = [i]  # standalone; unique key
+    # Signal members attach to their best keyword cluster (never bridging);
+    # dateless MSM members stay standalone (no unconfirmed keyword-merge).
+    _attach_non_anchors(candidates, kw, anchor, signal, groups, min_overlap)
 
     clusters = [[candidates[i] for i in sorted(idxs)] for idxs in groups.values()]
     # Deterministic order: by the first member's input position.
@@ -168,6 +179,118 @@ def cluster_candidates(
 def oversized(cluster, max_size: int = CLUSTER_MAX_SIZE) -> bool:
     """A cluster the caller must NOT auto-merge (blast-radius cap)."""
     return len(cluster) > max_size
+
+
+def cluster_with_confirmation(
+    candidates,
+    judge,
+    *,
+    min_overlap: int = CLUSTER_MIN_OVERLAP,
+    date_window_days: int = CLUSTER_DATE_WINDOW_DAYS,
+    max_judges: int = CLUSTER_MAX_JUDGES,
+) -> tuple[list[list], dict]:
+    """
+    Cluster with an LLM confirming EVERY merge — the precision layer.
+
+    The keyword pre-filter is high-recall but low-precision: it proposes edges
+    between dated MSM anchors that share >= min_overlap distinctive tokens within
+    the date window. Left to union-find those loose edges chain unrelated events
+    into a blob (shadow proved it). So here every proposed edge is put to
+    `judge(a, b) -> bool` ("same event?"), and ONLY confirmed edges are unioned.
+    A generic-token bridge (beehive vs fatal fall) is rejected and never merges.
+
+    `judge` is injected (the orchestrator wraps the Haiku pair judge) so this
+    module stays offline-testable. Edges are judged in overlap-rank order and
+    capped at `max_judges`; an unjudged or errored edge defaults to NO merge
+    (split-safe). Signal/dateless members then attach to at most one confirmed
+    cluster, never bridging — same as the pure pass.
+
+    Returns (clusters, stats).
+    """
+    n = len(candidates)
+    if n <= 1:
+        return ([[c] for c in candidates],
+                {"edges_proposed": 0, "edges_judged": 0, "edges_confirmed": 0, "judge_errors": 0})
+
+    kw = [_kw(_text(c)) for c in candidates]
+    dates = [_pub_date(c) for c in candidates]
+    signal = [_is_signal(c) for c in candidates]
+    anchor = [(not signal[i]) and (dates[i] is not None) for i in range(n)]
+
+    # Propose anchor edges, ranked by overlap (genuine dups share more tokens, so
+    # they are judged first and survive the cap).
+    edges = []
+    for i in range(n):
+        if not anchor[i]:
+            continue
+        for j in range(i + 1, n):
+            if not anchor[j]:
+                continue
+            ov = keyword_overlap(kw[i], kw[j])
+            if ov < min_overlap:
+                continue
+            if abs((dates[i] - dates[j]).days) > date_window_days:
+                continue
+            edges.append((ov, i, j))
+    edges.sort(reverse=True)
+
+    uf = _UnionFind(n)
+    judged = confirmed = errors = 0
+    for ov, i, j in edges:
+        if judged >= max_judges:
+            logger.info("clustering: hit CLUSTER_MAX_JUDGES=%d; %d edge(s) left unjudged (kept split)",
+                        max_judges, len(edges) - judged)
+            break
+        if uf.find(i) == uf.find(j):
+            continue  # already in the same cluster via a confirmed path — don't pay again
+        judged += 1
+        try:
+            same = bool(judge(candidates[i], candidates[j]))
+        except Exception as exc:                  # noqa: BLE001
+            errors += 1
+            logger.warning("clustering: merge judge failed for a pair (kept split): %s", exc)
+            continue
+        if same:
+            uf.union(i, j)
+            confirmed += 1
+
+    groups: dict[int, list[int]] = {}
+    for i in range(n):
+        if anchor[i]:
+            groups.setdefault(uf.find(i), []).append(i)
+
+    _attach_non_anchors(candidates, kw, anchor, signal, groups, min_overlap)
+
+    clusters = [[candidates[i] for i in sorted(idxs)] for idxs in groups.values()]
+    idx_of = {id(c): k for k, c in enumerate(candidates)}
+    clusters.sort(key=lambda cl: idx_of[id(cl[0])])
+    stats = {"edges_proposed": len(edges), "edges_judged": judged,
+             "edges_confirmed": confirmed, "judge_errors": errors}
+    return clusters, stats
+
+
+def _attach_non_anchors(candidates, kw, anchor, signal, groups, min_overlap):
+    """
+    Attach ONLY signal members (reddit/EDMW) to their best keyword-matching
+    cluster — low-stakes, and their whole purpose is to corroborate a story with
+    forum buzz. A dateless MSM member is NOT attached by keyword alone: an
+    unconfirmed merge of a real reporting source is the same false-merge risk the
+    LLM confirmation exists to prevent, so it stays STANDALONE (its own row) until
+    a human links it. Mutates `groups` in place.
+    """
+    anchor_roots = list(groups.keys())
+    for i in range(len(candidates)):
+        if anchor[i]:
+            continue
+        if signal[i]:
+            best_root, best_score = None, min_overlap - 1
+            for root in anchor_roots:
+                score = max(keyword_overlap(kw[i], kw[m]) for m in groups[root])
+                if score > best_score:
+                    best_root, best_score = root, score
+            groups.setdefault(best_root if best_root is not None else id(candidates[i]), []).append(i)
+        else:
+            groups[id(candidates[i])] = [i]  # dateless MSM: standalone, never keyword-merged
 
 
 def build_cluster_stage2_input(cluster, item_of) -> dict:
