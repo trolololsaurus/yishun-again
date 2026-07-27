@@ -51,6 +51,13 @@ BLOCK_MARKERS = [
 ]
 
 PER_KEYWORD_DELAY = (4.0, 6.0)  # polite random delay between keyword queries (s)
+# Jittered backoff after a FAILED keyword query. Google News 503s from the Cloud
+# Run datacenter IP ~3 days in 14; those are transient throttles, not bans, so we
+# pause a little longer than the polite delay before the next keyword to let the
+# throttle clear. Same shape as PER_KEYWORD_DELAY (a random.uniform tuple) and
+# capped at one sleep per keyword over a fixed-length list, so the accumulated
+# backoff can never blow the pass deadline.
+BLOCK_BACKOFF = (5.0, 9.0)
 REQUEST_TIMEOUT = 20
 
 # Hard cap on redirect resolutions in one fetch. Steady state is ~50 (only
@@ -132,6 +139,14 @@ class GoogleNewsRSSSource:
 
         Issues one "yishun {keyword}" query per entry in YISHUN_KEYWORDS,
         with a polite random delay between queries.
+
+        Each keyword query is failure-isolated. Google News returns 503 from the
+        Cloud Run datacenter IP intermittently (~3 days in 14), and this is the
+        DOMINANT discovery channel — so a single failing query (503, block
+        marker, network, parse error) must NOT discard the candidates already
+        gathered from earlier keywords, which is exactly what a raise out of the
+        bare loop used to do. We surface a SourceBlockedError only when EVERY
+        query fails; a partial result is degraded, not dead.
         """
         candidates: list[Candidate] = []
         seen_urls: set[str] = set()
@@ -139,68 +154,108 @@ class GoogleNewsRSSSource:
         resolves = 0
         skipped_stale = 0
 
+        # Distinguish "one flaky keyword" from "we are fully blocked": raise only
+        # when nothing succeeded. last_error carries the reason into that raise.
+        successes = 0
+        failures = 0
+        last_error: Exception | None = None
+
         for i, keyword in enumerate(YISHUN_KEYWORDS):
             query = f"yishun {keyword}"
-            feed = _fetch_feed(query)
 
-            for entry in feed.entries:
-                raw_url = entry.get("link", "").strip()
-                if not raw_url:
-                    continue
+            try:
+                feed = _fetch_feed(query)
 
-                # The same article surfaces under several keywords. Dedup on the
-                # wrapper before resolving; identical wrappers are the common case.
-                if raw_url in seen_raw:
-                    continue
-                seen_raw.add(raw_url)
+                for entry in feed.entries:
+                    raw_url = entry.get("link", "").strip()
+                    if not raw_url:
+                        continue
 
-                title = _entry_title(entry)
-                summary = strip_html(entry.get("summary", "") or entry.get("description", ""))
-                if not content_matches_keywords(f"{title} {summary}"):
-                    continue
+                    # The same article surfaces under several keywords. Dedup on
+                    # the wrapper before resolving; identical wrappers are common.
+                    if raw_url in seen_raw:
+                        continue
+                    seen_raw.add(raw_url)
 
-                # ── Recency BEFORE redirect resolution ───────────────────────
-                # _resolve_redirect is a network round-trip per entry, and this
-                # feed returns ~650 entries of which ~50 are newer than the
-                # watermark. Resolving first meant ~600 HTTP calls whose results
-                # RecencyFilter discarded seconds later — that alone consumed the
-                # entire 900s pass budget and starved the sources queued behind
-                # this one. The RSS entry already carries its own date, so
-                # staleness is knowable for free.
-                #
-                # Dateless entries are NEVER skipped here: routing them to review
-                # rather than dropping them is deliberate (INGESTION_DESIGN §5.1),
-                # and a missing pubDate must not become a silent delete.
-                published_at = _entry_published_at(entry)
-                if since is not None and published_at is not None and published_at <= since:
-                    skipped_stale += 1
-                    continue
+                    title = _entry_title(entry)
+                    summary = strip_html(entry.get("summary", "") or entry.get("description", ""))
+                    if not content_matches_keywords(f"{title} {summary}"):
+                        continue
 
-                if resolves >= MAX_RESOLVES_PER_FETCH:
-                    # Safety valve, not an expected path: a watermark reset would
-                    # otherwise make one pass try to resolve the whole feed.
-                    logger.warning(
-                        "google_news_rss: hit MAX_RESOLVES_PER_FETCH=%d — "
-                        "%d candidate(s) left unresolved this pass",
-                        MAX_RESOLVES_PER_FETCH, len(feed.entries),
-                    )
-                    break
+                    # ── Recency BEFORE redirect resolution ───────────────────
+                    # _resolve_redirect is a network round-trip per entry, and
+                    # this feed returns ~650 entries of which ~50 are newer than
+                    # the watermark. Resolving first meant ~600 HTTP calls whose
+                    # results RecencyFilter discarded seconds later — that alone
+                    # consumed the entire 900s pass budget and starved the
+                    # sources queued behind this one. The RSS entry already
+                    # carries its own date, so staleness is knowable for free.
+                    #
+                    # Dateless entries are NEVER skipped here: routing them to
+                    # review rather than dropping them is deliberate
+                    # (INGESTION_DESIGN §5.1), and a missing pubDate must not
+                    # become a silent delete.
+                    published_at = _entry_published_at(entry)
+                    if since is not None and published_at is not None and published_at <= since:
+                        skipped_stale += 1
+                        continue
 
-                real_url = _resolve_redirect(raw_url)
-                resolves += 1
-                if real_url in seen_urls:
-                    continue
-                seen_urls.add(real_url)
+                    if resolves >= MAX_RESOLVES_PER_FETCH:
+                        # Safety valve, not an expected path: a watermark reset
+                        # would otherwise make one pass try to resolve the whole
+                        # feed.
+                        logger.warning(
+                            "google_news_rss: hit MAX_RESOLVES_PER_FETCH=%d — "
+                            "%d candidate(s) left unresolved this pass",
+                            MAX_RESOLVES_PER_FETCH, len(feed.entries),
+                        )
+                        break
 
-                candidates.append(Candidate(
-                    title=title,
-                    content=summary,
-                    url=real_url,
-                    source_name=_gnews_source_name(entry),
-                    source_type="rss",
-                    published_at=published_at,
-                    discovered_via="google_news_rss",
-                ))
+                    real_url = _resolve_redirect(raw_url)
+                    resolves += 1
+                    if real_url in seen_urls:
+                        continue
+                    seen_urls.add(real_url)
+
+                    candidates.append(Candidate(
+                        title=title,
+                        content=summary,
+                        url=real_url,
+                        source_name=_gnews_source_name(entry),
+                        source_type="rss",
+                        published_at=published_at,
+                        discovered_via="google_news_rss",
+                    ))
+
+            except (SourceBlockedError, SourceUnavailableError) as exc:
+                # Isolate the flaky keyword. Pre-fix this exception propagated out
+                # of fetch() and threw away every candidate already collected from
+                # earlier keywords — one 503 on keyword 3 also lost keywords 1–2
+                # and blanked the dominant channel for the whole pass.
+                failures += 1
+                last_error = exc
+
+                # A hard block on the very FIRST query, with nothing gathered yet,
+                # is almost certainly a full datacenter-IP block (the same IP
+                # serves all queries): fail fast instead of burning a backoff on
+                # each remaining keyword to prove what the first block told us.
+                if successes == 0 and i == 0 and isinstance(exc, SourceBlockedError):
+                    raise
+
+                logger.warning(
+                    "google_news_rss: keyword %r failed (%s); %d/%d queries "
+                    "failed so far — continuing with the rest",
+                    keyword, exc, failures, i + 1,
+                )
+
+                # Transient throttle → jittered backoff before the next keyword.
+                # One bounded sleep per keyword over a fixed-length list, so it
+                # can never blow the pass deadline.
+                if i < len(YISHUN_KEYWORDS) - 1:
+                    time.sleep(random.uniform(*BLOCK_BACKOFF))
+                continue
+
+            successes += 1
 
             if resolves >= MAX_RESOLVES_PER_FETCH:
                 break
@@ -208,9 +263,19 @@ class GoogleNewsRSSSource:
             if i < len(YISHUN_KEYWORDS) - 1:
                 time.sleep(random.uniform(*PER_KEYWORD_DELAY))
 
+        # Every query failed → fully blocked/unavailable, not merely degraded.
+        # Raise so fallback.py reacts: a silent [] here would read as "no Yishun
+        # news" (the empty-result contract) and hide an outage of the dominant
+        # discovery channel. Reported as a block per the failure-isolation rule.
+        if successes == 0:
+            raise SourceBlockedError(
+                f"google_news_rss: all {len(YISHUN_KEYWORDS)} keyword queries "
+                f"failed; last error: {last_error}"
+            ) from last_error
+
         logger.info(
-            "google_news_rss: %d candidate(s); %d resolved, %d stale entries skipped "
-            "before resolution",
-            len(candidates), resolves, skipped_stale,
+            "google_news_rss: %d candidate(s); %d resolved, %d stale entries "
+            "skipped before resolution; %d/%d keyword queries failed",
+            len(candidates), resolves, skipped_stale, failures, len(YISHUN_KEYWORDS),
         )
         return candidates

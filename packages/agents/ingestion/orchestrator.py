@@ -33,6 +33,7 @@ KNOWN v1 GAPS (flagged, not fixed here — see chat for detail):
 """
 
 import logging
+import os
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
@@ -110,6 +111,19 @@ def run_ingestion_pass(
     consecutive: dict[str, int] = {}     # circuit breaker: error-class → consecutive count
     total_sleep_seconds: float = 0.0     # throttle visibility
     deadline = started_at + timedelta(seconds=max_duration_seconds)
+
+    # Gather -> cluster -> write. Staged rollout (owner chose shadow-first):
+    #   off    — current per-candidate path, byte-identical (default)
+    #   shadow — current path UNCHANGED, but also collect the Stage-1-passed
+    #            candidates and log what clustering WOULD group, so we can validate
+    #            grouping on live data before it ever touches a write.
+    #   on     — write one row per cluster (not wired yet; treated as off + warned)
+    cluster_mode = os.getenv("CLUSTER_BEFORE_WRITE", "off").strip().lower()
+    if cluster_mode == "on":
+        logger.warning("CLUSTER_BEFORE_WRITE=on is not wired yet — running in shadow mode instead")
+        cluster_mode = "shadow"
+    shadow_cluster = cluster_mode == "shadow"
+    passed_candidates: list = []         # Stage-1-passed, for shadow clustering only
 
     try:
         client = get_supabase_client()
@@ -276,6 +290,11 @@ def run_ingestion_pass(
                         consecutive.clear()
                         continue
 
+                    # Shadow clustering observes what passes Stage 1; it never
+                    # alters the write path below (still one draft per candidate).
+                    if shadow_cluster:
+                        passed_candidates.append(candidate)
+
                     # ── Stage 2 ────────────────────────────────────────────
                     # Legal guardrail #2: an EDMW/signal URL is NEVER a quoted
                     # source. EDMW candidates contribute only edmw_signal_count;
@@ -418,6 +437,29 @@ def run_ingestion_pass(
 
         if abort_pass:
             notes.append(f"Pass aborted: {abort_pass}")
+
+        # ── Shadow clustering: log what gather->cluster->write WOULD do ──────
+        # Pure analysis of the candidates that passed Stage 1 this pass; writes
+        # nothing, so it is safe to run in production to validate grouping before
+        # the 'on' path is wired. Wrapped: an analysis error must not fail a pass.
+        if shadow_cluster and passed_candidates:
+            try:
+                from ingestion import clustering
+                clusters = clustering.cluster_candidates(passed_candidates)
+                stats = clustering.summarize(clusters)
+                notes.append(
+                    f"[shadow-cluster] {stats['candidates']} candidate(s) -> "
+                    f"{stats['clusters']} cluster(s); {stats['multi_member_clusters']} multi-member, "
+                    f"~{stats['sonnet_drafts_saved_estimate']} Sonnet draft(s) would be saved."
+                )
+                _log(activity, "info", "shadow_cluster", str(stats))
+                for cl in clusters:
+                    if len(cl) > 1:
+                        titles = " | ".join((getattr(c, "title", "") or "")[:50] for c in cl)
+                        _log(activity, "info", "shadow_cluster_group",
+                             f"WOULD MERGE {len(cl)}: {titles}")
+            except Exception as exc:                  # noqa: BLE001
+                logger.warning("run_ingestion_pass: shadow clustering failed (non-fatal): %s", exc)
 
         if total_sleep_seconds > 0:
             notes.append(
