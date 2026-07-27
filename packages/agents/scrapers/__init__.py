@@ -138,6 +138,32 @@ def _safe_date(y, m, d) -> date | None:
         return None
 
 
+def _date_from_html(html: str) -> date | None:
+    """Extract a publication date from article HTML via the meta patterns.
+    Shared between the direct fetch and the Wayback fallback so both read the
+    date the same way."""
+    for pat in _PUB_META_PATTERNS:
+        hit = re.search(pat, html, re.IGNORECASE)
+        if not hit:
+            continue
+        iso = _ISO_DATE_RE.match(hit.group(1).strip())
+        if iso and (found := _safe_date(*iso.groups())):
+            return found
+    return None
+
+
+def _wayback_html(url: str) -> str | None:
+    """Newest Wayback snapshot HTML for `url`, or None. Never raises — a fetch
+    failure just yields None and the caller treats the candidate as dateless."""
+    try:
+        from .fetch_strategy import WaybackSnapshot
+        result = WaybackSnapshot().fetch(url)
+    except Exception as exc:  # import or fetch failure must not crash the pass
+        logger.debug("resolve_published_at: wayback fallback failed for %s: %s", url[:80], exc)
+        return None
+    return result.html if result else None
+
+
 def resolve_published_at(url: str, *, timeout: int = 10) -> date | None:
     """
     Best-effort publication date for an article URL.
@@ -154,22 +180,25 @@ def resolve_published_at(url: str, *, timeout: int = 10) -> date | None:
     if m and (found := _safe_date(*m.groups())):
         return found
 
-    # 2. The article's own metadata.
+    # 2. The article's own metadata (direct fetch).
+    html = None
     try:
         req = urllib.request.Request(url, headers=BROWSER_HEADERS)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             html = resp.read(_HTML_READ_CAP).decode("utf-8", errors="ignore")
     except Exception as exc:
-        logger.debug("resolve_published_at: fetch failed for %s: %s", url[:80], exc)
-        return None
+        logger.debug("resolve_published_at: direct fetch failed for %s: %s", url[:80], exc)
 
-    for pat in _PUB_META_PATTERNS:
-        hit = re.search(pat, html, re.IGNORECASE)
-        if not hit:
-            continue
-        iso = _ISO_DATE_RE.match(hit.group(1).strip())
-        if iso and (found := _safe_date(*iso.groups())):
-            return found
+    if html and (found := _date_from_html(html)):
+        return found
+
+    # 3. Direct fetch was blocked or carried no date — fall back to the newest
+    #    Wayback snapshot before giving up. Recovering the date here keeps the
+    #    candidate from being stranded dateless-and-unapprovable (QA H3) just
+    #    because the live article is behind a bot wall.
+    archived = _wayback_html(url)
+    if archived and (found := _date_from_html(archived)):
+        return found
 
     logger.debug("resolve_published_at: no date found for %s", url[:80])
     return None

@@ -12,6 +12,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from . import BROWSER_HEADERS, ScraperError, content_matches_keywords, raise_scrape_failure, resolve_published_at, strip_html
+from .fetch_strategy import fetch_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,13 @@ def _parse_listing(html: str) -> list[dict]:
 
 def _fetch_body(client: httpx.Client, url: str) -> str:
     html = _fetch(client, url)
+    if not html:
+        # The shared-client fetch was blocked/failed. Route through the per-URL
+        # fallback chain (fresh direct GET, then Wayback) so a blocked AsiaOne
+        # article recovers its body from the archive instead of returning empty —
+        # an empty body strands the candidate dateless-and-unapprovable (QA H3).
+        result = fetch_with_fallback(url)
+        html = result.html if result else None
     if not html:
         return ""
     soup = BeautifulSoup(html, "lxml")
