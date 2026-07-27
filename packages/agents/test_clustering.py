@@ -96,10 +96,13 @@ cs = cl.cluster_candidates([a])
 check("one candidate -> one cluster of one", len(cs) == 1 and len(cs[0]) == 1)
 check("empty input -> empty", cl.cluster_candidates([]) == [])
 
-# 8. Dateless MSM member attaches by keyword, doesn't bridge distinct events.
+# 8. Dateless MSM member stays STANDALONE — never keyword-merged without an
+#    event date to gate it (an unconfirmed merge of a real source is the exact
+#    false-merge risk; only signals attach unconfirmed).
 dateless = C("Yishun market stabbing latest", "stabbing market block 873", "u/dl", published_at=None)
 cs = cl.cluster_candidates([a, b, dateless])
-check("dateless MSM member attaches to its story", len(cs) == 1 and len(cs[0]) == 3)
+check("dated pair still merges; dateless MSM stays its own cluster",
+      len(cs) == 2 and sorted(len(x) for x in cs) == [1, 2])
 
 print("\nbuild_cluster_stage2_input:\n")
 
@@ -136,6 +139,50 @@ big = [C(f"Yishun stabbing market block 873 report {i}", "stabbing market block 
 cs = cl.cluster_candidates(big)
 check("8 identical-story members cluster together", len(cs) == 1 and len(cs[0]) == 8)
 check("oversized() flags a cluster past the cap", cl.oversized(cs[0], max_size=6))
+
+print("\ncluster_with_confirmation (LLM-gated merges):\n")
+
+# The keyword pre-filter proposes a and b (same story) AND a generic-token bridge
+# to an unrelated same-window event; the judge confirms only the real one.
+bridge = C("Fire at Yishun coffeeshop stall", "coffeeshop fire block 873", "u/br", published_at=date(2026, 7, 1))
+
+
+def judge_same_story(x, y):
+    # 'same event' only when both are the market stabbing.
+    stab = lambda c_: "stab" in (c_.title + c_.content).lower()
+    return stab(x) and stab(y)
+
+
+clusters, stats = cl.cluster_with_confirmation([a, b, bridge], judge_same_story)
+check("confirmed merge keeps a+b together", any(len(c_) == 2 for c_ in clusters))
+check("unconfirmed bridge (coffeeshop fire) stays separate",
+      any(len(c_) == 1 and c_[0] is bridge for c_ in clusters), f"-> {[[m.title[:20] for m in c_] for c_ in clusters]}")
+check("stats report a confirmed edge", stats["edges_confirmed"] == 1 and stats["edges_judged"] >= 1)
+
+
+def judge_never(x, y):
+    return False
+
+
+clusters, stats = cl.cluster_with_confirmation([a, b, c3], judge_never)
+check("judge rejects everything -> all split (split-safe default)", len(clusters) == 3)
+
+
+def judge_boom(x, y):
+    raise RuntimeError("model down")
+
+
+clusters, stats = cl.cluster_with_confirmation([a, b], judge_boom)
+check("judge error -> no merge, no raise", len(clusters) == 2 and stats["judge_errors"] >= 1)
+
+# judge cap bounds the number of LLM calls
+calls = {"n": 0}
+def judge_count(x, y):
+    calls["n"] += 1
+    return False
+many = [C(f"Yishun stabbing market {i}", "stabbing market wet", f"u/{i}", published_at=date(2026, 7, 1)) for i in range(10)]
+clusters, stats = cl.cluster_with_confirmation(many, judge_count, max_judges=5)
+check("judge calls are capped at max_judges", calls["n"] <= 5, f"-> {calls['n']}")
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
