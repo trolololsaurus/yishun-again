@@ -100,6 +100,148 @@ def _make_merge_judge():
     return judge
 
 
+def _emit(stage2_input, item, is_dateless, edmw_signal_count, primary_candidate,
+          *, client, dry_run, reputation, notes):
+    """
+    Stage 2 -> consolidation -> build_queue_row -> insert. The single write
+    tail, shared by the per-candidate path (members of 1) and the clustered path
+    (members of N). Returns (queued: bool, is_update: bool). Raises on a model/DB
+    error so the caller's circuit breaker sees it — same as the old inline code.
+
+    A single-member cluster produces byte-identical output to the old
+    per-candidate path: build_cluster_stage2_input attaches no source_articles
+    for one member, and the stage2_input / build_queue_row args match exactly.
+    """
+    draft = write_stage2(stage2_input)
+    consolidation_result = consolidation_check(draft, supabase_client=client)
+    if consolidation_result.action == "skip":
+        return (False, False)
+
+    confidence_adjustment, learning_flag = learning.apply_source_reputation(primary_candidate, reputation)
+    if confidence_adjustment:
+        draft["confidence"] = max(0.0, min(1.0, draft["confidence"] + confidence_adjustment))
+    if learning_flag:
+        item["learning_flag"] = learning_flag
+        notes.append(f"{primary_candidate.url}: {learning_flag}")
+
+    is_update = consolidation_result.action == "update"
+    row = build_queue_row(
+        item, draft, consolidation_result,
+        is_update=is_update, date_missing=is_dateless,
+        edmw_signal_count=edmw_signal_count,
+        include_related_incidents=True, is_backfill=False,
+    )
+
+    if not dry_run:
+        inserted = client.table("war_room_queue").insert(row).execute()
+        queue_id = inserted.data[0]["id"]
+        if is_update and consolidation_result.related_incidents:
+            write_incident_links(
+                queue_id, consolidation_result.matched_incident_id,
+                consolidation_result.related_incidents, client,
+            )
+        try:
+            check_milestones(
+                draft=draft, queue_id=queue_id, source_url=primary_candidate.url,
+                incident_title=draft.get("title", ""), supabase_client=client,
+            )
+        except Exception as exc:                      # noqa: BLE001
+            logger.warning(
+                "run_ingestion_pass: herald check failed (non-fatal) for queue_id=%s: %s",
+                queue_id, exc,
+            )
+    return (True, is_update)
+
+
+def _write_group(members, by_id, res, *, client, dry_run, reputation, signal_summary, notes):
+    """
+    Write ONE cluster (or a single-member group) as one queue row with all its
+    non-signal sources. Updates `res` counters and the per-source watermark map.
+    """
+    from ingestion import clustering
+    item_of = lambda c: by_id[id(c)]["item"]
+
+    non_signal = [c for c in members if clustering.canonical_source_type(getattr(c, "source_type", "")) != "signal"]
+    if non_signal:
+        primary = min(non_signal, key=lambda c: item_of(c).get("date") or "9999-99-99")
+    else:
+        primary = members[0]
+    primary_item = item_of(primary)
+    is_dateless = not primary_item.get("date")
+
+    stage2_input = clustering.build_cluster_stage2_input(members, item_of)
+    edmw_signal_count = stage2_input.get("edmw_signal_count", 0)
+    if signal_summary:
+        stage2_input["learning_context"] = signal_summary
+
+    queued, is_update = _emit(
+        stage2_input, primary_item, is_dateless, edmw_signal_count, primary,
+        client=client, dry_run=dry_run, reputation=reputation, notes=notes,
+    )
+    if queued:
+        res["queued"] += 1
+        res["update" if is_update else "new"] += 1
+        for c in non_signal:
+            d = getattr(c, "published_at", None)
+            if d:
+                src = by_id[id(c)]["source"]
+                cur = res["per_source_max"].get(src)
+                if cur is None or d > cur:
+                    res["per_source_max"][src] = d
+    return queued
+
+
+def _write_clusters(gathered, *, client, dry_run, reputation, signal_summary,
+                    notes, activity, deadline, circuit_breaker_n):
+    """
+    The 'on' write phase: cluster the gathered Stage-1-passed candidates, confirm
+    merges with the Haiku judge, and write ONE row per cluster with all sources.
+    Oversized clusters are written member-by-member (never auto-merge a blob).
+    Returns a result dict the caller folds into the pass totals.
+    """
+    from ingestion import clustering
+    cands = [g["candidate"] for g in gathered]
+    by_id = {id(g["candidate"]): g for g in gathered}
+    res = {"queued": 0, "new": 0, "update": 0, "clusters": 0, "aborted": False,
+           "per_source_max": {}, "cstats": {}}
+
+    judge = _make_merge_judge()
+    if judge is not None:
+        clusters, res["cstats"] = clustering.cluster_with_confirmation(cands, judge)
+    else:
+        clusters, res["cstats"] = clustering.cluster_candidates(cands), {"judge": "unavailable"}
+    res["clusters"] = len(clusters)
+
+    consecutive: dict[str, int] = {}
+    for cluster in clusters:
+        if datetime.now(timezone.utc) >= deadline:
+            res["aborted"] = True
+            _log(activity, "anomaly", "pass_deadline",
+                 "deadline hit during cluster write phase — remaining clusters not written")
+            break
+        groups = [[m] for m in cluster] if clustering.oversized(cluster) else [cluster]
+        if clustering.oversized(cluster):
+            _log(activity, "warning", "cluster_oversized",
+                 f"cluster of {len(cluster)} exceeds cap — writing members individually")
+        for grp in groups:
+            try:
+                _write_group(grp, by_id, res, client=client, dry_run=dry_run,
+                             reputation=reputation, signal_summary=signal_summary, notes=notes)
+                consecutive.clear()
+            except Exception as exc:                  # noqa: BLE001
+                logger.warning("run_ingestion_pass: cluster write error: %s", exc)
+                notes.append(f"cluster write error: {exc}")
+                err = _classify_error(exc)
+                if err:
+                    consecutive[err] = consecutive.get(err, 0) + 1
+                    if consecutive[err] >= circuit_breaker_n:
+                        res["aborted"] = True
+                        _log(activity, "anomaly", "circuit_breaker",
+                             f"{consecutive[err]} consecutive {err} in cluster writes — aborting")
+                        return res
+    return res
+
+
 def _classify_error(exc: Exception) -> str | None:
     """
     Return a circuit-breaker error class for systemic API failures, or None
@@ -147,13 +289,15 @@ def run_ingestion_pass(
     #   shadow — current path UNCHANGED, but also collect the Stage-1-passed
     #            candidates and log what clustering WOULD group, so we can validate
     #            grouping on live data before it ever touches a write.
-    #   on     — write one row per cluster (not wired yet; treated as off + warned)
+    #   on     — gather across all sources, cluster by story (each merge Haiku-
+    #            confirmed), and write ONE queue row per cluster with all sources.
     cluster_mode = os.getenv("CLUSTER_BEFORE_WRITE", "off").strip().lower()
-    if cluster_mode == "on":
-        logger.warning("CLUSTER_BEFORE_WRITE=on is not wired yet — running in shadow mode instead")
-        cluster_mode = "shadow"
+    if cluster_mode not in ("off", "shadow", "on"):
+        cluster_mode = "off"
     shadow_cluster = cluster_mode == "shadow"
     passed_candidates: list = []         # Stage-1-passed, for shadow clustering only
+    gathered: list = []                  # 'on' mode: deferred writes, one per cluster later
+    on_fetched: dict = {}                # 'on' mode: source -> original watermark, advanced post-write
 
     try:
         client = get_supabase_client()
@@ -325,16 +469,24 @@ def run_ingestion_pass(
                     if shadow_cluster:
                         passed_candidates.append(candidate)
 
-                    # ── Stage 2 ────────────────────────────────────────────
-                    # Legal guardrail #2: an EDMW/signal URL is NEVER a quoted
-                    # source. EDMW candidates contribute only edmw_signal_count;
-                    # source_urls must stay empty until an MSM URL is attached.
-                    # NOT a plain == "edmw": scrape_edmw emits source_type
-                    # 'signal' (as does the sources table), while this module and
-                    # Candidate's contract say 'edmw'. That mismatch meant
-                    # is_edmw was False for real EDMW candidates and the forum
-                    # URL was written straight into source_urls. is_signal_source
-                    # accepts both vocabularies and falls back to a domain lookup.
+                    # ── 'on' mode: defer the write to the clustering phase ────
+                    # Gather the Stage-1-passed candidate and move on; Stage 2 +
+                    # consolidation + write happen once per STORY CLUSTER after
+                    # all sources are in, so one draft is written per story with
+                    # all its sources (not one single-source draft per outlet).
+                    if cluster_mode == "on":
+                        gathered.append({
+                            "candidate": candidate, "item": item,
+                            "is_dateless": is_dateless, "source": source.name,
+                        })
+                        consecutive.clear()
+                        continue
+
+                    # ── Per-candidate write (off / shadow) ────────────────────
+                    # Legal guardrail #2: a signal (EDMW/Reddit) URL is NEVER a
+                    # quoted source — is_signal_source accepts both vocabularies
+                    # and falls back to a domain lookup, so the forum URL is kept
+                    # out of source_urls and only edmw_signal_count carries it.
                     is_edmw = is_signal_source(candidate.source_type, candidate.url)
                     edmw_signal_count = 1 if is_edmw else 0
                     stage2_input = {
@@ -345,64 +497,12 @@ def run_ingestion_pass(
                     if signal_summary:
                         stage2_input["learning_context"] = signal_summary
 
-                    draft = write_stage2(stage2_input)
-
-                    # ── Consolidation (§5.4) ──────────────────────────────────
-                    consolidation_result = consolidation_check(draft, supabase_client=client)
-
-                    if consolidation_result.action == "skip":
-                        # Unreachable in the current consolidation/check.py
-                        # implementation (no code path returns 'skip'), kept
-                        # for forward-compat / mirrors backfill_agent.py.
-                        continue
-
-                    # ── Learning nudge (confidence-only; hard gates below are
-                    #    immune — the forward pipeline never auto-publishes,
-                    #    every row lands in war_room_queue for human review) ──
-                    confidence_adjustment, learning_flag = learning.apply_source_reputation(candidate, reputation)
-                    if confidence_adjustment:
-                        draft["confidence"] = max(0.0, min(1.0, draft["confidence"] + confidence_adjustment))
-                    if learning_flag:
-                        item["learning_flag"] = learning_flag
-                        notes.append(f"{candidate.url}: {learning_flag}")
-
-                    is_update = consolidation_result.action == "update"
-                    row = build_queue_row(
-                        item,
-                        draft,
-                        consolidation_result,
-                        is_update=is_update,
-                        date_missing=is_dateless,
-                        edmw_signal_count=edmw_signal_count,
-                        include_related_incidents=True,
-                        is_backfill=False,   # QA H4 — live ingestion, not backfill
+                    queued, is_update = _emit(
+                        stage2_input, item, is_dateless, edmw_signal_count, candidate,
+                        client=client, dry_run=dry_run, reputation=reputation, notes=notes,
                     )
-
-                    if not dry_run:
-                        inserted = client.table("war_room_queue").insert(row).execute()
-                        queue_id = inserted.data[0]["id"]
-
-                        if is_update and consolidation_result.related_incidents:
-                            write_incident_links(
-                                queue_id,
-                                consolidation_result.matched_incident_id,
-                                consolidation_result.related_incidents,
-                                client,
-                            )
-
-                        try:
-                            check_milestones(
-                                draft=draft,
-                                queue_id=queue_id,
-                                source_url=candidate.url,
-                                incident_title=draft.get("title", ""),
-                                supabase_client=client,
-                            )
-                        except Exception as exc:
-                            logger.warning(
-                                "run_ingestion_pass: herald check failed (non-fatal) for queue_id=%s: %s",
-                                queue_id, exc,
-                            )
+                    if not queued:
+                        continue   # consolidation returned skip — same as the old inline `continue`
 
                     queued_count += 1
                     total_queued += 1
@@ -463,10 +563,46 @@ def run_ingestion_pass(
                  source.name, fetched=result.fetched, queued=queued_count)
 
             if not dry_run and not abort_pass:
-                state_store.update(source.name, max_published_at, "ok", client=client)
+                if cluster_mode == "on":
+                    # Defer: the cluster-write phase advances watermarks only for
+                    # sources whose candidates were actually written.
+                    on_fetched[source.name] = watermark
+                else:
+                    state_store.update(source.name, max_published_at, "ok", client=client)
 
         if abort_pass:
             notes.append(f"Pass aborted: {abort_pass}")
+
+        # ── 'on' mode: cluster the gathered candidates and write per cluster ─
+        if cluster_mode == "on" and gathered and not abort_pass:
+            cres = _write_clusters(
+                gathered, client=client, dry_run=dry_run, reputation=reputation,
+                signal_summary=signal_summary, notes=notes, activity=activity,
+                deadline=deadline, circuit_breaker_n=circuit_breaker_n,
+            )
+            total_queued += cres["queued"]
+            new_count += cres["new"]
+            update_count += cres["update"]
+            if cres["aborted"]:
+                degraded = True
+            notes.append(
+                f"[cluster-write] {len(gathered)} candidate(s) -> {cres['clusters']} cluster(s); "
+                f"wrote {cres['queued']} row(s) "
+                f"(edges {cres['cstats'].get('edges_confirmed', '?')} confirmed / "
+                f"{cres['cstats'].get('edges_judged', '?')} judged)."
+            )
+            _log(activity, "success", "cluster_write",
+                 f"{cres['queued']} row(s) from {cres['clusters']} cluster(s) of {len(gathered)} candidate(s)")
+            # Advance watermarks. If the write phase completed, advance each
+            # fetched source to the max date of ITS written candidates (unchanged
+            # if it wrote none). If it aborted mid-write, advance NOTHING past the
+            # original watermark — the whole set retries next pass, and dedup
+            # catches anything already written. Either way every fetched source is
+            # marked 'ok' so the supervisor doesn't read it as stale.
+            if not dry_run:
+                for src_name, orig_wm in on_fetched.items():
+                    wm = cres["per_source_max"].get(src_name, orig_wm) if not cres["aborted"] else orig_wm
+                    state_store.update(src_name, wm, "ok", client=client)
 
         # ── Shadow clustering: log what gather->cluster->write WOULD do ──────
         # Pure analysis of the candidates that passed Stage 1 this pass; writes
