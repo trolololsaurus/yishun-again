@@ -2,10 +2,8 @@ import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { validateUUID } from '@/lib/utils'
 
-export async function POST(
-  _request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(_request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params
   const id = validateUUID(params.id)
   if (!id) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 

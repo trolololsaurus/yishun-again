@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 /**
- * Cloudflare Access middleware for the War Room.
+ * Cloudflare Access gate for the War Room.
  *
  * In production:  every request must carry the CF Access header
  *                 `cf-access-authenticated-user-email`.  If OPERATOR_EMAIL
@@ -10,11 +10,17 @@ import { NextRequest, NextResponse } from 'next/server'
  * In development: check is skipped entirely — all requests pass through.
  *
  * Exempt route:   /api/health (health-check probe, no auth needed)
+ *
+ * Next.js 16 renamed the `middleware` convention to `proxy`, which always runs
+ * on the Node.js runtime — the edge runtime is unsupported here and cannot be
+ * configured.  That suits this gate (it only reads a request header), and it is
+ * the better host for JWT signature verification than edge was, since Node has
+ * both WebCrypto and the full crypto module.
  */
 
 const CF_ACCESS_HEADER = 'cf-access-authenticated-user-email'
 
-export function middleware(req: NextRequest): NextResponse {
+export function proxy(req: NextRequest): NextResponse {
   // Always allow the health-check probe through.
   if (req.nextUrl.pathname === '/api/health') {
     return NextResponse.next()

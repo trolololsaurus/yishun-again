@@ -173,7 +173,7 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
       mapRef.current?.remove()
       mapRef.current = null
     }
-  }, [router]) // eslint-disable-line react-hooks/exhaustive-deps — intentional: init once
+  }, [router]) // eslint-disable-line react-hooks/exhaustive-deps -- intentional: init once
 
   // Re-fetch markers when the selected year changes and swap them into the
   // 'incidents' source. setData replaces the whole FeatureCollection, so old

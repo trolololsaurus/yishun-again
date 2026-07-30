@@ -11,10 +11,8 @@ interface ConfirmLinkBody {
 
 const VALID_LINK_TYPES = ['related', 'follow_up', 'same_location'] as const
 
-export async function POST(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params
   const id = validateUUID(params.id)
   if (!id) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 

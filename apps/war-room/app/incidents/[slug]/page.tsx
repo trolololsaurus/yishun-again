@@ -8,7 +8,7 @@ import { classIcon, classLabel, classColor, severityDiamonds, hypeMeter } from '
 // Always fresh; never cache a draft.
 export const dynamic = 'force-dynamic'
 
-interface Props { params: { slug: string } }
+interface Props { params: Promise<{ slug: string }> }
 
 interface TimelineEntry {
   date?: string; role?: string; source_url?: string; source_name?: string; headline?: string
@@ -24,7 +24,7 @@ function host(u: string): string {
 }
 
 export default async function IncidentPreview({ params }: Props) {
-  const slug = params.slug.replace(/[^a-z0-9-]/g, '')
+  const slug = (await params).slug.replace(/[^a-z0-9-]/g, '')
   if (!slug) notFound()
 
   const { data, error } = await supabase

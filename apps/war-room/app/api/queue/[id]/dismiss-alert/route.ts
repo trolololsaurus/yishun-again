@@ -5,10 +5,8 @@ import { DISMISS_CATEGORIES, type DismissCategory } from '@/lib/types'
 
 const VALID_CATEGORIES = Object.keys(DISMISS_CATEGORIES) as DismissCategory[]
 
-export async function POST(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params
   const id = validateUUID(params.id)
   if (!id) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 

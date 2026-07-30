@@ -3,10 +3,8 @@ import { supabase } from '@/lib/supabase'
 import { validateUUID, slugify } from '@/lib/utils'
 
 // Creates a people_profiles stub (is_published=FALSE) for operator to complete later.
-export async function POST(
-  _request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(_request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params
   const id = validateUUID(params.id)
   if (!id) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 

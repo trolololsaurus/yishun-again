@@ -6,7 +6,7 @@ import type { MonthlyReport, ReportSection } from '@/lib/types'
 
 export const revalidate = 0
 
-interface Props { params: { id: string } }
+interface Props { params: Promise<{ id: string }> }
 
 function fmtDay(value: string | null | undefined): string {
   if (!value) return '—'
@@ -93,7 +93,8 @@ function Tile({ value, label, sub, tone }: {
   )
 }
 
-export default async function MonthlyReportPage({ params }: Props) {
+export default async function MonthlyReportPage(props: Props) {
+  const params = await props.params
   const id = validateUUID(params.id)
   if (!id) notFound()
 

@@ -4,10 +4,8 @@ import { validateUUID, slugify } from '@/lib/utils'
 import { geocodeIncident } from '@/lib/geocode'
 import type { ApproveBody, Classification } from '@/lib/types'
 
-export async function POST(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params
   const id = validateUUID(params.id)
   if (!id) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 
