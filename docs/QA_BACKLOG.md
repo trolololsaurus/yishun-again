@@ -22,21 +22,28 @@ security) with a tech-lead-approved fix for each, ranked Critical → Low.
 
 ## 🔴 Critical
 
-### C1 — Political-content guardrail unenforced 🔴
-`filters/stage2_writer.py:325-330,413-423`. Guardrail only logs; no model is told to
-emit the `[POLITICAL CONTENT DETECTED — REJECT]` marker, and the final `confidence`
-is overwritten by Haiku's value.
-**Fix:** add an explicit political-detection instruction to the Haiku classifier
-prompt (`political: true` + `confidence: 0`); in `write_stage2`, short-circuit to a
-rejected draft (`confidence=0`, reject flag) when `political` is set, **before** the
-Haiku-confidence merge. Add a unit test with a political sample asserting `confidence==0`.
+### C1 — Political-content guardrail unenforced ✅ (verified 2026-07-30)
+**Was:** guardrail only logged; the final `confidence` was overwritten by Haiku's value.
+**Closed in `filters/stage2_writer.py::_classify`** — `political: true` forces
+`confidence = 0.0` **before** the merge, and `write_stage2` prepends the
+`[POLITICAL CONTENT DETECTED — REJECT]` marker.
+**Extended 2026-07-30:** it now also fails *loudly* — a distinct
+`raw_content._political_flagged` marker, an operator notification through the
+existing dedup ledger, and a `warning`-level `agent_events` row. A silently
+zeroed row was indistinguishable from any other low-confidence row, so political
+stories were dropped with no trace. The guardrail itself is unchanged.
+**Guards:** `test_stage2_guardrails.py`, `test_political_alert.py` (asserts no env
+switch can disable it and nothing in the alert path writes back to `confidence`).
 
-### C2 — EDMW URL leaks into `source_urls` 🔴 (latent)
-`ingestion/orchestrator.py:212-216`. `edmw` candidates set `source_urls=[candidate.url]`,
-violating guardrail #2. Latent (no EDMW adapter yet).
-**Fix:** when `source_type=='edmw'`, set `source_urls=[]` (or omit) and rely solely on
-`edmw_signal_count`; the operator/Stage-2 must attach an MSM URL before publish. Add a
-DB trigger rejecting any `source_urls` element whose domain matches a `sources.type='signal'` row.
+### C2 — EDMW URL leaks into `source_urls` ✅ (verified 2026-07-30)
+**Closed in `ingestion/orchestrator.py`** — a signal candidate gets
+`source_urls=[]` and carries only `edmw_signal_count`. The test is
+`is_signal_source(candidate.source_type, candidate.url)`, **never** a bare
+`== 'edmw'`: `scrape_edmw` and `scrape_reddit` both emit the canonical
+`'signal'`, and that vocabulary mismatch breached the guardrail once already
+(`92d6305`). Also enforced downstream in `build_queue_row` via
+`check_source_urls`, and again in `auto_publish.check_eligibility`.
+**Guard:** `test_source_allowlist.py`.
 
 ### C3 — UTM analytics silently fail (RLS vs anon key) 🔴
 `apps/web/lib/supabase.ts` + `api/utm/log/route.ts:37-47`. `utm_events` has RLS on with
@@ -45,11 +52,12 @@ no INSERT policy; web uses the anon key → every UTM POST is rejected (500).
 by client code) **or** add a tightly-scoped anon `FOR INSERT` policy on `utm_events`
 (`WITH CHECK (true)`, no SELECT). Verify against prod which path is live.
 
-### C4 — `source_urls ≥ 1` constraint broken for empty arrays 🔴
-`migrations/001:26-27`. `array_length('{}',1)` returns NULL, so `'{}'` passes the CHECK.
-**Fix:** new migration — `ALTER TABLE incidents DROP CONSTRAINT … ; ADD CONSTRAINT
-incidents_source_urls_nonempty CHECK (cardinality(source_urls) >= 1);`. Audit existing
-rows for `'{}'` first.
+### C4 — `source_urls ≥ 1` constraint broken for empty arrays ✅ (verified 2026-07-30)
+**Closed by `migrations/010_qa_hardening.sql`** —
+`CHECK (cardinality(source_urls) >= 1)` replaces the old
+`array_length(source_urls, 1) >= 1`, which returned NULL for `'{}'` and so let an
+empty array pass. Confirmed present in the migration file; the 2026-07-30
+baseline sweep found **0 published incidents with an empty `source_urls`**.
 
 ---
 

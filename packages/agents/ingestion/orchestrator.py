@@ -70,38 +70,155 @@ def _log(activity, level: str, event: str, message: str,
         logger.debug("activity logging failed (non-fatal): %s", exc)
 
 
-def _make_merge_judge():
+# Per-article text budget in the grouping prompt. The grouper is contrasting
+# articles, not reading them closely — the lede carries the entity, act and
+# location that decide the grouping.
+CLUSTER_ARTICLE_CHARS = 700
+
+# Output cap for the grouping reply, env-overridable. A 40-candidate grouping
+# used 132/1024 tokens, but the reply grows with pass width, so the guard in
+# filters/model_call matters here more than anywhere: a truncated partition is
+# not an exact partition, so group_candidates would (correctly, but silently)
+# fall back to all-singletons and the whole pass would stop merging.
+CLUSTER_GROUPER_MAX_TOKENS = int(os.getenv("CLUSTER_GROUPER_MAX_TOKENS", "1024"))
+
+_GROUPER_SYSTEM_PROMPT = """\
+You group news articles by the real-world EVENT they report, for a Yishun \
+(Singapore) incident archive.
+
+Two articles belong in the same group ONLY if they report the SAME entity
+performing the SAME act at the same place and time — two outlets covering one
+incident, or a later report (charge, trial, sentencing) about that same incident.
+
+Bias to SPLIT. A wrong merge conflates two real events into one archive record
+and is hard to unwind; a wrong split is a cosmetic miss a human catches. When in
+doubt, separate. In particular:
+- The same kind of act at a DIFFERENT block, street or address is a DIFFERENT
+  event, however similar the wording.
+- The same location on a different day is a DIFFERENT event.
+- Two similar incidents (two fires, two falls, two crashes) with no shared
+  specific detail are DIFFERENT events.
+- A shared generic word ("fire", "block", "dead", "police", "Yishun") is NOT
+  evidence that two articles describe one event.
+
+Return JSON only — no prose, no markdown fences:
+{"groups": [[0, 2], [1], [3]]}
+
+Rules for "groups":
+- Every article index from 0 to N-1 appears EXACTLY ONCE across all groups.
+- An article matching nothing else is its own group of one.
+- Never emit an index that was not in the list.
+"""
+
+
+def _make_grouper():
     """
-    A judge(a, b) -> bool for clustering — 'are these two candidates the same
-    event?' — wrapping the SAME Haiku pair judge consolidation already uses, so
-    grouping and archive-dedup apply one consistent standard. Returns None if
-    Anthropic isn't configured (clustering then degrades to keyword-only). Each
-    call never raises out of `judge` (clustering treats a raise as "not same").
+    A grouper(candidates) -> list[list[int]] for clustering: ONE Haiku call that
+    sees every candidate at once and partitions them by real-world event.
+
+    Replaces the per-pair merge judge. Two reasons, in order of importance:
+
+    1. Correctness. Pairwise judging fed union-find, which merges transitively —
+       A~B and B~C merged A, B and C with nothing ever comparing A to C. That is
+       how the beehive / car-crash / fatal-fall blob formed. A single call has no
+       union-find and contrasts all members against each other directly.
+    2. Cost. N candidates cost one call instead of up to CLUSTER_MAX_JUDGES
+       pairwise calls, and the system prompt and shared context are sent once.
+
+    Returns None if Anthropic isn't configured — clustering then degrades to the
+    keyword-only fallback. A malformed response raises out of `grouper`, which
+    clustering.group_candidates catches and treats as all-singletons.
     """
     try:
-        from consolidation.check import _get_anthropic_client, _judge_pair
-        from consolidation.rules import UPDATE_MATCH_THRESHOLD
+        from consolidation.check import MODEL, _get_anthropic_client, _parse_json
         client = _get_anthropic_client()
     except Exception as exc:                          # noqa: BLE001
-        logger.warning("clustering: no merge judge (%s) — keyword-only grouping", exc)
+        logger.warning("clustering: no grouper (%s) — keyword-only grouping", exc)
         return None
 
-    def judge(a, b) -> bool:
-        ca = {"title": getattr(a, "title", ""), "summary": getattr(a, "content", ""),
-              "url": getattr(a, "url", ""),
-              "incident_date": a.published_at.isoformat() if getattr(a, "published_at", None) else ""}
-        ex = {"id": "cluster-peer", "title": getattr(b, "title", ""),
-              "summary": getattr(b, "content", ""),
-              "incident_date": b.published_at.isoformat() if getattr(b, "published_at", None) else ""}
-        j = _judge_pair(client, ca, ex)
-        return bool(j.get("same_incident")) and \
-            float(j.get("same_incident_confidence", 0.0)) >= UPDATE_MATCH_THRESHOLD
+    def grouper(cands) -> list[list[int]]:
+        lines = []
+        for i, c in enumerate(cands):
+            when = c.published_at.isoformat() if getattr(c, "published_at", None) else "unknown"
+            lines.append(
+                f"[{i}] date={when} source={getattr(c, 'source_name', '') or 'unknown'}\n"
+                f"    title: {getattr(c, 'title', '') or ''}\n"
+                f"    text: {(getattr(c, 'content', '') or '')[:CLUSTER_ARTICLE_CHARS]}"
+            )
+        user_msg = (
+            f"{len(cands)} articles follow. Group the ones that report the SAME "
+            f"real-world event.\n\n" + "\n\n".join(lines)
+        )
+        from filters.model_call import create_with_headroom
+        response, _retried = create_with_headroom(
+            client,
+            call="clustering._make_grouper",
+            env_var="CLUSTER_GROUPER_MAX_TOKENS",
+            model=MODEL,
+            max_tokens=CLUSTER_GROUPER_MAX_TOKENS,
+            temperature=0.0,
+            system=_GROUPER_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        data = _parse_json(response.content[0].text)
+        raw = data.get("groups")
+        if not isinstance(raw, list):
+            raise ValueError(f"grouper response has no 'groups' list: {str(data)[:200]!r}")
+        # Coerce numeric strings ("2") to int here; group_candidates then applies
+        # the strict is-this-an-exact-partition check and splits on any doubt.
+        return [[int(v) for v in grp] for grp in raw]
 
-    return judge
+    return grouper
+
+
+def _alert_political(draft, candidate, *, client, activity) -> None:
+    """
+    Make guardrail #4 AUDIBLE. It does not make it weaker.
+
+    Stage 2 forces confidence to 0 on political content, so the row can never
+    reach the 0.95 auto-publish gate. That behaviour is untouched here. The
+    problem it leaves is silence: under unattended operation a confidence-0 row
+    looks exactly like any other low-confidence row, so the story is dropped and
+    the operator never learns it existed.
+
+    Worth knowing when reading the alerts: this classifier over-triggers on
+    ordinary crime and news that merely mentions an MP or the People's
+    Association, even though the prompt explicitly says that is NOT political.
+    The notification is precisely what makes that false-positive rate visible —
+    before this, the misfires were invisible too.
+
+    Never raises: an alerting failure must not cost the pass.
+    """
+    title = (draft.get("title") or "")[:120]
+    url = getattr(candidate, "url", "") or ""
+    source = getattr(candidate, "source_name", None)
+
+    _log(activity, "warning", "political_content",
+         f"political content flagged, confidence forced to 0: {title} — {url}",
+         source_name=source, source_url=url)
+
+    try:
+        from ops.notify import notify
+        notify(
+            "anomaly",
+            f"Political content flagged: {title[:70]}",
+            (f"Guardrail #4 flagged this item as political, so Stage 2 forced its "
+             f"confidence to 0 and it will NOT publish.\n\n"
+             f"Title: {title}\nSource: {source or 'unknown'}\nURL: {url}\n\n"
+             f"If this is ordinary news that merely mentions a public official, "
+             f"the classifier has over-triggered — that is a known failure mode "
+             f"and worth noting, because nothing else surfaces it."),
+            # Dedup on the URL: re-running a pass over the same story must not
+            # re-mail. Uses the existing notifications ledger.
+            dedup_key=f"political:{url}",
+            client=client,
+        )
+    except Exception as exc:                      # noqa: BLE001
+        logger.warning("political alert failed (non-fatal): %s", exc)
 
 
 def _emit(stage2_input, item, is_dateless, edmw_signal_count, primary_candidate,
-          *, client, dry_run, reputation, notes):
+          *, client, dry_run, reputation, notes, oversized: int = 0, activity=None):
     """
     Stage 2 -> consolidation -> build_queue_row -> insert. The single write
     tail, shared by the per-candidate path (members of 1) and the clustered path
@@ -113,6 +230,14 @@ def _emit(stage2_input, item, is_dateless, edmw_signal_count, primary_candidate,
     for one member, and the stage2_input / build_queue_row args match exactly.
     """
     draft = write_stage2(stage2_input)
+
+    # Guardrail #4 alerting. Raised BEFORE the consolidation skip-check, so a
+    # political item that also happens to duplicate an existing row is still
+    # reported — otherwise the loudest cases (a story covered by several outlets)
+    # would be the ones most likely to stay silent.
+    if draft.get("political"):
+        _alert_political(draft, primary_candidate, client=client, activity=activity)
+
     consolidation_result = consolidation_check(draft, supabase_client=client)
     if consolidation_result.action == "skip":
         return (False, False)
@@ -131,6 +256,12 @@ def _emit(stage2_input, item, is_dateless, edmw_signal_count, primary_candidate,
         edmw_signal_count=edmw_signal_count,
         include_related_incidents=True, is_backfill=False,
     )
+
+    # An unusually large merge is written INTACT (all its sources kept) but
+    # marked, so ops/auto_publish holds it for a human until the grouper has
+    # earned the right to merge at this size. See auto_publish.oversized_merge_trust.
+    if oversized:
+        row.setdefault("raw_content", {})["_oversized_cluster"] = oversized
 
     if not dry_run:
         inserted = client.table("war_room_queue").insert(row).execute()
@@ -153,7 +284,8 @@ def _emit(stage2_input, item, is_dateless, edmw_signal_count, primary_candidate,
     return (True, is_update)
 
 
-def _write_group(members, by_id, res, *, client, dry_run, reputation, signal_summary, notes):
+def _write_group(members, by_id, res, *, client, dry_run, reputation, signal_summary,
+                 notes, oversized: int = 0, activity=None):
     """
     Write ONE cluster (or a single-member group) as one queue row with all its
     non-signal sources. Updates `res` counters and the per-source watermark map.
@@ -177,6 +309,7 @@ def _write_group(members, by_id, res, *, client, dry_run, reputation, signal_sum
     queued, is_update = _emit(
         stage2_input, primary_item, is_dateless, edmw_signal_count, primary,
         client=client, dry_run=dry_run, reputation=reputation, notes=notes,
+        oversized=oversized, activity=activity,
     )
     if queued:
         res["queued"] += 1
@@ -205,11 +338,16 @@ def _write_clusters(gathered, *, client, dry_run, reputation, signal_summary,
     res = {"queued": 0, "new": 0, "update": 0, "clusters": 0, "aborted": False,
            "per_source_max": {}, "cstats": {}}
 
-    judge = _make_merge_judge()
-    if judge is not None:
-        clusters, res["cstats"] = clustering.cluster_with_confirmation(cands, judge)
+    # ONE batched grouping call for the whole pass (see _make_grouper). The
+    # keyword pass survives only as the input filter that decides who is offered
+    # to the grouper. clustering.CLUSTER_MAX_JUDGES is consequently no longer
+    # read anywhere — there is no per-pair call count left to cap. It stays
+    # defined (and env-settable) so an existing deployment config is not an error.
+    grouper = _make_grouper()
+    if grouper is not None:
+        clusters, res["cstats"] = clustering.group_candidates(cands, grouper)
     else:
-        clusters, res["cstats"] = clustering.cluster_candidates(cands), {"judge": "unavailable"}
+        clusters, res["cstats"] = clustering.cluster_candidates(cands), {"grouper": "unavailable"}
     res["clusters"] = len(clusters)
 
     consecutive: dict[str, int] = {}
@@ -219,14 +357,33 @@ def _write_clusters(gathered, *, client, dry_run, reputation, signal_summary,
             _log(activity, "anomaly", "pass_deadline",
                  "deadline hit during cluster write phase — remaining clusters not written")
             break
-        groups = [[m] for m in cluster] if clustering.oversized(cluster) else [cluster]
-        if clustering.oversized(cluster):
+        # An oversized cluster is written INTACT, as one row, and flagged.
+        #
+        # It used to be shredded into one row per member. Under pairwise judging
+        # + union-find that was defensible: a group of 8 could be a transitive
+        # blob no single decision ever saw whole. The batched grouper has no
+        # union-find, so a group of 8 is one decision that saw all 8 — and the
+        # shred was costing more than it saved. It burned N Sonnet drafts to
+        # produce either one single-source row (when consolidation caught the
+        # siblings) or several near-duplicates (when it didn't) — manufacturing
+        # exactly the single-source incidents clustering exists to eliminate.
+        # The live archive holds 7-, 9-, 10- and 12-source incidents; a cap of 6
+        # would have shredded every one.
+        #
+        # The blast-radius concern is answered by holding the row for review
+        # instead of destroying the merge — and that hold is temporary: see
+        # ops/auto_publish.oversized_merge_trust, which lifts it once the grouper
+        # has earned it and re-arms it on any rejection.
+        oversized = len(cluster) if clustering.oversized(cluster) else 0
+        if oversized:
             _log(activity, "warning", "cluster_oversized",
-                 f"cluster of {len(cluster)} exceeds cap — writing members individually")
-        for grp in groups:
+                 f"cluster of {oversized} exceeds cap — written as ONE row, "
+                 f"held for review until the grouper has earned merges this large")
+        for grp in [cluster]:
             try:
                 _write_group(grp, by_id, res, client=client, dry_run=dry_run,
-                             reputation=reputation, signal_summary=signal_summary, notes=notes)
+                             reputation=reputation, signal_summary=signal_summary,
+                             notes=notes, oversized=oversized, activity=activity)
                 consecutive.clear()
             except Exception as exc:                  # noqa: BLE001
                 logger.warning("run_ingestion_pass: cluster write error: %s", exc)
@@ -500,6 +657,7 @@ def run_ingestion_pass(
                     queued, is_update = _emit(
                         stage2_input, item, is_dateless, edmw_signal_count, candidate,
                         client=client, dry_run=dry_run, reputation=reputation, notes=notes,
+                        activity=activity,
                     )
                     if not queued:
                         continue   # consolidation returned skip — same as the old inline `continue`
@@ -611,13 +769,12 @@ def run_ingestion_pass(
         if shadow_cluster and passed_candidates:
             try:
                 from ingestion import clustering
-                # Use the CONFIRMED path (each merge LLM-gated) so the shadow logs
-                # the REAL grouping decisions, not the loose keyword pre-clusters
-                # (which over-merge — the reason confirmation exists). Bounded by
-                # CLUSTER_MAX_JUDGES, so shadow costs at most that many Haiku calls.
-                judge = _make_merge_judge()
-                if judge is not None:
-                    clusters, cstats = clustering.cluster_with_confirmation(passed_candidates, judge)
+                # Use the SAME batched grouper the 'on' path uses, so shadow logs
+                # the decisions that would actually be written — not the loose
+                # keyword pre-clusters (which over-merge). Costs one Haiku call.
+                grouper = _make_grouper()
+                if grouper is not None:
+                    clusters, cstats = clustering.group_candidates(passed_candidates, grouper)
                 else:
                     clusters, cstats = clustering.cluster_candidates(passed_candidates), {}
                 stats = clustering.summarize(clusters)
@@ -626,8 +783,9 @@ def run_ingestion_pass(
                     f"[shadow-cluster] {stats['candidates']} candidate(s) -> "
                     f"{stats['clusters']} cluster(s); {stats['multi_member_clusters']} multi-member, "
                     f"~{stats['sonnet_drafts_saved_estimate']} Sonnet draft(s) would be saved "
-                    f"(edges: {cstats.get('edges_confirmed', '?')} confirmed / "
-                    f"{cstats.get('edges_judged', '?')} judged)."
+                    f"(grouper: {cstats.get('pool_size', '?')} offered / "
+                    f"{cstats.get('merges', '?')} merged / "
+                    f"{cstats.get('grouper_errors', '?')} error(s))."
                 )
                 _log(activity, "info", "shadow_cluster", str(stats))
                 for cl in clusters:

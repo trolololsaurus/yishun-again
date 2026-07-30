@@ -71,24 +71,35 @@ Earlier in the same session, additional first-gen corrections were applied and c
 Ghib Ojisan duplicate with a hallucinated 2023 date + fake Reddit URL; Kurt Tay fabricated
 Reddit URL; taxi-driver-murders and infant-murder wrong incident_dates).
 
+> **2026-07-30 — see `docs/PIPELINE_CHANGES_2026-07-30.md`** for the cost +
+> classification programme: batched grouping (replacing pairwise judging +
+> union-find), batched consolidation, the locality veto, the Haiku write model
+> with a source-proportional length cap, the groundedness and casualty
+> cross-checks, and the `max_tokens` truncation guard. Several items in the list
+> below were closed by earlier work and are struck through with the evidence.
+
 ## Known deferred items (debt, named not hidden)
 
 - **Forward pipeline BUILT (steps 1–10 complete).** One forward pipeline: `run_ingestion_pass()`
   replaces the retired LangGraph `run_graph()` and the deleted `pipeline.py`. Herald preserved;
   Learning Loop Phase-1 live (and provably cannot override system-prompt guardrails — verified).
-- **TRIGGER is the gating item for live autonomy.** `run_ingestion_pass()` does not fire on its
-  own: the in-process APScheduler is dead under Cloud Run `--min-instances 0` (TechSpec §11.2).
-  Cloud Scheduler → HTTP `/pipeline/run` (or `/run/ingest`) must be set up as a deployment task
-  before the pipeline runs autonomously. Until then it runs only via manual `POST /pipeline/run`.
-- **MSM adapter coverage — only CNA + Google News RSS exist.** "MSM primary" (Q1=1b) with one MSM
-  adapter is thin. **Post-launch priority: wire Mothership + Straits Times adapters next** (behind
-  the existing `Source` interface — `get_enabled_sources()` is the only edit point). The other ~10
-  scrapers follow incrementally. Note: this is NOT a live coverage drop — the 14-scraper
-  `scrape_all` path never fired in production under min-instances 0 anyway.
-- **MSM adapters swallow errors.** `scrape_cna.scrape()` (and likely the other scrapers) catch
-  feed errors and return `[]` rather than raising — so a blocked MSM source looks like a quiet
-  news day. Tolerable for v1; before MSM adapters are trusted as the sole primary spine they need
-  a raise-on-error path so the FallbackLadder can see the failure.
+- ~~**TRIGGER is the gating item for live autonomy.**~~ ✅ **CLOSED (verified
+  2026-07-30).** Cloud Scheduler fires `POST /orchestrator/daily` at 14:58 SGT.
+  `baseline_report.py` shows 88 `agent_runs` across 7 agents in a 14-day window,
+  including `daily_orchestrator`. APScheduler remains dead under
+  `--min-instances 0`, as designed — that is the reason Cloud Scheduler exists,
+  not an outstanding gap.
+- ~~**MSM adapter coverage — only CNA + Google News RSS exist.**~~ ✅ **CLOSED
+  (verified 2026-07-30).** `get_enabled_sources()` returns **15** live sources —
+  confirmed by a live pass this session. RSS-dated MSM: CNA, Mothership, Straits
+  Times, MustShareNews, The Independent, Yahoo. HTML-scraped MSM: AsiaOne, Stomp,
+  Zaobao, Shin Min, Berita Harian, Tamil Murasu. Plus Google News RSS
+  (corroboration) and Reddit + EDMW (signal).
+- ~~**MSM adapters swallow errors.**~~ ✅ **CLOSED.** Scrapers now **raise**
+  `ScraperError` / `ScraperBlocked` on a source-level failure; the adapters
+  translate those to `SourceBlockedError` / `SourceUnavailableError`. An empty
+  result therefore means "no Yishun news", not "something broke quietly" — Stomp
+  sat silently dead for weeks under the old behaviour.
 - **Kurt Tay duplicate** — `kurt-tay-intimate-video-case-2023-2026` (older, placeholder date)
   still live alongside the verified draft `yishun-kurt-tay-intimate-image-conviction-2026`.
   Operator to resolve (keep draft, delete old) in War Room.

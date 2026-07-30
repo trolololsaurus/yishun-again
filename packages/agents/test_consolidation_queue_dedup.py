@@ -13,15 +13,16 @@ import importlib
 cc = importlib.import_module("consolidation.check")
 
 
-def _judge(same, conf, related=False, rel_conf=0.0):
+def _judge(same, conf):
+    """
+    Batched-judge verdict. Each case below puts the record under test at index 0
+    of the comparison pool, so a match is match_index=0.
+    """
     return {
-        "same_incident": same,
-        "same_incident_confidence": conf,
-        "same_incident_reason": "test",
-        "related": related,
-        "related_confidence": rel_conf,
-        "related_reason": "test-rel",
-        "link_type": "related",
+        "match_index": 0 if same else None,
+        "match_confidence": conf if same else 0.0,
+        "match_reason": "test",
+        "related": [],
     }
 
 
@@ -43,7 +44,7 @@ def case(name, *, published, queued, judgement, expect_action, expect_matched=No
     with mock.patch.object(cc, "_fetch_recent_published", return_value=published), \
          mock.patch.object(cc, "_fetch_recent_queue", return_value=queued), \
          mock.patch.object(cc, "_get_anthropic_client", return_value=mock.MagicMock()), \
-         mock.patch.object(cc, "_judge_pair", return_value=judgement):
+         mock.patch.object(cc, "_judge_batch", return_value=judgement):
         res = cc.check(CAND, supabase_client=mock.MagicMock())
     ok = res.action == expect_action and (expect_matched is None or res.matched_incident_id == expect_matched)
     print(f"  [{'PASS' if ok else 'FAIL'}] {name}: action={res.action} matched={res.matched_incident_id}")
