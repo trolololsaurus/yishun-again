@@ -743,11 +743,14 @@ def run_ingestion_pass(
             update_count += cres["update"]
             if cres["aborted"]:
                 degraded = True
+            # Keys match group_candidates' stats dict (clustering.py) — the
+            # old edges_confirmed/edges_judged keys died with pairwise judging
+            # and always rendered "?/?".
             notes.append(
                 f"[cluster-write] {len(gathered)} candidate(s) -> {cres['clusters']} cluster(s); "
                 f"wrote {cres['queued']} row(s) "
-                f"(edges {cres['cstats'].get('edges_confirmed', '?')} confirmed / "
-                f"{cres['cstats'].get('edges_judged', '?')} judged)."
+                f"(merges {cres['cstats'].get('merges', '?')}, "
+                f"grouper errors {cres['cstats'].get('grouper_errors', '?')})."
             )
             _log(activity, "success", "cluster_write",
                  f"{cres['queued']} row(s) from {cres['clusters']} cluster(s) of {len(gathered)} candidate(s)")

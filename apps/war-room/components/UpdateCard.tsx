@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import type { QueueItem, IncidentPreview, AgentRelatedIncident } from '@/lib/types'
-import { CLASS_ICON, CLASS_COLOR, CLASS_LABEL, severityDiamonds, confidenceColor, confidenceLabel } from '@/lib/utils'
+import { CLASS_ICON, CLASS_COLOR, CLASS_LABEL, severityDiamonds, confidenceColor, confidenceLabel, safeHref } from '@/lib/utils'
 
 interface Props {
   item:             QueueItem
@@ -140,7 +140,7 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
           </div>
           <div className="border border-border bg-bg p-3 space-y-1">
             <div className="font-body text-text-primary text-sm">{headline}</div>
-            <a href={newUrl} target="_blank" rel="noopener noreferrer"
+            <a href={safeHref(newUrl)} target="_blank" rel="noopener noreferrer"
                className="font-body text-yellow text-sm hover:underline break-all">
               {newUrl}
             </a>

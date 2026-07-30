@@ -224,6 +224,12 @@ app = FastAPI(
     description="AI agent pipeline for the Yishun Again incident archive.",
     version="0.2.0",
     lifespan=lifespan,
+    # No interactive docs: these were the only endpoints besides /health with
+    # no app-level auth, and they enumerate the full API surface if the
+    # service is ever deployed --allow-unauthenticated by mistake.
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 

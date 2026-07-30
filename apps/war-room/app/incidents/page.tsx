@@ -25,12 +25,23 @@ export default function IncidentsPage() {
   async function unpublish(id: string) {
     if (!confirm('Unpublish this incident?')) return
     setUnpublishing(id)
-    await fetch(`/api/incidents/${id}/unpublish`, { method: 'POST' })
-    setPageData(prev => prev ? {
-      ...prev,
-      data: prev.data.filter(i => i.id !== id),
-    } : prev)
-    setUnpublishing(null)
+    try {
+      const res = await fetch(`/api/incidents/${id}/unpublish`, { method: 'POST' })
+      if (!res.ok) {
+        // Don't drop the row from the list when the server refused — the
+        // incident is still published.
+        alert('Unpublish failed — the incident is still live.')
+        return
+      }
+      setPageData(prev => prev ? {
+        ...prev,
+        data: prev.data.filter(i => i.id !== id),
+      } : prev)
+    } catch {
+      alert('Unpublish failed — the incident is still live.')
+    } finally {
+      setUnpublishing(null)
+    }
   }
 
   if (loading) return <div className="font-body text-text-secondary text-sm">Loading…</div>

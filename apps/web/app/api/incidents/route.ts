@@ -46,7 +46,11 @@ export async function GET(req: Request) {
   }
 
   const { data, error } = await q
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    // Log the detail server-side; PostgREST messages leak schema internals.
+    console.error('incidents query error:', error.message, error.code)
+    return NextResponse.json({ error: 'Upstream query failed' }, { status: 500 })
+  }
 
   return NextResponse.json(data ?? [], {
     headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=120' },

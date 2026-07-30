@@ -40,6 +40,7 @@ def scrape() -> list[dict]:
     """Return Yishun-relevant CNA articles from RSS feeds."""
     results: list[dict] = []
     seen_urls: set[str] = set()
+    feeds_ok = 0
 
     feedparser.USER_AGENT = _BROWSER_UA
 
@@ -50,6 +51,8 @@ def scrape() -> list[dict]:
             if feed.bozo and not feed.entries:
                 logger.warning("CNA RSS parse error (%s): %s", feed_url, feed.bozo_exception)
                 continue
+
+            feeds_ok += 1
 
             for entry in feed.entries:
                 url = entry.get("link", "").strip()
@@ -89,6 +92,16 @@ def scrape() -> list[dict]:
             raise_scrape_failure(SOURCE_NAME, exc)
 
         time.sleep(1)
+
+    # feedparser never raises on network failures (it only sets bozo), so the
+    # except-block above rarely fires for outages. Without this check a total
+    # CNA outage returned [] — indistinguishable from "no Yishun news", the
+    # exact silent-death mode every other RSS scraper here already guards.
+    if feeds_ok == 0:
+        raise_scrape_failure(
+            SOURCE_NAME,
+            ScraperError("all CNA feeds failed to parse (bozo with no entries)"),
+        )
 
     logger.info("CNA: %d Yishun items", len(results))
     return results

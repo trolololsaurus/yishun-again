@@ -20,7 +20,7 @@ export async function POST(
 
   // Sanitise inputs
   const title           = (body.title          ?? '').slice(0, 120).trim()
-  const summary         = (body.summary         ?? '').trim()
+  const summary         = (body.summary         ?? '').trim().slice(0, 5000)
   const classification  = (['heart', 'clown', 'dagger', 'custom'].includes(body.classification)
     ? body.classification : 'dagger') as Classification
   const severity        = Math.max(1, Math.min(5, Number(body.severity) || 3))
@@ -60,12 +60,17 @@ export async function POST(
   // ask the operator to set it — rather than defaulting to today.
   const bodyDate    = (body as { incident_date?: string }).incident_date
   const sourceDate  = (bodyDate || rc.date || rc.incident_date) as string | undefined
-  const incidentDate = sourceDate && /^\d{4}-\d{2}-\d{2}/.test(sourceDate)
-    ? sourceDate.substring(0, 10)
+  // Full-match + parseability: the old prefix regex let "2026-99-99…" through
+  // to Postgres, which bounced it as a raw DB error.
+  const candidateDate = sourceDate?.substring(0, 10)
+  const incidentDate = candidateDate
+    && /^\d{4}-\d{2}-\d{2}$/.test(candidateDate)
+    && !isNaN(Date.parse(candidateDate))
+    ? candidateDate
     : null
   if (!incidentDate) {
     return NextResponse.json(
-      { error: 'No real article date — set incident_date before approving (would otherwise default to today).' },
+      { error: 'No valid article date — set incident_date (YYYY-MM-DD) before approving (would otherwise default to today).' },
       { status: 422 },
     )
   }
@@ -170,16 +175,29 @@ export async function POST(
   // QA H2: the queue-status update governs idempotency — if it fails, the
   // incident is published but the item stays 'pending' and can be re-approved
   // (slug conflict). Treat its failure as a hard error.
-  const { error: queueErr } = await supabase.from('war_room_queue').update({
+  // The .eq('status','pending') CAS closes the two-operator race: if a
+  // concurrent approve/reject already processed this item, 0 rows match and
+  // we compensate by deleting the incident we just inserted.
+  const { data: claimed, error: queueErr } = await supabase.from('war_room_queue').update({
     status:       'approved',
     incident_id:  newIncident.id,
     processed_at: new Date().toISOString(),
-  }).eq('id', id)
+  }).eq('id', id).eq('status', 'pending').select('id')
   if (queueErr) {
     console.error('approve — queue status update failed (incident published but queue still pending):', queueErr)
     return NextResponse.json(
       { error: 'Incident published but queue update failed — do not re-approve; reconcile manually.', incident_id: newIncident.id },
       { status: 500 },
+    )
+  }
+  if (!claimed?.length) {
+    // Lost the race — another request processed this item between our fetch
+    // and this update. Remove the duplicate incident we created.
+    const { error: undoErr } = await supabase.from('incidents').delete().eq('id', newIncident.id)
+    if (undoErr) console.error('approve — failed to remove duplicate incident after lost race:', undoErr)
+    return NextResponse.json(
+      { error: 'Queue item was already processed by another request.' },
+      { status: 409 },
     )
   }
 

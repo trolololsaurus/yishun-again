@@ -254,6 +254,19 @@ export function computeChaosScore(incidents: Array<{ classification: string; sev
   return Math.max(0, Math.min(100, Math.round(100 * (1 - Math.exp(-positive / CHAOS_SCALE)))))
 }
 
+// For the rare places that must build raw HTML strings (MapLibre Popup.setHTML).
+// DB fields like title/custom_label are LLM-written from scraped text and can
+// reach the site without human review via auto-publish — never interpolate them
+// into HTML unescaped.
+export function escapeHtml(raw: string | null | undefined): string {
+  return String(raw ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 export function sanitiseSlug(raw: string | null | undefined): string {
   return (raw ?? '').replace(/[^a-z0-9-]/g, '').slice(0, 70)
 }
