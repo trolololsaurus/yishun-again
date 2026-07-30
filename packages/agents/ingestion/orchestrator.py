@@ -10,7 +10,7 @@ IngestionReport.
 dry_run=True runs the full fetch -> recency -> dedup -> Stage 1 -> Stage 2
 -> consolidation path but writes NOTHING: no war_room_queue rows, no
 incident_links rows, no watermark advance, no pipeline_run_history row, no
-budget persistence.
+scraper_health row, no budget persistence.
 
 WATERMARKS ARE NOT ADVANCED BY WRITES — they are advanced by DECISIONS. A
 Stage-1 rejection and a consolidation duplicate-skip are verdicts that no later
@@ -55,7 +55,7 @@ from consolidation.queue_row import build_queue_row
 from filters.stage1_filter import filter_content
 from filters.stage1_quota import RPM_LIMIT, RpdExhaustedError, Stage1HaltError
 from filters.stage2_writer import write_stage2
-from ingestion import dedup, fallback, learning, recency, state_store
+from ingestion import dedup, fallback, health, learning, recency, state_store
 from ingestion.budget import load_daily_budget, save_daily_budget
 from ingestion.contracts import Candidate, IngestionReport, Source, SourceResult
 from ingestion.watermark import WatermarkTracker
@@ -455,6 +455,37 @@ def _write_clusters(gathered, *, client, dry_run, reputation, signal_summary,
     return res
 
 
+def _record_health(source, *, items_found, items_passed_s1, result, errors,
+                   client, dry_run) -> None:
+    """
+    One scraper_health row for a source this pass actually fetched.
+
+    Written HERE, on the live path, because the table's previous writer
+    (`scrapers.log_scraper_run`, called only from the retired `scrape_all`) lost
+    its caller when ingestion moved to the source adapters — while
+    `ops/supervisor.py` and the War Room health views kept reading it. See
+    ingestion/health.py.
+
+    Keyed on `source.name`, the same stable id as pipeline_state: the supervisor
+    joins the two tables by that key, so a display name here would split one
+    source across two identities and double-count it toward the email threshold.
+
+    Never called for a source the pass SKIPPED — a row there would read as a
+    genuine zero-item run and walk that source toward a false zero-streak.
+    """
+    if dry_run:
+        return
+    health.record(
+        source.name,
+        getattr(source, "source_type", None) or "msm",
+        items_found=items_found,
+        items_passed_s1=items_passed_s1,
+        duration_ms=result.duration_ms,
+        errors=errors,
+        client=client,
+    )
+
+
 def _classify_error(exc: Exception) -> str | None:
     """
     Return a circuit-breaker error class for systemic API failures, or None
@@ -569,6 +600,8 @@ def run_ingestion_pass(
                 # Honest accounting (§7) — this source was not processed at
                 # all this pass. Watermark is left untouched (no
                 # state_store.update call), so it's retried in full next run.
+                # No scraper_health row either: nothing was fetched, and a
+                # zero-item row would be indistinguishable from a real one.
                 per_source.append(SourceResult(
                     name=source.name, status="unavailable",
                     fetched=0, fresh=0, novel=0, queued=0,
@@ -594,14 +627,20 @@ def run_ingestion_pass(
                 # leave watermark UNCHANGED (§6 invariant).
                 per_source.append(result)
                 degraded = True
-                # Req #8 — a block is never silent. This is the row the
+                # Req #8 — a block is never silent. These are the rows the
                 # supervisor and maintenance agents read to decide whether a
-                # source is having a bad day or has been dead for a week.
+                # source is having a bad day or has been dead for a week: an
+                # agent_events row, and a scraper_health row with status='error'
+                # (the red dot in the War Room health view).
                 _log(activity,
                      "anomaly" if result.status == "blocked" else "warning",
                      f"source_{result.status}",
                      f"{source.name}: {result.reason or result.status}",
                      source.name, reason=result.reason, status=result.status)
+                _record_health(source, items_found=0, items_passed_s1=0,
+                               result=result,
+                               errors=[result.reason or result.status],
+                               client=client, dry_run=dry_run)
                 if not dry_run:
                     state_store.update(source.name, watermark, result.status, result.reason, client=client)
                 continue
@@ -615,6 +654,7 @@ def run_ingestion_pass(
             trackers[source.name] = tracker
             novel_count = 0
             queued_count = 0
+            passed_s1_count = 0     # scraper_health.items_passed_s1
 
             # Materialised so an early break can hand the untouched remainder to
             # the tracker. Without that, a mid-loop halt (Stage 1 budget, deadline,
@@ -706,6 +746,12 @@ def run_ingestion_pass(
                         tracker.decided(candidate)
                         consecutive.clear()
                         continue
+
+                    # Closes the long-standing "items_passed_s1 always 0"
+                    # backlog item (TechSpec known issues): the count exists per
+                    # source here, and never did inside the old scrape_all,
+                    # which ran before Stage 1 and had no way to learn it.
+                    passed_s1_count += 1
 
                     # Shadow clustering observes what passes Stage 1; it never
                     # alters the write path below (still one draft per candidate).
@@ -828,6 +874,13 @@ def run_ingestion_pass(
                  f"{source.name}: fetched={result.fetched} fresh={result.fresh} "
                  f"novel={novel_count} queued={queued_count}",
                  source.name, fetched=result.fetched, queued=queued_count)
+
+            # Outside the `not abort_pass` guard below: the fetch happened and
+            # Stage 1 ran, so the run is real health data even if the pass then
+            # hit its deadline. items_passed_s1 is honestly partial in that case.
+            _record_health(source, items_found=result.fetched,
+                           items_passed_s1=passed_s1_count, result=result,
+                           errors=None, client=client, dry_run=dry_run)
 
             if not dry_run and not abort_pass:
                 if cluster_mode == "on":

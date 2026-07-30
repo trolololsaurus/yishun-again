@@ -1,5 +1,16 @@
 """
-Scrapers package — shared constants, translation helpers, and scrape_all().
+Scrapers package — shared constants, date resolution, and translation helpers.
+
+The per-source `scrape_*` modules live here; the LIVE pipeline drives them
+through the `ingestion/sources/` adapters, not from this package. A unified
+`scrape_all()` used to exist alongside them and was deleted in July 2026: it had
+had no callers since the adapter port, but it still labelled Reddit
+`source_type='reddit'` (the pre-July vocabulary — Reddit is a `'signal'` now)
+and it was the only writer of `scraper_health`. Both were traps: the first
+because a future caller would have quietly breached guardrail #2, the second
+because the health table it fed went stale where the supervisor and War Room
+still read it. Health rows are now written by `ingestion/health.py` from the
+real pass.
 """
 
 import json
@@ -7,7 +18,6 @@ import logging
 import os
 import re
 import socket
-import time
 import urllib.request
 from datetime import date
 
@@ -54,10 +64,9 @@ BROWSER_HEADERS = {
 # search endpoint had moved, every run logged "skipping run" and returned zero,
 # and nothing ever surfaced it.
 #
-# They now raise. scrape_all() already wraps each scraper in try/except, so the
-# best-effort legacy path is unchanged; ingestion's Source adapters translate
-# these into SourceBlockedError / SourceUnavailableError, which FallbackLadder
-# and the run report already understand.
+# They now raise. Ingestion's Source adapters translate these into
+# SourceBlockedError / SourceUnavailableError, which FallbackLadder, the run
+# report and the scraper_health row all already understand.
 
 class ScraperError(Exception):
     """A scraper could not complete its run (transport, HTTP, or parse failure)."""
@@ -265,180 +274,3 @@ def translate_article(title: str, content: str, source_lang: str) -> tuple[str, 
     raw = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
     result = json.loads(raw)
     return str(result.get("title", title)), str(result.get("content", content))
-
-
-# ── Scraper health logging ────────────────────────────────────────────────────
-
-def log_scraper_run(
-    source_name: str,
-    source_type: str,
-    items_found: int,
-    duration_ms: int,
-    errors: list[str] | None = None,
-    items_passed_s1: int = 0,
-) -> None:
-    """
-    Log one row to scraper_health after each scraper run in scrape_all().
-    Silently skips if Supabase is unconfigured or any DB call fails —
-    health logging must never crash the pipeline.
-
-    Status rules (spec §8a):
-      error   — exception thrown (errors list is non-empty)
-      warning — 0 items for 3+ consecutive runs, or duration > 3x 7d baseline
-      ok      — everything else
-    """
-    from datetime import datetime, timezone, timedelta
-
-    try:
-        from classifiers.corroboration import get_supabase_client
-        client = get_supabase_client()
-    except (ImportError, EnvironmentError):
-        logger.debug("Supabase not configured — skipping health log for %s", source_name)
-        return
-    except Exception as exc:
-        logger.warning("Health log: Supabase connect failed for %s: %s", source_name, exc)
-        return
-
-    try:
-        # Consecutive zeros: query last row for this source
-        last = (
-            client.table("scraper_health")
-            .select("consecutive_zeros")
-            .eq("source_name", source_name)
-            .order("scraped_at", desc=True)
-            .limit(1)
-            .execute()
-        )
-        last_zeros = last.data[0]["consecutive_zeros"] if last.data else 0
-        consecutive_zeros = 0 if items_found > 0 else (last_zeros + 1)
-
-        # 7-day avg duration for slow-run detection
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-        hist = (
-            client.table("scraper_health")
-            .select("duration_ms")
-            .eq("source_name", source_name)
-            .gte("scraped_at", cutoff)
-            .execute()
-        )
-        durations = [
-            r["duration_ms"] for r in (hist.data or [])
-            if r.get("duration_ms") is not None
-        ]
-        avg_duration_7d = int(sum(durations) / len(durations)) if durations else None
-
-        # Compute status
-        if errors:
-            status = "error"
-            status_reason = "; ".join(errors[:3])
-        elif consecutive_zeros >= 3:
-            status = "warning"
-            status_reason = f"0 items for {consecutive_zeros} consecutive runs"
-        elif avg_duration_7d and duration_ms > 3 * avg_duration_7d:
-            status = "warning"
-            status_reason = (
-                f"duration {duration_ms}ms is >3x 7d avg ({avg_duration_7d}ms)"
-            )
-        else:
-            status = "ok"
-            status_reason = None
-
-        client.table("scraper_health").insert({
-            "source_name":       source_name,
-            "source_type":       source_type,
-            "items_found":       items_found,
-            "items_passed_s1":   items_passed_s1,
-            "errors":            errors,
-            "duration_ms":       duration_ms,
-            "status":            status,
-            "status_reason":     status_reason,
-            "consecutive_zeros": consecutive_zeros,
-            "avg_duration_7d":   avg_duration_7d,
-        }).execute()
-        logger.debug(
-            "Health logged [%s]: status=%s items=%d duration=%dms",
-            source_name, status, items_found, duration_ms,
-        )
-
-    except Exception as exc:
-        logger.warning("Health log write failed for %s: %s", source_name, exc)
-
-
-# ── Unified scrape_all ────────────────────────────────────────────────────────
-
-def scrape_all() -> list[dict]:
-    """
-    Run all active scrapers and return a combined, URL-deduplicated list.
-
-    Returns:
-        List of dicts: {title, content, url, source_name, source_type}
-        Multilingual items also include translated_from: "zh"|"ms"|"ta".
-        source_type: "msm" | "reddit" | "signal"
-    """
-    from .scrape_cna           import scrape as scrape_cna
-    from .scrape_mothership    import scrape as scrape_mothership
-    from .scrape_straitstimes  import scrape as scrape_straitstimes
-    from .scrape_mustsharenews import scrape as scrape_mustsharenews
-    from .scrape_theindependent import scrape as scrape_theindependent
-    from .scrape_yahoo         import scrape as scrape_yahoo
-    from .scrape_asiaone       import scrape as scrape_asiaone
-    from .scrape_stomp         import scrape as scrape_stomp
-    from .scrape_zaobao        import scrape as scrape_zaobao
-    from .scrape_shinmin       import scrape as scrape_shinmin
-    from .scrape_beritaharian  import scrape as scrape_beritaharian
-    from .scrape_tamilmurasu   import scrape as scrape_tamilmurasu
-    from .scrape_reddit        import scrape as scrape_reddit
-    from .scrape_edmw          import scrape as scrape_edmw
-
-    scrapers = [
-        # English MSM — RSS feeds
-        ("CNA",                 scrape_cna,            "msm"),
-        ("Mothership",          scrape_mothership,      "msm"),
-        ("Straits Times",       scrape_straitstimes,    "msm"),
-        ("MustShareNews",       scrape_mustsharenews,   "msm"),
-        ("The Independent",     scrape_theindependent,  "msm"),
-        ("Yahoo",               scrape_yahoo,           "msm"),
-        ("AsiaOne",             scrape_asiaone,         "msm"),
-        ("Stomp",               scrape_stomp,           "msm"),
-        # Multilingual MSM — translate on match
-        ("Zaobao",              scrape_zaobao,          "msm"),
-        ("Shinmin",             scrape_shinmin,         "msm"),
-        ("Berita Harian",       scrape_beritaharian,    "msm"),
-        ("Tamil Murasu",        scrape_tamilmurasu,     "msm"),
-        # Social / signal
-        ("Reddit",              scrape_reddit,          "reddit"),
-        ("EDMW",                scrape_edmw,            "signal"),
-    ]
-
-    all_items: list[dict] = []
-    seen_urls: set[str]   = set()
-
-    for name, fn, source_type in scrapers:
-        t0 = time.monotonic()
-        run_errors: list[str] = []
-        new = 0
-        try:
-            items = fn()
-            for item in items:
-                url = item.get("url", "")
-                if url and url not in seen_urls:
-                    seen_urls.add(url)
-                    all_items.append(item)
-                    new += 1
-            logger.info("scrape_all [%s]: %d new items", name, new)
-        except Exception as exc:
-            run_errors.append(str(exc))
-            logger.error("scrape_all [%s] failed: %s", name, exc)
-
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        log_scraper_run(
-            source_name=name,
-            source_type=source_type,
-            items_found=new,
-            duration_ms=duration_ms,
-            errors=run_errors if run_errors else None,
-        )
-        time.sleep(0.5)
-
-    logger.info("scrape_all total: %d unique items across all sources", len(all_items))
-    return all_items

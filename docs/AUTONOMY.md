@@ -144,10 +144,16 @@ A single flaky source is **logged, not emailed**. "Serious" is defined in
 > which is precisely the failure it exists to catch. It now derives the streak
 > from `pipeline_run_history` (`report.per_source[].fetched`), written by
 > `state_store.record_run` at the end of every real pass. No new table, no new
-> writes. `ops/maintenance.py` still reads `scraper_health` and still gets
-> nothing, which is harmless — every failure it carried also lands in
-> `agent_events` and `pipeline_state.last_reason` — and is left alone pending the
-> decision on `scrape_all`'s fate.
+> writes.
+>
+> **`scraper_health` has a live writer again** (`ingestion/health.py`, one row per
+> fetched source per pass) — and the supervisor still does not alert off it. That
+> is deliberate, not an oversight: an append-only table that stops being appended
+> to is indistinguishable from a healthy quiet one, so the check that exists to
+> catch silent death must not be able to go silent the same way. `scraper_health`
+> is now a *reporting* surface — the War Room health views and
+> `ops/maintenance.py`'s error digest, both of which carry real per-source rows
+> again. Base new alerts on run history.
 
 Every attempted send is a row in `notifications` **before** the send, so a
 provider outage loses the delivery, not the alert. With no `RESEND_API_KEY`
@@ -275,6 +281,27 @@ overrun, not a hypothetical:
 **Every block is logged**, never silent: an `agent_events` row (`source_blocked`
 / `source_unavailable`), plus `pipeline_state.last_reason` and
 `consecutive_failures`. That is what the supervisor and maintenance agents read.
+
+**Plus one `scraper_health` row per fetched source, per pass**
+(`ingestion/health.py`, called from the orchestrator's per-source loop) —
+items found, items past Stage 1, duration, zero-streak, status. Both War Room
+health views and `ops/maintenance.py`'s digest read it. The supervisor's
+zero-streak **alert** does not — that derives from `pipeline_run_history`; see
+the note under §4's alert table.
+
+> **The failure this replaced is the one to watch for.** The table's writer used
+> to be `scrapers.log_scraper_run`, reachable only through `scrapers.scrape_all`
+> — which lost its last caller when ingestion moved to the `ingestion/sources/`
+> adapters. Nothing errored. The table simply stopped growing while the
+> supervisor kept grading it, so a source dead for months still reported a green
+> dot with full confidence. An observability table with no live writer is worse
+> than none: it answers, and the answer is a fossil.
+>
+> Two guards now: rows are written from the path that actually runs, and
+> `supervisor.HEALTH_ROW_MAX_AGE_HOURS` (48 h) makes the agent say *"every health
+> row is stale, I have no opinion"* rather than confidently repeating old ones.
+> If you ever move the writer again, keep the key `source.name` — the stable id,
+> the one `pipeline_state` uses.
 
 ### 5b. Exit conditions that open, not just close: oversized merges
 

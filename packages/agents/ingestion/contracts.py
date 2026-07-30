@@ -47,6 +47,11 @@ class Candidate:
 class Source(Protocol):
     name: str                   # stable id, e.g. 'google_news_rss'; key into pipeline_state
     enabled: bool
+    # Canonical type of what this source emits ('msm' | 'signal' | 'rss' | …).
+    # Declared on the Source, not read off a Candidate, because the orchestrator
+    # writes a scraper_health row for a source whose fetch RAISED — the case
+    # with no candidates to inspect and the one health data exists for.
+    source_type: str
 
     def fetch(self, since: date | None) -> list[Candidate]:
         """
@@ -87,6 +92,11 @@ class SourceResult:
     novel: int
     queued: int
     reason: str | None = None
+    # Wall-clock of the fetch ATTEMPT that produced this result, excluding any
+    # FallbackLadder backoff sleep — a 30s sleep charged to the source would
+    # dwarf the fetch itself and poison scraper_health's 7-day duration baseline
+    # (ingestion/health.py), turning every retry into a phantom "slow source".
+    duration_ms: int | None = None
 
 
 @dataclass
