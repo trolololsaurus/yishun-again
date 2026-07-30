@@ -4,10 +4,8 @@ import { validateUUID } from '@/lib/utils'
 
 // Operator confirms the auto-conclusion is correct. Notification is dismissed;
 // the incident remains concluded (is_developing=FALSE, conclusion_type='timeout').
-export async function POST(
-  _request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(_request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params
   const id = validateUUID(params.id)
   if (!id) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 

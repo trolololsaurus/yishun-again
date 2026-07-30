@@ -4,10 +4,8 @@ import { validateUUID } from '@/lib/utils'
 
 // Converts an 'update' queue item into a standard 'pending' item so it goes
 // through the normal approve flow as a new incident instead of an update.
-export async function POST(
-  _request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(_request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params
   const id = validateUUID(params.id)
   if (!id) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 

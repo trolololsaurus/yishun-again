@@ -8,10 +8,8 @@ interface DismissLinkBody {
 
 // Marks a suggested link as dismissed by the operator. The link is stored in
 // raw_content.agent_related_incidents — we update that JSONB entry in place.
-export async function POST(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params
   const id = validateUUID(params.id)
   if (!id) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 

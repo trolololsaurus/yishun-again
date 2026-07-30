@@ -2,6 +2,12 @@
 const nextConfig = {
   poweredByHeader: false,
 
+  // Turbopack (the default bundler as of Next 16) walks up looking for a
+  // workspace root and picks the directory of the nearest lockfile. This app
+  // is self-contained with its own package-lock.json, but the repo root has
+  // one too, so inference reached outside the app and warned. Pin it.
+  turbopack: { root: __dirname },
+
   async headers() {
     return [
       {

@@ -10,16 +10,23 @@ interface PageData { data: Incident[]; count: number; page: number; limit: numbe
 export default function IncidentsPage() {
   const [pageData, setPageData] = useState<PageData | null>(null)
   const [page, setPage]         = useState(1)
-  const [loading, setLoading]   = useState(true)
-  const [error, setError]       = useState<string | null>(null)
+  const [error, setError]       = useState<{ page: number; message: string } | null>(null)
   const [unpublishing, setUnpublishing] = useState<string | null>(null)
 
+  // `loading` is derived, not stored: it just means "neither the data nor the
+  // error I'm holding belongs to the page I'm on". Storing it meant setting it
+  // synchronously inside the effect — what react-hooks/set-state-in-effect
+  // flags — which cost an extra render pass on every page change.
+  // The API echoes back the `page` it served, which is what makes this work.
+  const loading = pageData?.page !== page && error?.page !== page
+
   useEffect(() => {
-    setLoading(true)
+    let cancelled = false
     fetch(`/api/incidents?page=${page}`)
       .then(r => r.json())
-      .then(d => { setPageData(d); setLoading(false) })
-      .catch(e => { setError(String(e)); setLoading(false) })
+      .then(d => { if (!cancelled) setPageData(d) })
+      .catch(e => { if (!cancelled) setError({ page, message: String(e) }) })
+    return () => { cancelled = true }
   }, [page])
 
   async function unpublish(id: string) {
@@ -45,7 +52,7 @@ export default function IncidentsPage() {
   }
 
   if (loading) return <div className="font-body text-text-secondary text-sm">Loading…</div>
-  if (error)   return <div className="font-body text-red text-sm">{error}</div>
+  if (error?.page === page) return <div className="font-body text-red text-sm">{error.message}</div>
   if (!pageData) return null
 
   const { data: incidents, count, limit } = pageData

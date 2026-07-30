@@ -11,10 +11,10 @@ import type { Incident, IncidentLink, RelatedIncident, SourceTimelineEntry } fro
 
 export const revalidate = 3600
 
-interface Props { params: { slug: string } }
+interface Props { params: Promise<{ slug: string }> }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const slug = params.slug.replace(/[^a-z0-9-]/g, '')
+  const slug = (await params).slug.replace(/[^a-z0-9-]/g, '')
   const { data } = await supabase
     .from('incidents')
     .select('title,seo_title,seo_description,summary,pixel_art_url,slug')
@@ -44,7 +44,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function IncidentPage({ params }: Props) {
-  const slug = params.slug.replace(/[^a-z0-9-]/g, '')
+  const slug = (await params).slug.replace(/[^a-z0-9-]/g, '')
   if (!slug) notFound()
 
   const { data, error } = await supabase

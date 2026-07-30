@@ -5,10 +5,8 @@ import { validateUUID } from '@/lib/utils'
 // Allowed fields the operator can update
 const ALLOWED: (string)[] = ['is_active', 'approved_by_operator', 'scrape_interval_minutes']
 
-export async function PATCH(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params
   const id = validateUUID(params.id)
   if (!id) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 

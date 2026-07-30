@@ -1,12 +1,13 @@
 import { supabase } from '@/lib/supabase'
 import { QueueList } from '@/components/QueueList'
 import { BackfillBanner } from '@/components/BackfillBanner'
+import { isoDaysAgo } from '@/lib/utils'
 import type { QueueItem, IncidentPreview, AgentRelatedIncident } from '@/lib/types'
 
 export const revalidate = 0
 
 export default async function QueuePage() {
-  const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  const since24h = isoDaysAgo(1)
 
   const [queueResult, healthResult, queuedCountResult, backfillSummaryResult] = await Promise.all([
     supabase

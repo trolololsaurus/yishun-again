@@ -3,10 +3,8 @@ import { supabase } from '@/lib/supabase'
 import { validateUUID } from '@/lib/utils'
 
 // Creates confirmed incident_links between every pair of incidents in the pattern.
-export async function POST(
-  _request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(_request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params
   const id = validateUUID(params.id)
   if (!id) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 

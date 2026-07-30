@@ -25,6 +25,11 @@ import { createRemoteJWKSet, jwtVerify } from 'jose'
  * client secret to Cloudflare.
  *
  * In development the check is skipped entirely.
+ *
+ * Next.js 16 renamed the `middleware` convention to `proxy`, which always runs
+ * on the Node.js runtime — the edge runtime is unsupported here and cannot be
+ * configured. That suits this gate better than edge did: JWT signature
+ * verification wants Node's full crypto, not just WebCrypto.
  */
 
 // JWKS is fetched from the team domain and cached by jose between requests
@@ -71,7 +76,7 @@ function deny(status: number, message: string): NextResponse {
   })
 }
 
-export async function middleware(req: NextRequest): Promise<NextResponse> {
+export async function proxy(req: NextRequest): Promise<NextResponse> {
   // Development: skip auth entirely (local-only convenience).
   if (process.env.NODE_ENV !== 'production') {
     return NextResponse.next()

@@ -3,10 +3,8 @@ import { supabase }    from '@/lib/supabase'
 import { rateLimit, getIp } from '@/lib/rateLimit'
 import { sanitiseSlug } from '@/lib/utils'
 
-export async function GET(
-  req: Request,
-  { params }: { params: { slug: string } }
-) {
+export async function GET(req: Request, props: { params: Promise<{ slug: string }> }) {
+  const params = await props.params
   const { success } = rateLimit(getIp(req))
   if (!success) return NextResponse.json({ error: 'Too many requests' }, { status: 429 })
 
