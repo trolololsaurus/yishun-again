@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase'
+import { isoDaysAgo } from '@/lib/utils'
 import type { ScraperHealth } from '@/lib/types'
 
 export const revalidate = 0
@@ -30,8 +31,8 @@ const STATUS_CLS: Record<string, string> = {
 }
 
 export default async function HealthPage() {
-  const since150d = new Date(Date.now() - 150 * 24 * 60 * 60 * 1000).toISOString()
-  const since180d = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString()
+  const since150d = isoDaysAgo(150)
+  const since180d = isoDaysAgo(180)
 
   const [scraperResult, developingResult, approachingResult, patternResult] = await Promise.all([
     supabase

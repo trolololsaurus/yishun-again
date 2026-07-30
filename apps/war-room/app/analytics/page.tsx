@@ -58,14 +58,22 @@ export default function AnalyticsPage() {
   const [autonomyLoading, setAutonomyLoading] = useState(true)
   const [autonomyError,   setAutonomyError]   = useState<string | null>(null)
 
+  // Fetch only. The two "starting" flags are already the initial state, so the
+  // mount path needs no synchronous setState — that is what
+  // react-hooks/set-state-in-effect flags when this is called from an effect.
   const loadAutonomy = useCallback(() => {
-    setAutonomyLoading(true)
-    setAutonomyError(null)
     fetch('/api/autonomy')
       .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
-      .then(d  => { setAutonomy(d); setAutonomyLoading(false) })
+      .then(d  => { setAutonomy(d); setAutonomyError(null); setAutonomyLoading(false) })
       .catch(e => { setAutonomyError(String(e)); setAutonomyLoading(false) })
   }, [])
+
+  // REFRESH button — an event handler, so resetting the flags here is fine.
+  const refreshAutonomy = useCallback(() => {
+    setAutonomyLoading(true)
+    setAutonomyError(null)
+    loadAutonomy()
+  }, [loadAutonomy])
 
   useEffect(() => {
     fetch('/api/analytics')
@@ -185,7 +193,7 @@ export default function AnalyticsPage() {
             Agent autonomy graduation
           </h2>
           <button
-            onClick={loadAutonomy}
+            onClick={refreshAutonomy}
             disabled={autonomyLoading}
             className="px-2 py-1 border border-border text-text-secondary font-body hover:border-yellow hover:text-yellow transition-colors disabled:opacity-50"
             style={{ fontSize: '10px' }}
