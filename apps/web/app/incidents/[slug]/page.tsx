@@ -120,9 +120,12 @@ export default async function IncidentPage({ params }: Props) {
 
   return (
     <article className="max-w-2xl mx-auto px-4 py-8 w-full">
+      {/* JSON.stringify leaves '<' unescaped — a title/summary containing a
+          closing script tag would break out of this block. Replacing every
+          '<' with its unicode escape is valid JSON and inert in HTML. */}
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, '\\u003c') }}
       />
 
       {/* Classification + severity + hype */}

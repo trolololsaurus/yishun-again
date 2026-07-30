@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { classIcon, classLabel, classColor, severityDiamonds, hypeMeter } from '@/lib/utils'
+import { classIcon, classLabel, classColor, severityDiamonds, hypeMeter, safeHref } from '@/lib/utils'
 
 // Operator-only draft/live preview. Uses the secret-key client (bypasses RLS),
 // so unpublished drafts render here — unlike the public site, which 404s them.
@@ -103,7 +103,7 @@ export default async function IncidentPreview({ params }: Props) {
         <ul className="space-y-1">
           {(inc.source_urls ?? []).map((u: string, i: number) => (
             <li key={i} className="text-sm break-all">
-              <a href={u} target="_blank" rel="noopener noreferrer" className="text-yellow hover:underline">{host(u)}</a>
+              <a href={safeHref(u)} target="_blank" rel="noopener noreferrer" className="text-yellow hover:underline">{host(u)}</a>
             </li>
           ))}
         </ul>

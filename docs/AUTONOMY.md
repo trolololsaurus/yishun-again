@@ -11,28 +11,68 @@ operator when something actually needs a person."
 ## 1. What runs, when
 
 One Cloud Scheduler job at **14:58 SGT daily** POSTs to `/orchestrator/daily` on
-the `yishun-agents` Cloud Run service. That single endpoint runs eight steps in
+the `yishun-agents` Cloud Run service. That single endpoint runs twelve steps in
 a fixed order (`packages/agents/ops/daily.py`):
 
-| # | Agent | Module | Requirement |
-|---|---|---|---|
-| 1 | Ingestion pass | `ingestion/orchestrator.py` | — |
-| 2 | Auto-publish + review email | `ops/auto_publish.py` | #3, #4 |
-| 3 | Integrity (dupes, hallucinations) | `ops/integrity.py` | #10 |
-| 4 | Supervisor (scraper fleet) | `ops/supervisor.py` | #9 |
-| 5 | Learning monitor (deltas) | `ops/learning_monitor.py` | #5 |
-| 6 | Backend health + cost guard | `ops/backend_health.py` | #12 |
-| 7 | Maintenance digest | `ops/maintenance.py` | #11 |
-| 8 | Monthly report (1st only) | `ops/monthly_report.py` | #13 |
+| # | Agent | Module | Cadence | Requirement |
+|---|---|---|---|---|
+| 1 | Recalibration | `classifiers/recalibration.py` | daily | §5.5 |
+| 2 | Ingestion pass | `ingestion/orchestrator.py` | daily | — |
+| 3 | Auto-publish + review email | `ops/auto_publish.py` | daily | #3, #4 |
+| 4 | Integrity (dupes, hallucinations) | `ops/integrity.py` | daily | #10 |
+| 5 | Supervisor (scraper fleet) | `ops/supervisor.py` | daily | #9 |
+| 6 | Learning monitor (deltas) | `ops/learning_monitor.py` | daily | #5 |
+| 7 | Backend health + cost guard | `ops/backend_health.py` | daily | #12 |
+| 8 | Pattern detection | `classifiers/pattern_detection.py` | daily | §5.3 |
+| 9 | Lifecycle auto-conclude | `classifiers/lifecycle.py` | **Mondays, opt-in — §5d** | §5.2 |
+| 10 | Source discovery | `scrapers/scrape_discovery.py` | first Monday | §4.5 |
+| 11 | Maintenance digest | `ops/maintenance.py` | daily | #11 |
+| 12 | Monthly report | `ops/monthly_report.py` | the 1st | #13 |
 
 **The order is load-bearing.** Integrity runs *after* publish so it audits what
 actually went live. Supervisor runs *after* ingestion so it grades this pass.
-Maintenance runs *last* because it reads what every other step logged — run it
-earlier and it reports yesterday's news.
+Pattern detection runs after publish so today's incidents are in the pool it
+scans. Maintenance runs *last* because it reads what every other step logged —
+run it earlier and it reports yesterday's news.
 
-**Failure is isolated per step.** A crash in step 3 does not cost you steps 4–8;
-the monitoring agents matter most precisely when something has broken. Failed
-steps are recorded in the run report with a truncated traceback.
+**Recalibration runs first, and that is not a filing decision.** It writes
+`calibration_log.json`; `filters/stage2_writer._load_calibration_hints` reads
+that file *while drafting*, so the two are producer and consumer inside one
+pass. The file sits on Cloud Run's ephemeral disk (§6) and the container is
+replaced between passes, so hints written after ingestion are destroyed before
+any reader exists. Grouped with the other monitors — the obvious-looking place —
+the calibration loop looks wired and is a permanent no-op.
+
+**Failure is isolated per step.** A crash in step 4 does not cost you steps
+5–12; the monitoring agents matter most precisely when something has broken.
+Failed steps are recorded in the run report with a truncated traceback.
+
+**`?dry_run=true` skips every cadence-gated step** (1, 8, 9, 10, 12) rather than
+running it. None of those five agents has a read-only mode — they would conclude
+incidents, insert pattern alerts, write source rows and upsert a monthly report
+for real — and threading an untested `dry_run` through five modules to support
+one debugging flag is a worse trade than being explicit. The report says which
+steps were skipped and why.
+
+### How steps 1, 8, 9 and 10 got here (2026-07-30)
+
+They existed for months and had **never executed in production even once**.
+`main.py` registered them on the in-process APScheduler, which is off in
+production for the reasons in §6 — so pattern alerts were never raised, no story
+was ever auto-concluded, no source was ever discovered, and Stage 2's
+calibration hints read a file nothing had ever written. Each module was correct
+and fully tested; nothing invoked it.
+
+The fix is not "turn the scheduler on" — that costs $15–25/month for
+~15 minutes of work a day. It is that the cadence now lives in `ops/daily.py`
+and **only** there, reached by the one entry point Cloud Scheduler actually
+calls. `main.py`'s `_JOBS` is a single entry. Two places defining one schedule is
+what let these drift into being dead code, and there is now one.
+
+`cadence_plan()` is pure and unit-tested (`test_daily_cadence.py`), and every
+pass records what it decided in `agent_runs.stats.cadence` — so "why didn't
+lifecycle run on Monday?" has an answer in the database rather than requiring
+someone to re-derive it from a cron expression.
 
 ---
 
@@ -94,6 +134,20 @@ gets filtered with the rest. Every alert is therefore deduped and throttled, and
 
 A single flaky source is **logged, not emailed**. "Serious" is defined in
 `ops/supervisor.py` and requires breadth or persistence, not a one-off.
+
+> **One of those four triggers was dead until 2026-07-30.** The supervisor's
+> "source fetched 0 items N passes running" check read
+> `scraper_health.consecutive_zeros`, and that column is only written by
+> `scrapers.log_scraper_run`, which is only reached from `scrapers.scrape_all` —
+> which nothing calls. The live pipeline is `run_ingestion_pass` over
+> `ingestion/sources/`. So the check could not fire however broken a source got,
+> which is precisely the failure it exists to catch. It now derives the streak
+> from `pipeline_run_history` (`report.per_source[].fetched`), written by
+> `state_store.record_run` at the end of every real pass. No new table, no new
+> writes. `ops/maintenance.py` still reads `scraper_health` and still gets
+> nothing, which is harmless — every failure it carried also lands in
+> `agent_events` and `pipeline_state.last_reason` — and is left alone pending the
+> decision on `scrape_all`'s fate.
 
 Every attempted send is a row in `notifications` **before** the send, so a
 provider outage loses the delivery, not the alert. With no `RESEND_API_KEY`
@@ -309,6 +363,42 @@ partition, so `group_candidates` correctly falls back to all-singletons. That is
 safe, but it means **a pass would silently stop merging entirely** while looking
 healthy. The guard converts that into a visible retry.
 
+### 5d. Lifecycle auto-conclude is wired but OFF (`LIFECYCLE_AUTO_CONCLUDE`)
+
+Step 9 is the only agent in the chain that **edits an already-published
+incident** with no human in the loop. On a Monday it finds developing stories
+with no `source_timeline` activity for 180 days and sets `is_developing=false`,
+`latest_source_role='timeout'`, `conclusion_type='timeout'`, then queues a
+sentinel row so the operator can confirm or reopen.
+
+That is a defensible default — a "developing" story nobody has reported on since
+January is not developing — but it is an **editorial** judgement about live
+content, and it is the operator's to make, not this document's. So the step is
+wired into the chain and gated off:
+
+```bash
+gcloud run services update yishun-agents --region asia-southeast1 \
+  --update-env-vars LIFECYCLE_AUTO_CONCLUDE=true
+```
+
+Off (the default) the step is skipped with that reason recorded in
+`agent_runs.stats.cadence`. Nothing else about the chain changes, and no other
+step depends on it having run.
+
+Two things worth knowing before flipping it:
+
+- **The public change is small but real.** `is_developing` no longer drives a
+  DEVELOPING badge (removed in the June-2026 feed pass) — it drives the
+  report-count line. The stronger effect is archival: `concluded_at` and
+  `conclusion_type` become part of the record.
+- **It is reversible per incident, not in bulk.** The sentinel row's REOPEN
+  action restores one story. There is no undo for a batch, so the first run
+  after enabling is the one to watch — `POST /lifecycle/run` by hand first and
+  read the result before letting the Monday step do it unattended.
+
+`POST /lifecycle/run` deliberately ignores this flag: calling it by hand *is*
+the operator decision the flag exists to require.
+
 ---
 
 ## 6. Cost (req #12)
@@ -351,6 +441,27 @@ above `COST_ALERT_USD_PER_DAY` (default $2.00). It also flags the structural
 risk: **more than ~2 passes in 24 h**, which is how a runaway scheduler would
 announce itself.
 
+### The recency watermark was the other recurring cost
+
+Bounding consolidation per candidate does nothing if the *same candidates* come
+back every day, and they did. `pipeline_state.watermark` only advanced for a
+candidate that got WRITTEN, so a Stage 1 rejection or a consolidation
+duplicate-skip — neither of which writes a row, and neither of which
+`dedup.is_duplicate` can see, because it reads only
+`war_room_queue.source_url` and `incidents.source_urls` — left the watermark
+where it was. Those articles were re-fetched, re-Stage-1'd and re-drafted on
+every pass until an unrelated candidate dragged the watermark forward.
+
+The watermark now advances on **decisions**, not writes. `ingestion/watermark.py`
+holds the rule and `PIPELINE_CHANGES_2026-07-30.md` §9 the reasoning; the two
+things not to undo are the **retry floor** (only decided dates strictly below the
+earliest unresolved date advance, so a transient error is never deleted from the
+future by its successful siblings) and the **same-day grace** (never advance onto
+the pass's own date — the source is still publishing, and `RecencyFilter`'s `<=`
+would drop the rest of the day unseen). Each pass now reports how many candidates
+consolidation dropped as duplicates of rows already awaiting review; under the
+bug that number was recurring spend.
+
 > **Known gap — consolidation calls are not yet in the cost estimate (A12).**
 > The guard counts Stage 1 calls and Stage 2 drafts but not consolidation
 > judgements, which even bounded are ~$0.05/candidate at Haiku rates — on the
@@ -360,10 +471,34 @@ announce itself.
 
 > **Known gap — ephemeral filesystem.** `ingestion/stage1_daily_usage.json` and
 > `classifiers/calibration_log.json` live on Cloud Run's ephemeral disk and reset
-> on every container replacement. With one pass a day this is close to harmless
+> on every container replacement. For the budget file this is close to harmless
 > (the container is replaced between passes anyway, and the RPD ceiling is far
-> above one pass's usage), but the budget file cannot enforce a *cross-pass*
-> ceiling in production. Moving it to Supabase is tracked as follow-up.
+> above one pass's usage), though it means no *cross-pass* ceiling can be
+> enforced. For `calibration_log.json` it is now load-bearing: it is why
+> recalibration is step 1 rather than sitting with the other monitors (§1).
+> Moving both to Supabase is tracked as follow-up, and would let the calibration
+> step move anywhere in the chain.
+
+### Pattern detection is now a standing daily cost (and a coverage limit)
+
+Step 8 extracts named entities with one Haiku call per incident over a 365-day
+pool, capped at `PATTERN_MAX_EXTRACTIONS` (100). Its `_entity_cache` is a
+module-level dict, so on paper each incident is extracted once — but **with
+min-instances=0 the process lifetime is one pass**, so the cache is cold every
+day and the same incidents are re-extracted every day. Budget it as a standing
+~100 Haiku calls/day (order of $0.03/day at current rates), not as a one-off
+that amortises away. Like consolidation above, these calls are **not** in
+`backend_health`'s estimate.
+
+The sharper consequence is coverage, not cost. The incident pool is ordered
+newest-first, so once it exceeds the cap the *same* newest 100 are examined
+daily and everything older is **never** examined — entity patterns involving the
+tail cannot be found, and "0 entity patterns" would read identically to a clean
+sweep. `run()` therefore returns `entities_uncovered` and logs an explicit
+INCOMPLETE warning naming the numbers. If that count is non-zero and entity
+detection matters, raise `PATTERN_MAX_EXTRACTIONS` or give extraction a
+persistent store; the deterministic crime-type and location checks are unaffected
+either way, as they use no model at all.
 
 ---
 
@@ -405,13 +540,20 @@ curl -H "X-Ops-Token: $OPS_TOKEN" https://<service-url>/agents/status
 # Full chain, writing nothing
 curl -X POST -H "X-Ops-Token: $OPS_TOKEN" "https://<service-url>/orchestrator/daily?dry_run=true"
 
-# Turn one agent off without a redeploy
+# Turn one agent off without a redeploy. Works for every step in the §1 table,
+# including the cadence-gated ones: AGENT_DISABLED=lifecycle,pattern_detection
 gcloud run services update yishun-agents --region asia-southeast1 \
   --update-env-vars AGENT_DISABLED=auto_publish
 
 # Stop all autonomous publishing immediately (drafts still queue for review)
 gcloud run services update yishun-agents --region asia-southeast1 \
   --update-env-vars AUTO_PUBLISH_CONFIDENCE=2.0
+
+# Run one cadence-gated agent by hand, off its schedule
+curl -X POST -H "X-Ops-Token: $OPS_TOKEN" https://<service-url>/pattern/run
+curl -X POST -H "X-Ops-Token: $OPS_TOKEN" https://<service-url>/recalibration/run
+curl -X POST -H "X-Ops-Token: $OPS_TOKEN" https://<service-url>/lifecycle/run
+curl -X POST -H "X-Ops-Token: $OPS_TOKEN" https://<service-url>/discovery/run
 ```
 
 `AUTO_PUBLISH_CONFIDENCE=2.0` is the panic switch: unreachable, so everything
@@ -424,6 +566,7 @@ routes to the War Room, and nothing else about the pass changes.
 | What did the fleet do last night? | `GET /agents/status`, or `agent_runs` |
 | Why did nothing publish? | `agent_runs.stats.skip_reasons` for `auto_publish` |
 | Which source is broken? | `pipeline_state.last_reason`, War Room → HEALTH |
+| Why didn't lifecycle / discovery run? | `agent_runs.stats.cadence` on the newest `daily_orchestrator` row |
 | Is the model improving? | `learning_snapshots`, newest row |
 | Did an alert actually send? | `notifications.status` |
 | What happened last month? | War Room → REPORTS |
@@ -436,7 +579,14 @@ Auto-publish handles new incidents above the confidence bar. Everything below
 remains a person's job, by design:
 
 - **`update` rows** — merging new reporting into a published story
-- **Pattern alerts and lifecycle conclusions** — sentinel rows that ask a question
+- **Acting on pattern alerts and lifecycle conclusions** — since 2026-07-30 the
+  agents that *raise* these actually run (§1), but what they produce is a
+  sentinel row asking a question. `check_eligibility` skips them
+  (`notification_row`), so no alert can ever reach the public site — the
+  editorial call on every one is the operator's
+- **Approving a discovered source** — discovery files candidates
+  `approved_by_operator=false, is_active=false`; until a human flips those, the
+  domain is neither scraped nor citable
 - **Corrections to published incidents** — the integrity agent reports, and only
   auto-fixes `corroboration_count` drift and unprocessed queue duplicates. It
   never rewrites a published incident's text, dates, or sources

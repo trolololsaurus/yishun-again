@@ -23,15 +23,21 @@ export async function POST(_request: Request, props: { params: Promise<{ id: str
     return NextResponse.json({ ok: true, noop: true })
   }
 
-  const { error } = await supabase
+  const { data: unpublished, error } = await supabase
     .from('incidents')
     .update({ is_published: false, published_at: null })
     .eq('id', id)
     .eq('is_published', true)
+    .select('id')
 
   if (error) {
     console.error('Unpublish incident:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ error: 'Update failed' }, { status: 500 })
+  }
+  // Two concurrent unpublishes both pass the read above; only the one whose
+  // CAS actually matched a row logs the training signal.
+  if (!unpublished?.length) {
+    return NextResponse.json({ ok: true, noop: true })
   }
 
   // Training signal is telemetry — the unpublish above has already committed,

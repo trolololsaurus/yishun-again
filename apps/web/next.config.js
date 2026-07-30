@@ -25,12 +25,18 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",  // MapLibre + Google Fonts
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: blob: https://tiles.openfreemap.org https://assets.yishunagain.com",
+      // No supabase.co allowance: the browser never talks to Supabase directly
+      // (all reads proxied via /api/*), so listing it only widened the
+      // exfiltration surface for any injected script.
       isDev
-        ? "connect-src 'self' https://*.supabase.co https://tiles.openfreemap.org https://assets.yishunagain.com ws://localhost:3000 wss://localhost:3000"
-        : "connect-src 'self' https://*.supabase.co https://tiles.openfreemap.org https://assets.yishunagain.com",
+        ? "connect-src 'self' https://tiles.openfreemap.org https://assets.yishunagain.com ws://localhost:3000 wss://localhost:3000"
+        : "connect-src 'self' https://tiles.openfreemap.org https://assets.yishunagain.com",
       "worker-src blob:",
       "media-src 'self' https://videodelivery.net",
       "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "object-src 'none'",
     ].join('; '),
   },
 ]

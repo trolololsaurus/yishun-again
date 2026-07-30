@@ -51,7 +51,7 @@ class _Client:
 
 def _sig(i, **kw):
     row = {"id": f"s{i}", "decision": "approve", "reject_reason": None,
-           "proposed_classification": None, "corrected_classification": None,
+           "proposed_classification": None, "edited_classification": None,
            "queue_id": f"q{i}", "incident_id": None, "created_at": "2026-07-01"}
     row.update(kw)
     return row
@@ -74,8 +74,10 @@ check("...with the operator's reason attached", "too_thin" in out)
 check("it is NOT an aggregate count", "item(s)" not in out and "3 item" not in out, f"-> {out!r}")
 
 # A reclassification is the sharper lesson and comes first.
+# edited_classification is the column the War Room actually writes on an
+# edit_approve — the old corrected_classification was written by nothing.
 sigs = [_sig(0, decision="reject", reject_reason="noise"),
-        _sig(1, proposed_classification="clown", corrected_classification="dagger")]
+        _sig(1, proposed_classification="clown", edited_classification="dagger")]
 out = learning.load_recent_signal_patterns(_Client(sigs, QUEUE))
 check("a reclassification shows both the proposed and corrected label",
       "clown" in out and "dagger" in out)

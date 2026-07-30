@@ -400,9 +400,10 @@ INSERT INTO incidents (
   'clown', 2, 3.00,
   'Yishun',
 
+  -- Reddit thread removed (guardrail #2 / migration 012): reddit is a signal,
+  -- never a quoted source. Live rows cleaned by migration 013.
   ARRAY[
-    'https://mothership.sg/2022/07/kurt-tay-void-deck-wrestling-yishun/',
-    'https://www.reddit.com/r/singapore/comments/kurt_tay_void_deck_fight_yishun_2022'
+    'https://mothership.sg/2022/07/kurt-tay-void-deck-wrestling-yishun/'
   ],
 
   '[
@@ -415,8 +416,8 @@ INSERT INTO incidents (
     }
   ]'::jsonb,
 
-  2,   -- corroboration_count
-  2,   -- hype_meter
+  1,   -- corroboration_count (was 2 counting the removed reddit thread)
+  1,   -- hype_meter
   0,   -- deaths
   0,   -- injuries
 
@@ -636,9 +637,10 @@ INSERT INTO incidents (
   'clown', 1, 1.50,
   'Yishun',
 
+  -- Reddit thread removed (guardrail #2 / migration 012): reddit is a signal,
+  -- never a quoted source. Live rows cleaned by migration 013.
   ARRAY[
-    'https://mothership.sg/2023/06/japanese-youtuber-visits-yishun/',
-    'https://www.reddit.com/r/singapore/comments/japanese_youtuber_visits_yishun_2023'
+    'https://mothership.sg/2023/06/japanese-youtuber-visits-yishun/'
   ],
 
   '[
@@ -651,7 +653,7 @@ INSERT INTO incidents (
     }
   ]'::jsonb,
 
-  2,   -- corroboration_count
+  1,   -- corroboration_count (was 2 counting the removed reddit thread)
   1,   -- hype_meter
   0,   -- deaths
   0,   -- injuries

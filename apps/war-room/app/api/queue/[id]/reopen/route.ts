@@ -42,14 +42,22 @@ export async function POST(_request: Request, props: { params: Promise<{ id: str
 
   if (incErr) {
     console.error('reopen — incident update:', incErr)
-    return NextResponse.json({ error: incErr.message }, { status: 500 })
+    return NextResponse.json({ error: 'Incident update failed' }, { status: 500 })
   }
 
-  // Dismiss the notification
-  await supabase
+  // Dismiss the notification — surface a failure instead of leaving the
+  // notification re-actionable while claiming success.
+  const { error: dismissErr } = await supabase
     .from('war_room_queue')
     .update({ status: 'approved', processed_at: new Date().toISOString() })
     .eq('id', id)
+  if (dismissErr) {
+    console.error('reopen — notification dismiss failed:', dismissErr)
+    return NextResponse.json(
+      { error: 'Incident reopened but the notification could not be dismissed — it may reappear.', incident_id: incidentId },
+      { status: 500 },
+    )
+  }
 
   return NextResponse.json({ ok: true, incident_id: incidentId })
 }

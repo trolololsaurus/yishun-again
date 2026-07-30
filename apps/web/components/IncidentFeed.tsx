@@ -71,7 +71,11 @@ export function IncidentFeed({ initialItems, activeFilter, selectedYear }: Props
     inFlight.current = true
 
     fetch(buildUrl(0))
-      .then(res => res.json() as Promise<Row[]>)
+      .then(res => {
+        // 429/5xx returns {error} — don't spread it into the list.
+        if (!res.ok) throw new Error(String(res.status))
+        return res.json() as Promise<Row[]>
+      })
       .then(data => {
         if (req !== reqRef.current) return
         setItems(data)
@@ -95,6 +99,9 @@ export function IncidentFeed({ initialItems, activeFilter, selectedYear }: Props
     setLoading(true)
     try {
       const res  = await fetch(buildUrl(next))
+      if (req !== reqRef.current) return
+      // 429/5xx returns {error} — don't spread it into the list.
+      if (!res.ok) { setHasMore(false); return }
       const data = (await res.json()) as Row[]
       if (req !== reqRef.current) return
       setItems(prev => [...prev, ...data])

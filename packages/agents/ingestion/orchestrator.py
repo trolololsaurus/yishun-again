@@ -12,6 +12,17 @@ dry_run=True runs the full fetch -> recency -> dedup -> Stage 1 -> Stage 2
 incident_links rows, no watermark advance, no pipeline_run_history row, no
 budget persistence.
 
+WATERMARKS ARE NOT ADVANCED BY WRITES — they are advanced by DECISIONS. A
+Stage-1 rejection and a consolidation duplicate-skip are verdicts that no later
+pass would change, and neither writes a row, so `dedup.is_duplicate` cannot see
+them next pass either. While only queued candidates advanced the watermark, those
+articles were re-fetched, re-Stage-1'd and re-drafted every single day. Each
+source therefore gets a `WatermarkTracker` (ingestion/watermark.py) which every
+branch of the candidate loop must settle exactly one way: `decided` for a verdict,
+`unresolved` for an interruption (error, deadline, budget halt, a gathered
+candidate the cluster phase never reached). Adding a new `continue` or `break` to
+that loop without marking the tracker either loses the story or re-buys it daily.
+
 KNOWN v1 GAPS (flagged, not fixed here — see chat for detail):
   - IngestionReport.phenomenon_count is always 0. The phenomenon/"kind"
     model from INGESTION_DESIGN.md §5.4 (kind='phenomenon_member',
@@ -47,6 +58,7 @@ from filters.stage2_writer import write_stage2
 from ingestion import dedup, fallback, learning, recency, state_store
 from ingestion.budget import load_daily_budget, save_daily_budget
 from ingestion.contracts import Candidate, IngestionReport, Source, SourceResult
+from ingestion.watermark import WatermarkTracker
 from orchestrator.herald_agent import check_milestones
 
 logger = logging.getLogger(__name__)
@@ -284,11 +296,32 @@ def _emit(stage2_input, item, is_dateless, edmw_signal_count, primary_candidate,
     return (True, is_update)
 
 
+def _mark_members(members, by_id, trackers, *, decided: bool) -> None:
+    """
+    Record one cluster's outcome on each member's OWN source watermark tracker.
+
+    A cluster mixes sources, so a single write settles a candidate for CNA and one
+    for Straits Times independently. Tolerates a member or source with no tracker
+    (a caller that supplied its own `gathered` list) rather than raising —
+    _write_clusters treats an exception from this region as a write failure and
+    counts it toward the circuit breaker, which a bookkeeping miss must not do.
+    """
+    for candidate in members:
+        tracker = trackers.get((by_id.get(id(candidate)) or {}).get("source"))
+        if tracker is None:
+            continue
+        if decided:
+            tracker.decided(candidate)
+        else:
+            tracker.unresolved(candidate)
+
+
 def _write_group(members, by_id, res, *, client, dry_run, reputation, signal_summary,
-                 notes, oversized: int = 0, activity=None):
+                 notes, trackers, oversized: int = 0, activity=None):
     """
     Write ONE cluster (or a single-member group) as one queue row with all its
-    non-signal sources. Updates `res` counters and the per-source watermark map.
+    non-signal sources. Updates `res` counters and settles every member's
+    watermark.
     """
     from ingestion import clustering
     item_of = lambda c: by_id[id(c)]["item"]
@@ -314,29 +347,42 @@ def _write_group(members, by_id, res, *, client, dry_run, reputation, signal_sum
     if queued:
         res["queued"] += 1
         res["update" if is_update else "new"] += 1
-        for c in non_signal:
-            d = getattr(c, "published_at", None)
-            if d:
-                src = by_id[id(c)]["source"]
-                cur = res["per_source_max"].get(src)
-                if cur is None or d > cur:
-                    res["per_source_max"][src] = d
+    else:
+        res["skipped"] += 1
+
+    # Settled either way, and for EVERY member — including signal members, which
+    # the old code excluded. A written cluster is represented in the queue; a
+    # consolidation skip means an equivalent report already is. Neither will change
+    # its mind next pass, so both advance the watermark.
+    #
+    # This is the only thing that stops a re-fetch, because build_queue_row writes
+    # just the PRIMARY member's URL to war_room_queue.source_url — every other
+    # member is invisible to dedup until the incident is published. Signal members
+    # are invisible to it permanently: guardrail #2 keeps their URL out of
+    # source_urls by design, so excluding them from the advance meant a merged
+    # Reddit/EDMW post was re-drafted every pass, and once its MSM siblings had
+    # been deduped away it came back ALONE as an unverified signal-only row.
+    _mark_members(members, by_id, trackers, decided=True)
     return queued
 
 
 def _write_clusters(gathered, *, client, dry_run, reputation, signal_summary,
-                    notes, activity, deadline, circuit_breaker_n):
+                    notes, activity, deadline, circuit_breaker_n, trackers):
     """
     The 'on' write phase: cluster the gathered Stage-1-passed candidates, confirm
     merges with the Haiku judge, and write ONE row per cluster with all sources.
-    Oversized clusters are written member-by-member (never auto-merge a blob).
+    An oversized cluster is written intact as one flagged row (see the loop).
     Returns a result dict the caller folds into the pass totals.
+
+    Every gathered candidate arrives held as `unresolved` on its source's tracker,
+    so anything this phase does not reach — a deadline, a tripped breaker, a write
+    error — keeps its source's watermark below it and is retried next pass.
     """
     from ingestion import clustering
     cands = [g["candidate"] for g in gathered]
     by_id = {id(g["candidate"]): g for g in gathered}
-    res = {"queued": 0, "new": 0, "update": 0, "clusters": 0, "aborted": False,
-           "per_source_max": {}, "cstats": {}}
+    res = {"queued": 0, "new": 0, "update": 0, "skipped": 0, "clusters": 0,
+           "aborted": False, "cstats": {}}
 
     # ONE batched grouping call for the whole pass (see _make_grouper). The
     # keyword pass survives only as the input filter that decides who is offered
@@ -351,9 +397,15 @@ def _write_clusters(gathered, *, client, dry_run, reputation, signal_summary,
     res["clusters"] = len(clusters)
 
     consecutive: dict[str, int] = {}
-    for cluster in clusters:
+    for ci, cluster in enumerate(clusters):
         if datetime.now(timezone.utc) >= deadline:
             res["aborted"] = True
+            # Hold the unwritten remainder. Per-CANDIDATE, not per-pass: a source
+            # whose every candidate was written before the deadline still advances,
+            # while one with a member left in the queue holds below that member's
+            # date. The whole remainder is retried next pass.
+            for unwritten in clusters[ci:]:
+                _mark_members(unwritten, by_id, trackers, decided=False)
             _log(activity, "anomaly", "pass_deadline",
                  "deadline hit during cluster write phase — remaining clusters not written")
             break
@@ -379,23 +431,27 @@ def _write_clusters(gathered, *, client, dry_run, reputation, signal_summary,
             _log(activity, "warning", "cluster_oversized",
                  f"cluster of {oversized} exceeds cap — written as ONE row, "
                  f"held for review until the grouper has earned merges this large")
-        for grp in [cluster]:
-            try:
-                _write_group(grp, by_id, res, client=client, dry_run=dry_run,
-                             reputation=reputation, signal_summary=signal_summary,
-                             notes=notes, oversized=oversized, activity=activity)
-                consecutive.clear()
-            except Exception as exc:                  # noqa: BLE001
-                logger.warning("run_ingestion_pass: cluster write error: %s", exc)
-                notes.append(f"cluster write error: {exc}")
-                err = _classify_error(exc)
-                if err:
-                    consecutive[err] = consecutive.get(err, 0) + 1
-                    if consecutive[err] >= circuit_breaker_n:
-                        res["aborted"] = True
-                        _log(activity, "anomaly", "circuit_breaker",
-                             f"{consecutive[err]} consecutive {err} in cluster writes — aborting")
-                        return res
+        try:
+            _write_group(cluster, by_id, res, client=client, dry_run=dry_run,
+                         reputation=reputation, signal_summary=signal_summary,
+                         notes=notes, trackers=trackers, oversized=oversized,
+                         activity=activity)
+            consecutive.clear()
+        except Exception as exc:                      # noqa: BLE001
+            logger.warning("run_ingestion_pass: cluster write error: %s", exc)
+            notes.append(f"cluster write error: {exc}")
+            # Never judged on its merits — hold every member so the retry is real.
+            _mark_members(cluster, by_id, trackers, decided=False)
+            err = _classify_error(exc)
+            if err:
+                consecutive[err] = consecutive.get(err, 0) + 1
+                if consecutive[err] >= circuit_breaker_n:
+                    res["aborted"] = True
+                    for unwritten in clusters[ci + 1:]:
+                        _mark_members(unwritten, by_id, trackers, decided=False)
+                    _log(activity, "anomaly", "circuit_breaker",
+                         f"{consecutive[err]} consecutive {err} in cluster writes — aborting")
+                    return res
     return res
 
 
@@ -454,7 +510,14 @@ def run_ingestion_pass(
     shadow_cluster = cluster_mode == "shadow"
     passed_candidates: list = []         # Stage-1-passed, for shadow clustering only
     gathered: list = []                  # 'on' mode: deferred writes, one per cluster later
-    on_fetched: dict = {}                # 'on' mode: source -> original watermark, advanced post-write
+    on_fetched: list = []                # 'on' mode: sources fetched, watermarks persisted post-write
+    # source -> WatermarkTracker. How far each source's watermark may advance is
+    # decided by what the pipeline SETTLED, not by what it wrote — a Stage-1
+    # rejection and a consolidation duplicate-skip are verdicts, and refusing to
+    # advance past them re-bought the same Gemini + Haiku calls every daily pass.
+    # See ingestion/watermark.py for the two holdbacks that keep that safe.
+    trackers: dict[str, WatermarkTracker] = {}
+    consolidation_skips = 0              # settled-but-unwritten: the cost this fix bounds
 
     try:
         client = get_supabase_client()
@@ -548,11 +611,17 @@ def run_ingestion_pass(
             if dropped_count:
                 notes.append(f"{source.name}: {dropped_count} candidate(s) <= watermark, dropped.")
 
-            max_published_at = watermark
+            tracker = WatermarkTracker(source.name, watermark, pass_date=now.date())
+            trackers[source.name] = tracker
             novel_count = 0
             queued_count = 0
 
-            for candidate in fresh + dateless:
+            # Materialised so an early break can hand the untouched remainder to
+            # the tracker. Without that, a mid-loop halt (Stage 1 budget, deadline,
+            # tripped breaker) let the candidates it already settled advance the
+            # watermark straight over the ones it never looked at.
+            todo = fresh + dateless
+            for idx, candidate in enumerate(todo):
                 is_dateless = candidate.published_at is None
 
                 # ── Safety: max-duration timeout ─────────────────────────────
@@ -562,6 +631,7 @@ def run_ingestion_pass(
                 # source list ran out, which is the exact shape of an
                 # accidentally-unbounded pass.
                 if datetime.now(timezone.utc) >= deadline:
+                    tracker.unresolved_all(todo[idx:])
                     abort_pass = (
                         f"aborted: max_duration_seconds={max_duration_seconds} reached "
                         f"— source '{source.name}' watermark not advanced"
@@ -587,12 +657,17 @@ def run_ingestion_pass(
                     )
 
                 if is_dup:
+                    # Settled: the URL is already in war_room_queue / incidents (or
+                    # was handled earlier in this pass), so it stays visible to
+                    # dedup. Advancing saves re-fetching and re-checking it.
+                    tracker.decided(candidate)
                     continue
                 seen_urls.add(candidate.url)
                 novel_count += 1
 
                 # ── Safety: max-duration timeout ─────────────────────────────
                 if datetime.now(timezone.utc) >= deadline:
+                    tracker.unresolved_all(todo[idx:])
                     abort_pass = (
                         f"aborted: max_duration_seconds={max_duration_seconds} reached "
                         f"— source '{source.name}' watermark not advanced"
@@ -601,6 +676,11 @@ def run_ingestion_pass(
                     break
 
                 if budget_halted:
+                    # These were never offered to Stage 1. Holding them is what
+                    # stops the candidates processed BEFORE the halt from advancing
+                    # the watermark over an unexamined remainder — a real data loss
+                    # whenever a source lists newest-first, which most RSS does.
+                    tracker.unresolved_all(todo[idx:])
                     notes.append(f"{source.name}: remaining candidates skipped — Stage 1 daily request budget exhausted mid-pass.")
                     break
 
@@ -618,6 +698,12 @@ def run_ingestion_pass(
                     total_sleep_seconds += s1.get("rate_limiter_sleep_seconds", 0.0)
 
                     if not s1["passes"]:
+                        # Settled, and the highest-volume case by far — Stage 1
+                        # rejects 60-70% of raw scrape volume and none of it is
+                        # written anywhere, so dedup can never see it. Re-asking
+                        # Gemini the same question about the same article every day
+                        # was the largest share of the bleed this fix closes.
+                        tracker.decided(candidate)
                         consecutive.clear()
                         continue
 
@@ -636,6 +722,11 @@ def run_ingestion_pass(
                             "candidate": candidate, "item": item,
                             "is_dateless": is_dateless, "source": source.name,
                         })
+                        # Not settled yet — the cluster-write phase decides. Held
+                        # unresolved until then so a sibling this source DID settle
+                        # cannot advance the watermark past a candidate still
+                        # waiting to be written.
+                        tracker.unresolved(candidate)
                         consecutive.clear()
                         continue
 
@@ -660,7 +751,16 @@ def run_ingestion_pass(
                         activity=activity,
                     )
                     if not queued:
-                        continue   # consolidation returned skip — same as the old inline `continue`
+                        # Consolidation judged this a duplicate of a row already
+                        # awaiting review. That is a VERDICT, not a failure — the
+                        # story is represented, and re-running the pass would only
+                        # buy the same two Haiku drafts and the same judgement
+                        # again. Nothing was written, so dedup cannot see it next
+                        # pass; the watermark is the only thing that can.
+                        tracker.decided(candidate)
+                        consolidation_skips += 1
+                        consecutive.clear()
+                        continue
 
                     queued_count += 1
                     total_queued += 1
@@ -669,16 +769,19 @@ def run_ingestion_pass(
                     else:
                         new_count += 1
 
-                    if not is_dateless:
-                        if max_published_at is None or candidate.published_at > max_published_at:
-                            max_published_at = candidate.published_at
-
+                    tracker.decided(candidate)
                     consecutive.clear()   # clean completion → reset circuit breaker
 
                 except Stage1HaltError as exc:
                     # Non-retryable: daily quota gone (resets midnight US/Pacific)
                     # or a billing block. Either way, retrying every remaining
                     # candidate just hammers the same wall. Halt the pass.
+                    #
+                    # "Non-retryable" means not retryable NOW — the quota resets, so
+                    # this candidate and everything behind it must survive to the
+                    # next pass. abort_pass already suppresses this source's
+                    # watermark write; holding them keeps that true independently.
+                    tracker.unresolved_all(todo[idx:])
                     daily_budget.mark_rpd_exhausted()
                     budget_halted = True
                     abort_pass = str(exc)
@@ -695,11 +798,17 @@ def run_ingestion_pass(
                 except Exception as exc:
                     logger.warning("run_ingestion_pass: error processing %s (%s): %s", candidate.url, source.name, exc)
                     notes.append(f"{source.name}: error processing {candidate.url}: {exc}")
+                    # Never judged on its merits — a model or DB error says nothing
+                    # about the article. Holding it also pins the watermark below
+                    # its date, so the siblings this source DID settle cannot
+                    # quietly carry the watermark past it.
+                    tracker.unresolved(candidate)
                     # ── Safety: circuit breaker ───────────────────────────────
                     err_class = _classify_error(exc)
                     if err_class:
                         consecutive[err_class] = consecutive.get(err_class, 0) + 1
                         if consecutive[err_class] >= circuit_breaker_n:
+                            tracker.unresolved_all(todo[idx:])
                             abort_pass = (
                                 f"circuit breaker: {consecutive[err_class]} consecutive "
                                 f"{err_class} failures — aborting pass"
@@ -722,11 +831,14 @@ def run_ingestion_pass(
 
             if not dry_run and not abort_pass:
                 if cluster_mode == "on":
-                    # Defer: the cluster-write phase advances watermarks only for
-                    # sources whose candidates were actually written.
-                    on_fetched[source.name] = watermark
+                    # Defer: this source's gathered candidates are still unresolved
+                    # until the cluster-write phase settles them.
+                    on_fetched.append(source.name)
                 else:
-                    state_store.update(source.name, max_published_at, "ok", client=client)
+                    state_store.update(source.name, tracker.value(), "ok", client=client)
+                    hold = tracker.hold_note()
+                    if hold:
+                        notes.append(hold)
 
         if abort_pass:
             notes.append(f"Pass aborted: {abort_pass}")
@@ -737,30 +849,40 @@ def run_ingestion_pass(
                 gathered, client=client, dry_run=dry_run, reputation=reputation,
                 signal_summary=signal_summary, notes=notes, activity=activity,
                 deadline=deadline, circuit_breaker_n=circuit_breaker_n,
+                trackers=trackers,
             )
             total_queued += cres["queued"]
             new_count += cres["new"]
             update_count += cres["update"]
+            consolidation_skips += cres["skipped"]
             if cres["aborted"]:
                 degraded = True
+            # Keys match group_candidates' stats dict (clustering.py) — the
+            # old edges_confirmed/edges_judged keys died with pairwise judging
+            # and always rendered "?/?".
             notes.append(
                 f"[cluster-write] {len(gathered)} candidate(s) -> {cres['clusters']} cluster(s); "
                 f"wrote {cres['queued']} row(s) "
-                f"(edges {cres['cstats'].get('edges_confirmed', '?')} confirmed / "
-                f"{cres['cstats'].get('edges_judged', '?')} judged)."
+                f"(merges {cres['cstats'].get('merges', '?')}, "
+                f"grouper errors {cres['cstats'].get('grouper_errors', '?')})."
             )
             _log(activity, "success", "cluster_write",
                  f"{cres['queued']} row(s) from {cres['clusters']} cluster(s) of {len(gathered)} candidate(s)")
-            # Advance watermarks. If the write phase completed, advance each
-            # fetched source to the max date of ITS written candidates (unchanged
-            # if it wrote none). If it aborted mid-write, advance NOTHING past the
-            # original watermark — the whole set retries next pass, and dedup
-            # catches anything already written. Either way every fetched source is
-            # marked 'ok' so the supervisor doesn't read it as stale.
-            if not dry_run:
-                for src_name, orig_wm in on_fetched.items():
-                    wm = cres["per_source_max"].get(src_name, orig_wm) if not cres["aborted"] else orig_wm
-                    state_store.update(src_name, wm, "ok", client=client)
+
+        # Persist 'on'-mode watermarks. Outside the block above on purpose: a pass
+        # where nothing cleared Stage 1 has no clusters to write but has still
+        # SETTLED every candidate it looked at, and skipping the write there was
+        # the same bug in its purest form — the emptiest passes advanced nothing at
+        # all. Each tracker already holds itself below anything the write phase
+        # never reached, so an abort needs no special case here. Every fetched
+        # source is marked 'ok' so the supervisor doesn't read it as stale.
+        if cluster_mode == "on" and not dry_run:
+            for src_name in on_fetched:
+                tracker = trackers[src_name]
+                state_store.update(src_name, tracker.value(), "ok", client=client)
+                hold = tracker.hold_note()
+                if hold:
+                    notes.append(hold)
 
         # ── Shadow clustering: log what gather->cluster->write WOULD do ──────
         # Pure analysis of the candidates that passed Stage 1 this pass; writes
@@ -795,6 +917,15 @@ def run_ingestion_pass(
                              f"WOULD MERGE {len(cl)}: {titles}")
             except Exception as exc:                  # noqa: BLE001
                 logger.warning("run_ingestion_pass: shadow clustering failed (non-fatal): %s", exc)
+
+        if consolidation_skips:
+            notes.append(
+                f"{consolidation_skips} candidate(s) dropped by consolidation as duplicates of "
+                f"rows already awaiting review — each cost a Stage 2 draft this pass. "
+                + ("Watermarks were not advanced (dry run), so a real pass would pay again."
+                   if dry_run else
+                   "The watermark has advanced past them, so none is re-drafted next pass.")
+            )
 
         if total_sleep_seconds > 0:
             notes.append(

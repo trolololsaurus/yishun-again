@@ -41,7 +41,9 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
     const matchedLink    = related.find(r => r.incident_id === relatedId)
     const linkConfidence = matchedLink?.confidence ?? null
-    const agentReason    = matchedLink?.agent_reason ?? null
+    // The link objects carry `reason` (see lib/types.ts AgentRelatedIncident);
+    // reading `agent_reason` here logged null on every dismissal.
+    const agentReason    = matchedLink?.reason ?? null
 
     const updated = related.map(r =>
       r.incident_id === relatedId ? { ...r, dismissed: true } : r
@@ -54,10 +56,10 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
     if (updateErr) {
       console.error('dismiss-alert — link update:', updateErr)
-      return NextResponse.json({ error: updateErr.message }, { status: 500 })
+      return NextResponse.json({ error: 'Queue update failed' }, { status: 500 })
     }
 
-    await supabase.from('training_signals').insert({
+    const { error: signalErr } = await supabase.from('training_signals').insert({
       incident_id:      null,
       action:           'pattern_dismissed',
       decision:         'reject',
@@ -69,6 +71,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         agent_reason:            agentReason,
       },
     })
+    if (signalErr) console.error('dismiss-alert — training_signal insert failed (non-fatal):', signalErr)
 
     return NextResponse.json({ ok: true })
   }
@@ -92,7 +95,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
   const patternAlertId = validateUUID(rc.pattern_alert_id as string)
   if (patternAlertId) {
-    await supabase
+    const { error: alertErr } = await supabase
       .from('pattern_alerts')
       .update({
         status:          'dismissed',
@@ -100,14 +103,19 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         resolved_at:     new Date().toISOString(),
       })
       .eq('id', patternAlertId)
+    if (alertErr) console.error('dismiss-alert — pattern_alerts update failed:', alertErr)
   }
 
-  await supabase
+  const { error: queueErr } = await supabase
     .from('war_room_queue')
     .update({ status: 'rejected', processed_at: new Date().toISOString() })
     .eq('id', id)
+  if (queueErr) {
+    console.error('dismiss-alert — queue update failed:', queueErr)
+    return NextResponse.json({ error: 'Queue update failed' }, { status: 500 })
+  }
 
-  await supabase.from('training_signals').insert({
+  const { error: patternSignalErr } = await supabase.from('training_signals').insert({
     incident_id:      null,
     action:           'pattern_dismissed',
     decision:         'reject',
@@ -118,6 +126,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
       operator_action: 'dismissed',
     },
   })
+  if (patternSignalErr) console.error('dismiss-alert — training_signal insert failed (non-fatal):', patternSignalErr)
 
   return NextResponse.json({ ok: true })
 }

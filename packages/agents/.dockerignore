@@ -10,10 +10,16 @@ __pycache__/
 venv/
 .venv/
 
-# Dev / test files
+# Dev / test files — the suite lives at package root as test_*.py, not tests/
 tests/
+test_*.py
+tools/
+fixtures/
+seed_backfill.py
 .pytest_cache/
 *.log
+stage1_*_usage.json
+calibration_log.json
 
 # OS
 .DS_Store

@@ -100,6 +100,28 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   const updatedSummary = (body.updated_summary ?? '').trim()
   if (updatedSummary) updates.summary = updatedSummary
 
+  // Claim the queue item BEFORE mutating the incident. The old order updated
+  // the incident first and never checked the queue update's error — a failed
+  // (or raced) status write left the item re-confirmable, appending duplicate
+  // timeline entries and double-counting update_count. Losing the claim here
+  // costs nothing; losing it after the mutation corrupts the incident.
+  const { data: claimed, error: claimErr } = await supabase.from('war_room_queue').update({
+    status:       'update_approved',
+    incident_id:  targetId,
+    processed_at: new Date().toISOString(),
+  }).eq('id', id).eq('status', 'update').select('id')
+
+  if (claimErr) {
+    console.error('confirm-update — queue claim failed:', claimErr)
+    return NextResponse.json({ error: 'Queue update failed' }, { status: 500 })
+  }
+  if (!claimed?.length) {
+    return NextResponse.json(
+      { error: 'Queue item was already processed by another request.' },
+      { status: 409 },
+    )
+  }
+
   const { error: updateErr } = await supabase
     .from('incidents')
     .update(updates)
@@ -107,7 +129,12 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
   if (updateErr) {
     console.error('confirm-update — incident update:', updateErr)
-    return NextResponse.json({ error: updateErr.message }, { status: 500 })
+    // Give the claim back so the operator can retry once the cause is fixed.
+    const { error: unclaimErr } = await supabase.from('war_room_queue')
+      .update({ status: 'update', incident_id: null, processed_at: null })
+      .eq('id', id).eq('status', 'update_approved')
+    if (unclaimErr) console.error('confirm-update — failed to release claim after incident update error:', unclaimErr)
+    return NextResponse.json({ error: 'Incident update failed' }, { status: 500 })
   }
 
   // Create incident_links for any confirmed related incidents

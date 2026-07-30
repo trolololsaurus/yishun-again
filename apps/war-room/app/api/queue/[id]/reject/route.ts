@@ -36,20 +36,29 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     return NextResponse.json({ error: 'Queue item not found or already processed' }, { status: 404 })
   }
 
-  // Update queue status
-  const { error: updateErr } = await supabase
+  // Update queue status. CAS on status='pending' so a reject racing an
+  // approve can't overwrite 'approved' while the incident stays published.
+  const { data: claimed, error: updateErr } = await supabase
     .from('war_room_queue')
     .update({ status: 'rejected', processed_at: new Date().toISOString() })
     .eq('id', id)
+    .eq('status', 'pending')
+    .select('id')
 
   if (updateErr) {
     console.error('Reject — update queue:', updateErr)
-    return NextResponse.json({ error: updateErr.message }, { status: 500 })
+    return NextResponse.json({ error: 'Queue update failed' }, { status: 500 })
+  }
+  if (!claimed?.length) {
+    return NextResponse.json(
+      { error: 'Queue item was already processed by another request.' },
+      { status: 409 },
+    )
   }
 
   // Log training signal — no incident_id on reject
   const rc = (item.raw_content ?? {}) as Record<string, unknown>
-  await supabase.from('training_signals').insert({
+  const { error: signalErr } = await supabase.from('training_signals').insert({
     incident_id:             null,
     queue_id:                id,
     action:                  'reject',
@@ -65,6 +74,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     original_severity:       item.proposed_severity,
     agent_confidence_was:    item.agent_confidence,
   })
+  if (signalErr) console.error('reject — training_signal insert failed (non-fatal):', signalErr)
 
   return NextResponse.json({ ok: true })
 }

@@ -63,19 +63,24 @@ export async function POST(_request: Request, props: { params: Promise<{ id: str
 
   // Confirm the pattern alert
   if (patternAlertId) {
-    await supabase
+    const { error: alertErr } = await supabase
       .from('pattern_alerts')
       .update({ status: 'confirmed', operator_action: 'note_for_profile', resolved_at: new Date().toISOString() })
       .eq('id', patternAlertId)
+    if (alertErr) console.error('note-profile — pattern_alerts update failed:', alertErr)
   }
 
   // Dismiss the notification
-  await supabase
+  const { error: queueErr } = await supabase
     .from('war_room_queue')
     .update({ status: 'approved', processed_at: new Date().toISOString() })
     .eq('id', id)
+  if (queueErr) {
+    console.error('note-profile — queue update failed:', queueErr)
+    return NextResponse.json({ error: 'Profile created but the notification could not be dismissed — it may reappear.', profile_id: profileId }, { status: 500 })
+  }
 
-  await supabase.from('training_signals').insert({
+  const { error: signalErr } = await supabase.from('training_signals').insert({
     incident_id:      null,
     action:           'pattern_confirmed',
     decision:         'approve',
@@ -86,6 +91,7 @@ export async function POST(_request: Request, props: { params: Promise<{ id: str
       operator_action: 'note_for_profile',
     },
   })
+  if (signalErr) console.error('note-profile — training_signal insert failed (non-fatal):', signalErr)
 
   return NextResponse.json({ ok: true, profile_id: profileId })
 }
