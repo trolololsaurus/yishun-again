@@ -29,14 +29,23 @@ const STATUS_CLS: Record<string, string> = {
   error:   'text-red',
 }
 
+// A health row is only worth showing while it is fresh. Without this window the
+// page happily rendered a green dot from a writer that had stopped running —
+// and after July 2026 it would also show the retired writer's display-name rows
+// ("Stomp") next to the live pass's stable-id rows ("stomp") as if they were
+// two different sources.
+const HEALTH_WINDOW_DAYS = 7
+
 export default async function HealthPage() {
   const since150d = new Date(Date.now() - 150 * 24 * 60 * 60 * 1000).toISOString()
   const since180d = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString()
+  const healthSince = new Date(Date.now() - HEALTH_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString()
 
   const [scraperResult, developingResult, approachingResult, patternResult] = await Promise.all([
     supabase
       .from('scraper_health')
       .select('*')
+      .gte('scraped_at', healthSince)
       .order('scraped_at', { ascending: false })
       .limit(200),
     supabase
@@ -85,7 +94,8 @@ export default async function HealthPage() {
       <div>
         <h1 className="font-body font-bold text-yellow text-lg mb-6">PIPELINE HEALTH</h1>
         <div className="font-body text-text-secondary text-sm">
-          No health data yet. Run the pipeline once to populate.
+          No health data in the last {HEALTH_WINDOW_DAYS} days. Rows are written once per
+          source per ingestion pass — if the daily pass is running, this should not be empty.
         </div>
       </div>
     )

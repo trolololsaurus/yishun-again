@@ -72,11 +72,15 @@ check("live registry has all 14 sources + Google News (Phases 1-3)",
                      "shinmin", "berita_harian", "tamil_murasu",
                      "google_news_rss", "reddit", "edmw"})
 check("EDMW is registered as a SIGNAL source (never a quoted source)",
-      any(s.name == "edmw" and s._source_type == "signal"
+      any(s.name == "edmw" and s.source_type == "signal"
           for s in srcmod.get_enabled_sources()))
 check("Reddit is registered as a SIGNAL source (July 2026 — UGC, not a source)",
-      any(s.name == "reddit" and s._source_type == "signal"
+      any(s.name == "reddit" and s.source_type == "signal"
           for s in srcmod.get_enabled_sources()))
+# Declared on the Source itself, so a source whose fetch RAISES can still be
+# typed in its scraper_health row (ingestion/health.py).
+check("every registered source declares a source_type",
+      all(getattr(s, "source_type", None) for s in srcmod.get_enabled_sources()))
 
 # End-to-end: the reddit scraper emits the signal type and guardrail #2 catches
 # it, so a reddit URL can never reach source_urls and its post date is never an

@@ -256,6 +256,15 @@ rather than returning `[]`; the adapters translate those to
 "no Yishun news", not "something broke quietly" — Stomp sat silently dead for
 weeks under the old behaviour.
 
+**`scraper_health` is written by `ingestion/health.py`**, called once per fetched
+source from the orchestrator's per-source loop — keyed on the **stable source id**
+(`stomp`), the same key as `pipeline_state`, because `ops/supervisor.py` joins the
+two and counts distinct sources toward its email threshold. The previous writer
+(`scrapers.log_scraper_run`, inside `scrape_all`) was orphaned by the adapter port
+and both are now deleted: the table went stale while the supervisor and War Room
+kept reading it, which is a worse failure than having no health table at all. See
+`docs/AUTONOMY.md` §5.
+
 ---
 
 ## Database

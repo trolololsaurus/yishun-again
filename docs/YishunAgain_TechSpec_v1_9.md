@@ -1490,7 +1490,19 @@ CREATE INDEX idx_health_status ON scraper_health(status, scraped_at DESC);
 ```
 
 **What gets logged:**
-Every scraper run (success or failure) logs one row. Agent pipeline calls `log_scraper_run()` after each scraper in `scrape_all()`.
+Every scraper run (success or failure) logs one row. `ingestion/orchestrator.py`
+calls `ingestion.health.record()` once per source, per pass — for every source
+the pass actually fetched, and for none it skipped.
+
+⚠️ **Rows are keyed by the stable source id** (`stomp`, `straits_times`), the
+same key as `pipeline_state` — `ops/supervisor.py` joins the two tables on it and
+counts distinct sources toward its email threshold, so a second spelling of one
+source would mail as if it were two. The pre-July-2026 writer
+(`scrapers.log_scraper_run`, called only from the retired `scrape_all`) used
+display names, and stopped being called at all when ingestion moved to the
+`ingestion/sources/` adapters — leaving the supervisor and the War Room grading a
+table nobody was writing. Both are deleted; `ingestion/health.py` carries the
+status rules now.
 
 Status rules:
 - `ok` — items_found > 0 OR source had no Yishun content (expected)
@@ -2282,7 +2294,7 @@ v1.8 refactor: ⏳ Backfill scope expansion, Wikipedia discovery agent,
 |---|---|---|---|
 | Pin geocoding precision | Medium | Backlogged | Block 349 + Block 323 overlap on map — OneMap returns street centroid not block |
 | `revalidate = 0` on homepage | Medium | ✅ Fixed (commit c709b32) | Changed to 60 in apps/web/app/page.tsx |
-| `items_passed_s1` always 0 in scraper_health | Low | Backlogged | Stage 1 counts not passed back per-source |
+| `items_passed_s1` always 0 in scraper_health | Low | ✅ Fixed (2026-07-30) | Counted per-source in the ingestion pass, where Stage 1 actually runs. The old writer ran before Stage 1 and could not know it. |
 | `avr_loss=nan` in LoRA training | Low | Monitor | Logging quirk, generation works |
 | Wikipedia scraper untested live | Medium | ⏳ Pending | `--year wiki` mode exists in backfill_agent.py but quota killed dry run before it ran. Test before first Wikipedia sweep. |
 | Backfill intra-batch dedup untested live | Medium | ⏳ Pending | Dry-run confirmed working. Needs live test WITH hero incidents in DB. |

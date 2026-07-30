@@ -63,6 +63,15 @@ ZERO_STREAK_ANOMALY = 5
 # means the row was never closed — i.e. the process died.
 STUCK_RUN_MINUTES = 90
 
+# scraper_health rows are evidence only while they are FRESH. This agent spent
+# months grading rows nobody was writing any more: the table's writer lived in
+# `scrapers.scrape_all`, which lost its last caller when ingestion moved to the
+# source adapters, so every pass re-read the same fossils and reported them as
+# today's fleet. `ingestion/health.py` writes them on the live path now — and
+# this cutoff means a future regression of the same shape degrades to "no
+# opinion" instead of a confident wrong one.
+HEALTH_ROW_MAX_AGE_HOURS = 48
+
 # (a) and (c) from the module docstring.
 SERIOUS_SOURCE_COUNT = 3
 CHRONIC_DAYS = 3
@@ -123,8 +132,12 @@ def load_scraper_health(client=None, limit: int = 300) -> list[dict]:
 
     scraper_health is append-only, so the table is read newest-first and the
     first row seen for a source wins. `consecutive_zeros` is already cumulative
-    on each row (scrapers.log_scraper_run computes it), so one row per source is
-    all the history this agent needs.
+    on each row (`ingestion.health.record` computes it), so one row per source
+    is all the history this agent needs.
+
+    Rows are NOT filtered by age here — classify_findings applies
+    HEALTH_ROW_MAX_AGE_HOURS against its own `now`, which keeps the age rule
+    testable and lets it tell "stale rows" apart from "no rows at all".
     """
     c = _client(client)
     if not c:
@@ -237,7 +250,32 @@ def classify_findings(*, pipeline_state, scraper_health=(), stuck=(), now=None) 
             sources=sorted(known),
         ))
 
+    # Only rows we can still believe. A row with no parseable timestamp is taken
+    # at face value: the cutoff exists to discard rows PROVABLY older than the
+    # window, not to throw away evidence over a formatting quirk.
+    fresh_health, fossils = [], 0
     for row in scraper_health or []:
+        stamp = _parse_ts(row.get("scraped_at"))
+        if stamp and now - stamp > timedelta(hours=HEALTH_ROW_MAX_AGE_HOURS):
+            fossils += 1
+        else:
+            fresh_health.append(row)
+
+    # Rows exist but every one is old => the writer stopped, which is invisible
+    # from the table itself (an append-only table that stops being appended to
+    # looks exactly like a healthy quiet one). Warning, not anomaly: it is a
+    # blind spot, not evidence of a broken source, and it must not push the
+    # operator's email over the bar on its own.
+    if fossils and not fresh_health:
+        findings.append(_finding(
+            "warning", "health_rows_stale",
+            f"every scraper_health row is older than {HEALTH_ROW_MAX_AGE_HOURS}h "
+            f"({fossils} row(s)) — the ingestion pass has stopped writing them, so "
+            f"zero-streak checks are suppressed rather than graded on stale data",
+            stale_rows=fossils,
+        ))
+
+    for row in fresh_health:
         zeros = int(row.get("consecutive_zeros") or 0)
         if zeros >= ZERO_STREAK_ANOMALY:
             name = row.get("source_name") or "?"

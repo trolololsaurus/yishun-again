@@ -222,6 +222,25 @@ overrun, not a hypothetical:
 / `source_unavailable`), plus `pipeline_state.last_reason` and
 `consecutive_failures`. That is what the supervisor and maintenance agents read.
 
+**Plus one `scraper_health` row per fetched source, per pass**
+(`ingestion/health.py`, called from the orchestrator's per-source loop) —
+items found, items past Stage 1, duration, zero-streak, status. The supervisor's
+zero-streak check and both War Room health views read it.
+
+> **The failure this replaced is the one to watch for.** The table's writer used
+> to be `scrapers.log_scraper_run`, reachable only through `scrapers.scrape_all`
+> — which lost its last caller when ingestion moved to the `ingestion/sources/`
+> adapters. Nothing errored. The table simply stopped growing while the
+> supervisor kept grading it, so a source dead for months still reported a green
+> dot with full confidence. An observability table with no live writer is worse
+> than none: it answers, and the answer is a fossil.
+>
+> Two guards now: rows are written from the path that actually runs, and
+> `supervisor.HEALTH_ROW_MAX_AGE_HOURS` (48 h) makes the agent say *"every health
+> row is stale, I have no opinion"* rather than confidently repeating old ones.
+> If you ever move the writer again, keep the key `source.name` — the stable id,
+> the one `pipeline_state` uses.
+
 ### 5b. Exit conditions that open, not just close: oversized merges
 
 Every limit above is a ceiling that stays put. This one is a **hold the agent can
