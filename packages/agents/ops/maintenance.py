@@ -370,12 +370,11 @@ def _digest(run_ctx, client, stats: dict) -> None:
                            limit=400, client=client)
     runs = recent_runs(hours=WINDOW_HOURS, limit=200, client=client)
     state = _load(client, "pipeline_state", "source_name,last_status,last_reason,updated_at")
-    # Legacy surface: scraper_health is only written by scrapers.log_scraper_run,
-    # reached only from scrapers.scrape_all, which nothing calls — so on the live
-    # pipeline this read returns nothing. Harmless (every failure it used to
-    # carry also lands in agent_events and pipeline_state.last_reason, both read
-    # above), and kept until the scrape_all question is settled. ops/supervisor.py
-    # no longer depends on this table at all; see its module docstring.
+    # scraper_health is live again: `ingestion/health.py` writes one row per
+    # fetched source per pass, so this read carries real per-source error text
+    # (the old writer inside scrapers.scrape_all was orphaned by the adapter port
+    # and both are deleted). It is a reporting surface only — ops/supervisor.py
+    # deliberately does NOT alert off this table; see its module docstring.
     health = _load(
         client, "scraper_health", "source_name,scraped_at,errors,status,status_reason",
         build=lambda q: q.gte("scraped_at", since).order("scraped_at", desc=True),

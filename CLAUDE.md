@@ -290,12 +290,23 @@ rather than returning `[]`; the adapters translate those to
 "no Yishun news", not "something broke quietly" — Stomp sat silently dead for
 weeks under the old behaviour.
 
-**`scrapers.scrape_all()` is not on any live path** and neither is
-`log_scraper_run()`, which only it calls — so nothing writes `scraper_health`.
-`ops/supervisor.py` used to read that table for its zero-streak check, making
-that check permanently dead; it now derives the streak from
-`pipeline_run_history` instead. Do not build new monitoring on `scraper_health`
-without first giving it a writer.
+**`scraper_health` is written by `ingestion/health.py`**, called once per fetched
+source from the orchestrator's per-source loop — keyed on the **stable source id**
+(`stomp`), the same key as `pipeline_state`, so one source can never render as two
+under different spellings. The previous writer (`scrapers.log_scraper_run`, inside
+`scrape_all`) was orphaned by the adapter port and both are now deleted: the table
+went stale while the supervisor and War Room kept reading it, which is a worse
+failure than having no health table at all. See `docs/AUTONOMY.md` §5.
+
+**Display reads `scraper_health`; alerting does not.** `ops/supervisor.py`'s
+zero-streak check derives from `pipeline_run_history` (`state_store.record_run`,
+written at the end of every real pass), *not* from `scraper_health` — deliberately,
+even though the table now has a live writer again. An append-only table that stops
+being appended to looks exactly like a healthy quiet one, and that is precisely the
+failure the supervisor exists to catch, so its alerting must not be the thing that
+goes quiet with it. `scraper_health` powers the War Room health views (7-day
+window) and `ops/maintenance.py`'s error digest. Keep it that way: if you need a
+new *alert*, base it on run history.
 
 ---
 

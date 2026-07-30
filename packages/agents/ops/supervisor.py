@@ -11,17 +11,25 @@ whether a human has to hear about it tonight.
 WHY ZERO STREAKS COME FROM pipeline_run_history, NOT scraper_health
 -------------------------------------------------------------------
 `scraper_health.consecutive_zeros` is the obvious source for this and it is the
-one this agent used to read. It was dead. That column is only ever written by
-`scrapers.log_scraper_run`, which is only ever called from
-`scrapers.scrape_all` — and nothing calls `scrape_all`: the live pipeline is
-`ingestion/orchestrator.run_ingestion_pass` over `ingestion/sources/`. So the
-read returned stale rows or none, and the zero-streak check could not fire no
-matter how broken a source got. That is the precise failure this agent exists to
-catch, so it cannot be built on a table nothing writes.
+one this agent used to read. It was dead: that column's only writer,
+`scrapers.log_scraper_run`, was reachable only from `scrapers.scrape_all`, which
+lost its last caller when ingestion moved to `ingestion/sources/`. So the read
+returned stale rows or none, and the zero-streak check could not fire no matter
+how broken a source got — the precise failure this agent exists to catch.
+
+`ingestion/health.py` has since given that table a live writer (one row per
+fetched source per pass), and this agent still does not read it. That is a
+standing decision, not a leftover: an append-only table that stops being appended
+to looks exactly like a healthy quiet one, so a check whose whole job is
+detecting silent death must not itself be able to go silent that way. The failure
+above was not "the writer was missing", it was "the alert depended on a writer" —
+replacing the writer does not remove that coupling.
 
 `pipeline_run_history` is written by `state_store.record_run` at the end of every
 real pass and carries `report.per_source[].fetched`, which is the same
 measurement. Deriving the streak from it needs no new writes and no new table.
+`scraper_health` remains the *display* surface (War Room health views,
+`ops/maintenance.py`'s digest). Alerts belong here; reporting belongs there.
 
 WHY THE EMAIL BAR IS DELIBERATELY HIGH
 --------------------------------------

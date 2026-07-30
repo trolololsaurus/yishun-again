@@ -130,6 +130,7 @@ class GoogleNewsRSSSource:
 
     name = "google_news_rss"
     enabled = True
+    source_type = "rss"      # matches the Candidate type this source emits
 
     def fetch(self, since: date | None) -> list[Candidate]:
         """

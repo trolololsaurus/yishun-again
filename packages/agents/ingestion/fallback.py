@@ -36,6 +36,10 @@ logger = logging.getLogger(__name__)
 BACKOFF_SECONDS = 30  # fixed interval before the single retry
 
 
+def _ms_since(started: float) -> int:
+    return int((time.monotonic() - started) * 1000)
+
+
 def run_with_fallback(
     source_name: str,
     fetch,
@@ -54,12 +58,19 @@ def run_with_fallback(
     returned SourceResult are left at 0 — the orchestrator fills these in
     after RecencyFilter/Deduplicator/queue-write, since this module has no
     visibility into those steps.
+
+    `duration_ms` times the ATTEMPT that produced the result and never includes
+    the backoff sleep: on the retry path the clock restarts after the sleep, so
+    "how long did this source take" stays comparable across passes whether or
+    not it needed a retry. scraper_health's slow-source check reads it.
     """
+    started = time.monotonic()
     try:
         candidates = fetch()
         return candidates, SourceResult(
             name=source_name, status="ok",
             fetched=len(candidates), fresh=0, novel=0, queued=0, reason=None,
+            duration_ms=_ms_since(started),
         )
     except SourceBlockedError as exc:
         logger.warning(
@@ -69,6 +80,7 @@ def run_with_fallback(
         return None, SourceResult(
             name=source_name, status="blocked",
             fetched=0, fresh=0, novel=0, queued=0, reason=str(exc),
+            duration_ms=_ms_since(started),
         )
     except SourceUnavailableError as exc:
         # backoff_seconds=0 skips the retry sleep entirely. The orchestrator
@@ -82,11 +94,13 @@ def run_with_fallback(
         )
         if backoff_seconds > 0:
             time.sleep(backoff_seconds)
+        retry_started = time.monotonic()   # clock restarts AFTER the sleep
         try:
             candidates = fetch()
             return candidates, SourceResult(
                 name=source_name, status="ok",
                 fetched=len(candidates), fresh=0, novel=0, queued=0, reason=None,
+                duration_ms=_ms_since(retry_started),
             )
         except SourceBlockedError as retry_exc:
             logger.warning(
@@ -95,6 +109,7 @@ def run_with_fallback(
             return None, SourceResult(
                 name=source_name, status="blocked",
                 fetched=0, fresh=0, novel=0, queued=0, reason=str(retry_exc),
+                duration_ms=_ms_since(retry_started),
             )
         except SourceUnavailableError as retry_exc:
             logger.warning(
@@ -104,4 +119,5 @@ def run_with_fallback(
             return None, SourceResult(
                 name=source_name, status="unavailable",
                 fetched=0, fresh=0, novel=0, queued=0, reason=str(retry_exc),
+                duration_ms=_ms_since(retry_started),
             )

@@ -144,9 +144,10 @@ check("5 zero-item runs in a row -> anomaly",
 
 
 # ── supervisor: deriving those streaks from the LIVE surface ─────────────────
-# scraper_health is only written by scrapers.log_scraper_run, only reachable from
-# scrapers.scrape_all, which nothing calls — so the streak is derived from
-# pipeline_run_history, which every real pass writes.
+# The streak is derived from pipeline_run_history, which every real pass writes.
+# scraper_health does have a live writer again (ingestion/health.py), but this
+# check deliberately stays off it — see the supervisor's module docstring: an
+# alert for silent death must not depend on a writer that can itself go silent.
 
 print("\nsupervisor — zero streaks from pipeline_run_history:")
 

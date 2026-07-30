@@ -34,6 +34,7 @@ class CNASource:
 
     name = "cna"
     enabled = True
+    source_type = "msm"
 
     def fetch(self, since: date | None) -> list[Candidate]:
         """

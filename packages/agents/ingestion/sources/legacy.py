@@ -54,7 +54,10 @@ class LegacyScraperSource:
         self.enabled = enabled
         self._scrape = scrape
         self._source_name = source_name
-        self._source_type = source_type
+        # Public and canonicalised: the orchestrator reads it for the
+        # scraper_health row, which must be written even when fetch() raises and
+        # there is no candidate to read a type off.
+        self.source_type = canonical_source_type(source_type)
 
     def fetch(self, since: date | None) -> list[Candidate]:
         """
@@ -89,7 +92,7 @@ class LegacyScraperSource:
                 source_name=item.get("source_name") or self._source_name or self.name,
                 # Normalised here so the legacy 'edmw' spelling never reaches
                 # downstream code — 'signal' is canonical (QA M14).
-                source_type=canonical_source_type(item.get("source_type") or self._source_type),
+                source_type=canonical_source_type(item.get("source_type") or self.source_type),
                 published_at=item.get("published_at"),
                 discovered_via=self.name,
             ))
