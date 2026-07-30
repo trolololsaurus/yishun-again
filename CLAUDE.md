@@ -175,16 +175,35 @@ threshold. All leave it `pending` for the operator; none reject anything:
 | `unapproved_source_domain` | `source_allowlist` | Operator approves the domain |
 
 **The pipeline is autonomous as of July 2026.** One Cloud Scheduler job at
-**14:58 SGT daily** POSTs `/orchestrator/daily`, which runs eight agents in a
-fixed order (`ops/daily.py`): ingestion → auto-publish → integrity → supervisor
-→ learning monitor → backend health → maintenance digest → monthly report (1st
-only). Steps are failure-isolated: one agent crashing does not cost you the rest.
+**14:58 SGT daily** POSTs `/orchestrator/daily`, which runs twelve agents in a
+fixed order (`ops/daily.py`): recalibration → ingestion → auto-publish →
+integrity → supervisor → learning monitor → backend health → pattern detection →
+lifecycle (Mondays) → source discovery (first Monday) → maintenance digest →
+monthly report (1st). Steps are failure-isolated: one agent crashing does not
+cost you the rest.
+
+**The cadence lives in `ops/daily.py` and nowhere else.** `main.py`'s in-process
+APScheduler has exactly one job (the daily chain) and is off in production
+anyway. Until 2026-07-30 it also carried pattern detection, recalibration,
+lifecycle and discovery — which meant those four had **never run in production**,
+because Cloud Run scales to zero and that scheduler never starts. Do not add a
+second scheduling surface; add a cadence-gated step to `ops/daily.py` and a case
+to `cadence_plan()`. Two things worth knowing:
+- **Recalibration must stay ahead of ingestion.** It writes `calibration_log.json`
+  on an ephemeral disk and Stage 2 reads it while drafting *in the same pass*.
+  Moved below ingestion, the calibration loop becomes a silent no-op.
+- **`dry_run` skips every cadence-gated step.** None of them has a read-only mode.
+
+**Lifecycle auto-conclude is wired but OFF** (`LIFECYCLE_AUTO_CONCLUDE`). It is
+the only agent that edits an already-published incident unattended, so enabling
+it is an operator decision — see `docs/AUTONOMY.md` §5d.
 
 **Read `docs/AUTONOMY.md` before changing any of this.** It documents the
 auto-publish gates, the alert throttling, the exit conditions, the cost model,
 and the runbook (including the `AUTO_PUBLISH_CONFIDENCE=2.0` panic switch).
 **§5b** is the oversized-merge gate that lifts itself once earned; **§5c** is the
-`max_tokens` truncation guard and its recovery ladder.
+`max_tokens` truncation guard and its recovery ladder; **§5d** is the lifecycle
+switch.
 
 **Read `docs/PIPELINE_CHANGES_2026-07-30.md` before touching clustering,
 consolidation, Stage 2 length/groundedness, or the casualty check.** It records
@@ -255,6 +274,13 @@ rather than returning `[]`; the adapters translate those to
 `SourceBlockedError`/`SourceUnavailableError`. An empty result therefore means
 "no Yishun news", not "something broke quietly" — Stomp sat silently dead for
 weeks under the old behaviour.
+
+**`scrapers.scrape_all()` is not on any live path** and neither is
+`log_scraper_run()`, which only it calls — so nothing writes `scraper_health`.
+`ops/supervisor.py` used to read that table for its zero-streak check, making
+that check permanently dead; it now derives the streak from
+`pipeline_run_history` instead. Do not build new monitoring on `scraper_health`
+without first giving it a writer.
 
 ---
 

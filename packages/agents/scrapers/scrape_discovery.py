@@ -8,7 +8,14 @@ novel domains as candidate sources for operator review.
 Output: list of candidate dicts — {name, url, type, notes}
   - These are logged for operator review in War Room ("New Sources" tab)
   - Nothing is scraped until operator sets approved_by_operator = TRUE
-  - DB write is handled by the orchestrator once Supabase is wired up
+
+Public API
+----------
+discover() -> list[dict]
+    Pure-ish: fetches the feed, returns candidates. No DB.
+run(supabase_client=None) -> dict
+    discover() + persist. Called by ops/daily.py on the first Monday of the
+    month. Returns {found, inserted, skipped, errors}.
 """
 
 import json
@@ -116,6 +123,67 @@ def discover() -> list[dict]:
 
     logger.info("Discovery: %d novel candidate source(s) found", len(candidates))
     return candidates
+
+
+def run(supabase_client=None) -> dict:
+    """
+    Discover novel outlets and file them for operator review.
+
+    Returns {found, inserted, skipped, errors}. Never raises — it runs inside
+    the unattended daily chain.
+
+    Rows are written `approved_by_operator=False` AND `is_active=False`. Both
+    matter and they mean different things: `approved_by_operator` is what
+    classifiers/source_allowlist checks before a URL may be cited, and
+    `is_active` is the "we scrape this" flag whose default is TRUE. A candidate
+    nobody has looked at yet must be neither, and inheriting the active default
+    would list an unvetted domain alongside the real fleet in War Room.
+    """
+    stats = {"found": 0, "inserted": 0, "skipped": 0, "errors": 0}
+
+    try:
+        candidates = discover()
+    except Exception as exc:                      # noqa: BLE001
+        logger.error("Discovery: feed pass failed: %s", exc)
+        return {**stats, "errors": 1}
+
+    stats["found"] = len(candidates)
+    if not candidates:
+        return stats
+
+    if supabase_client is None:
+        try:
+            from classifiers.corroboration import get_supabase_client
+            supabase_client = get_supabase_client()
+        except Exception as exc:                  # noqa: BLE001
+            logger.error("Discovery: Supabase not configured: %s", exc)
+            return {**stats, "errors": 1}
+
+    for candidate in candidates:
+        try:
+            supabase_client.table("sources").insert({
+                "name":                    candidate["name"],
+                "url":                     candidate["url"],
+                "type":                    candidate.get("type", "msm"),
+                "approved_by_operator":    False,
+                "is_active":               False,
+                "discovery_notes":         candidate.get("notes", ""),
+                "scrape_interval_minutes": 0,
+            }).execute()
+            stats["inserted"] += 1
+            logger.info("Discovery: candidate filed — %s", candidate["name"])
+        except Exception as exc:                  # noqa: BLE001
+            # `name` is UNIQUE, so the overwhelmingly common failure here is
+            # "we have seen this domain before" — expected every month, not an
+            # error worth waking anyone for.
+            stats["skipped"] += 1
+            logger.debug("Discovery: candidate skipped (%s): %s", candidate["name"], exc)
+
+    logger.info(
+        "Discovery complete — found=%d inserted=%d skipped=%d",
+        stats["found"], stats["inserted"], stats["skipped"],
+    )
+    return stats
 
 
 if __name__ == "__main__":

@@ -5,40 +5,80 @@ Runs the whole fleet in a deliberate order and returns a single report.
 
 ## Order is not arbitrary
 
-    1. ingestion        produce candidate drafts
-    2. auto_publish     publish >= threshold; email about everything below (#3, #4)
-    3. integrity        dupes + hallucinations — AFTER publish, so it audits what
-                        actually went live, not what was merely proposed (#10)
-    4. supervisor       scraper fleet health — AFTER ingestion, so it grades this
-                        pass rather than yesterday's (#9)
-    5. learning_monitor rebuild source_reputation, snapshot the deltas (#5)
-    6. backend_health   Supabase / R2 / API / cost guard (#12)
-    7. maintenance      reads everything the six steps above logged and mails ONE
-                        digest — so it must run LAST or it reports stale news (#11)
-    8. monthly_report   1st of the month only; last 30 days (#13)
+     1. recalibration    operator corrections -> calibration_log.json. FIRST, and
+                         the reason is subtle enough to be worth a paragraph below
+     2. ingestion        produce candidate drafts
+     3. auto_publish     publish >= threshold; email about everything below (#3, #4)
+     4. integrity        dupes + hallucinations — AFTER publish, so it audits what
+                         actually went live, not what was merely proposed (#10)
+     5. supervisor       scraper fleet health — AFTER ingestion, so it grades this
+                         pass rather than yesterday's (#9)
+     6. learning_monitor rebuild source_reputation, snapshot the deltas (#5)
+     7. backend_health   Supabase / R2 / API / cost guard (#12)
+     8. pattern_detection  entity / crime-type / location alerts — AFTER publish,
+                         so today's incidents are in the pool it scans
+     9. lifecycle        Mondays: auto-conclude developing stories idle 180 days
+    10. source_discovery first Monday: novel outlets -> sources, unapproved
+    11. maintenance      reads everything above and mails ONE digest — so it must
+                         run LAST or it reports stale news (#11)
+    12. monthly_report   1st of the month only; last 30 days (#13)
+
+Steps 1, 8, 9, 10 and 12 are CADENCE-GATED (see `cadence_plan`). Until
+2026-07-30 the first four of those were scheduled only on the in-process
+APScheduler in main.py — which production never starts, because Cloud Run scales
+to zero. They had therefore never run at all. The schedule now lives here and
+only here, so local and prod cannot drift apart again.
+
+## Why recalibration runs BEFORE ingestion
+
+It looks like a monitoring agent and every instinct says to group it with the
+other five. But `classifiers/recalibration.py` writes `calibration_log.json`,
+and `filters/stage2_writer._load_calibration_hints` READS that file while
+drafting — so the two are producer and consumer inside one pass, not independent
+observers.
+
+That file lives on Cloud Run's ephemeral disk (AUTONOMY.md §6, "known gap"), and
+with min-instances=0 the container is replaced between passes. So a run of
+recalibration placed after ingestion writes hints that are destroyed before any
+Stage 2 call ever opens them: the loop would look wired and stay a no-op, which
+is the same shape of bug as scheduling it on a scheduler that never starts.
+Running it first makes the hints land in the container that is about to draft.
+
+Move it back down the list and the calibration loop silently stops working.
+Persisting the hints to Supabase would remove the constraint; until then, this
+ordering is the whole mechanism.
+
+## Nothing cadence-gated runs on a dry run
+
+`?dry_run=true` is the "show me what the chain would do, writing nothing" lever.
+Ingestion, auto-publish and integrity honour it. None of the five cadence-gated
+agents takes a dry_run argument: called at all, they conclude incidents, insert
+pattern alerts, write source rows and upsert a monthly report for real. Rather
+than thread an untested dry_run through five modules to serve one debugging
+flag, a dry run skips them outright and says so in the report.
 
 ## Failure isolation
 
-Every step is wrapped. A crash in step 3 must not cost the operator steps 4-8 —
+Every step is wrapped. A crash in step 4 must not cost the operator steps 5-12 —
 the monitoring agents are most valuable precisely when something has gone wrong.
 A failed step is recorded in the report with its traceback and the chain
 continues. The only genuinely fatal condition is being unable to reach Supabase
 at all, which every step reports independently anyway.
 
-## Why this exists instead of eight scheduler entries
+## Why this exists instead of twelve scheduler entries
 
 Cloud Run scales to zero. In-process APScheduler needs min-instances=1 and
 CPU-always-allocated to fire reliably — about $15-25/month to run jobs that
 occupy ~15 minutes of CPU a day. One Cloud Scheduler ping to one endpoint keeps
 the service at zero instances the other 23h 45m, which is the whole of req #12's
 cost answer. It also makes the ordering above explicit and testable, rather than
-an emergent property of eight independent triggers.
+an emergent property of twelve independent triggers.
 """
 
 import logging
 import os
 import traceback
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from ops.activity import AgentRun, agent_enabled
 
@@ -47,8 +87,99 @@ logger = logging.getLogger(__name__)
 AGENT = "daily_orchestrator"
 
 # The pass must finish inside the Cloud Run request timeout with room for the
-# seven agents that follow it. Cloud Run is deployed with --timeout=3600.
+# agents that follow it. Cloud Run is deployed with --timeout=3600.
 INGESTION_MAX_SECONDS = int(os.getenv("INGESTION_MAX_SECONDS", "1500"))
+
+# Singapore is UTC+8 all year and has never observed DST, so a fixed offset is
+# exact. Deliberately not zoneinfo: that needs the tzdata database present in
+# the image, and a missing tzdata would turn "is it Monday?" into an exception
+# inside the scheduler's own entry point.
+SGT = timezone(timedelta(hours=8))
+
+
+def _flag(name: str) -> bool:
+    """An env-var switch, default off. Anything unrecognised stays off."""
+    return os.getenv(name, "").strip().lower() in ("true", "1", "yes", "on")
+
+
+def sgt_today(now: datetime | None = None) -> date:
+    """
+    Today's date in Singapore time.
+
+    The whole schedule is written and discussed in SGT ("14:58 SGT", "Mondays"),
+    so the cadence gates must agree with the operator's calendar. For the 14:58
+    SGT trigger the UTC date happens to match, but a manual 02:00 SGT trigger is
+    still the previous day in UTC — which would fire Monday's lifecycle run on a
+    Sunday.
+    """
+    return (now or datetime.now(timezone.utc)).astimezone(SGT).date()
+
+
+def is_first_monday(day: date) -> bool:
+    """First Monday of the month — the old `day='1-7', day_of_week='mon'` cron."""
+    return day.weekday() == 0 and day.day <= 7
+
+
+# In execution order. Every one writes to Supabase (or, for recalibration, to
+# disk) the moment it is called — none has a read-only mode, which is why a dry
+# run must not call them at all.
+CADENCE_STEPS = ("recalibration", "pattern_detection", "lifecycle",
+                 "source_discovery", "monthly_report")
+
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday",
+             "Friday", "Saturday", "Sunday")
+
+
+def cadence_plan(today: date, *, dry_run: bool = False,
+                 lifecycle_enabled: bool | None = None,
+                 force_monthly: bool | None = None) -> dict[str, str | None]:
+    """
+    Which cadence-gated steps are due today. Pure — this is the part worth testing.
+
+    Returns {step_name: None if due, else the reason it was skipped}. The
+    cadences mirror the cron expressions the in-process scheduler used to carry,
+    so anyone who was running it locally sees no change.
+    """
+    if lifecycle_enabled is None:
+        lifecycle_enabled = _flag("LIFECYCLE_AUTO_CONCLUDE")
+    if force_monthly is None:
+        force_monthly = _flag("FORCE_MONTHLY_REPORT")
+
+    weekday = _WEEKDAYS[today.weekday()]
+    plan: dict[str, str | None] = {}
+
+    # Daily.
+    plan["pattern_detection"] = None
+    plan["recalibration"] = None
+
+    # Weekly, Mondays — and only with the operator's switch on. The switch is
+    # checked first so that on a Monday with autonomy off the report says the
+    # useful thing ("it is disabled") rather than nothing at all.
+    if not lifecycle_enabled:
+        plan["lifecycle"] = ("LIFECYCLE_AUTO_CONCLUDE is off — auto-conclude edits "
+                             "published incidents, so it stays opt-in (AUTONOMY.md §5d)")
+    elif today.weekday() != 0:
+        plan["lifecycle"] = f"not Monday (today is {weekday})"
+    else:
+        plan["lifecycle"] = None
+
+    # Monthly, first Monday.
+    plan["source_discovery"] = (
+        None if is_first_monday(today)
+        else f"not the first Monday (today is {weekday} the {today.day})"
+    )
+
+    # Monthly, the 1st.
+    plan["monthly_report"] = (
+        None if today.day == 1 or force_monthly
+        else f"not the 1st (today is the {today.day})"
+    )
+
+    if dry_run:
+        for step in CADENCE_STEPS:
+            plan[step] = "dry run — this agent has no read-only mode"
+
+    return plan
 
 
 def _step(name: str, fn, report: dict, arun: AgentRun, *args, **kwargs) -> None:
@@ -67,6 +198,15 @@ def _step(name: str, fn, report: dict, arun: AgentRun, *args, **kwargs) -> None:
         report[name] = {"error": str(exc), "traceback": traceback.format_exc()[-2000:]}
         arun.error_("step_failed", f"{name} raised: {exc}")
         logger.exception("daily: step %s failed", name)
+
+
+def _cadence_step(name: str, fn, report: dict, arun: AgentRun,
+                  not_due: str | None) -> None:
+    """A `_step` that only fires on its scheduled day. Same failure isolation."""
+    if not_due:
+        report[name] = {"skipped": not_due}
+        return
+    _step(name, fn, report, arun)
 
 
 def _already_running(client, within_minutes: int = 60) -> str | None:
@@ -125,7 +265,22 @@ def run(dry_run: bool = False, trigger: str = "scheduler",
     with AgentRun(AGENT, trigger=trigger) as arun:
         arun.stat("dry_run", dry_run)
 
-        # ── 1. Ingestion ────────────────────────────────────────────────────
+        today = sgt_today()
+        plan = cadence_plan(today, dry_run=dry_run)
+        report["cadence_date_sgt"] = today.isoformat()
+
+        # ── 1. Recalibration — BEFORE ingestion, on purpose ──────────────────
+        # It writes the calibration hints that this pass's Stage 2 is about to
+        # read, and they live on a disk that does not survive to the next pass.
+        # See "Why recalibration runs BEFORE ingestion" in the module docstring
+        # before moving this.
+        def _recalibration():
+            from classifiers.recalibration import check as recal_check
+            return recal_check(supabase_client=supabase_client)
+
+        _cadence_step("recalibration", _recalibration, steps, arun, plan["recalibration"])
+
+        # ── 2. Ingestion ────────────────────────────────────────────────────
         def _ingest():
             from dataclasses import asdict
             from ingestion.orchestrator import run_ingestion_pass
@@ -144,14 +299,14 @@ def run(dry_run: bool = False, trigger: str = "scheduler",
 
         _step("ingestion", _ingest, steps, arun)
 
-        # ── 2. Auto-publish + review notification ───────────────────────────
+        # ── 3. Auto-publish + review notification ───────────────────────────
         def _auto():
             from ops.auto_publish import run as auto_run
             return auto_run(supabase_client=supabase_client, dry_run=dry_run, trigger="chained")
 
         _step("auto_publish", _auto, steps, arun)
 
-        # ── 3-6. Monitoring fleet ───────────────────────────────────────────
+        # ── 4-7. Monitoring fleet ───────────────────────────────────────────
         def _integrity():
             # apply=True in a real pass — req #10 asks for corrections, not just
             # detection. The agent's own auto-fix set is deliberately narrow
@@ -181,22 +336,40 @@ def run(dry_run: bool = False, trigger: str = "scheduler",
         _step("learning_monitor", _learning, steps, arun)
         _step("backend_health", _health, steps, arun)
 
-        # ── 7. Maintenance digest — last, so it sees the whole day ──────────
+        # ── 8-10. Cadence-gated editorial agents ────────────────────────────
+        # Wired in 2026-07-30. Along with recalibration above, these were
+        # scheduled only on the in-process APScheduler, which production never
+        # starts, so none of them had ever run: no auto-conclusions, no pattern
+        # alerts, and Stage 2 read calibration hints nothing had written.
+        def _pattern():
+            from classifiers.pattern_detection import run as pattern_run
+            return pattern_run(supabase_client=supabase_client)
+
+        def _lifecycle():
+            from classifiers.lifecycle import run as lifecycle_run
+            return lifecycle_run(supabase_client=supabase_client)
+
+        def _discovery():
+            from scrapers.scrape_discovery import run as discovery_run
+            return discovery_run(supabase_client=supabase_client)
+
+        _cadence_step("pattern_detection", _pattern, steps, arun, plan["pattern_detection"])
+        _cadence_step("lifecycle", _lifecycle, steps, arun, plan["lifecycle"])
+        _cadence_step("source_discovery", _discovery, steps, arun, plan["source_discovery"])
+
+        # ── 11. Maintenance digest — last, so it sees the whole day ─────────
         def _maintenance():
             from ops.maintenance import run as maintenance_run
             return maintenance_run(supabase_client=supabase_client, trigger="chained")
 
         _step("maintenance", _maintenance, steps, arun)
 
-        # ── 8. Monthly report — 1st of the month only ──────────────────────
-        today = datetime.now(timezone.utc).date()
-        if today.day == 1 or os.getenv("FORCE_MONTHLY_REPORT", "").lower() == "true":
-            def _monthly():
-                from ops.monthly_report import run as monthly_run
-                return monthly_run(supabase_client=supabase_client, trigger="chained")
-            _step("monthly_report", _monthly, steps, arun)
-        else:
-            steps["monthly_report"] = {"skipped": f"not the 1st (today is the {today.day})"}
+        # ── 12. Monthly report — 1st of the month only ─────────────────────
+        def _monthly():
+            from ops.monthly_report import run as monthly_run
+            return monthly_run(supabase_client=supabase_client, trigger="chained")
+
+        _cadence_step("monthly_report", _monthly, steps, arun, plan["monthly_report"])
 
         # ── Summary ─────────────────────────────────────────────────────────
         failed = [k for k, v in steps.items() if isinstance(v, dict) and v.get("error")]
@@ -209,13 +382,26 @@ def run(dry_run: bool = False, trigger: str = "scheduler",
             (datetime.now(timezone.utc) - started).total_seconds(), 1)
         report["failed_steps"] = failed
 
+        alerts = (steps.get("pattern_detection") or {}).get("alerts_created", 0)
+        concluded = (steps.get("lifecycle") or {}).get("concluded", 0)
+        extra = ", ".join(
+            part for part in (
+                f"{alerts} pattern alert(s)" if alerts else "",
+                f"{concluded} auto-concluded" if concluded else "",
+            ) if part
+        )
+
         summary = (f"queued {queued}, auto-published {published}, {review} for review"
+                   f"{'; ' + extra if extra else ''}"
                    f"{'; FAILED: ' + ', '.join(failed) if failed else ''}")
         arun.set_summary(summary)
         arun.stat("queued", queued)
         arun.stat("auto_published", published)
         arun.stat("needs_review", review)
         arun.stat("failed_steps", failed)
+        # Which cadence gates fired and, more usefully, why the others did not —
+        # otherwise "lifecycle did not run last night" has no answer in the DB.
+        arun.stat("cadence", plan)
         if failed:
             arun.set_status("degraded")
         report["summary"] = summary
