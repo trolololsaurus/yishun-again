@@ -59,19 +59,24 @@ export async function POST(
 
   // Confirm the pattern alert
   if (patternAlertId) {
-    await supabase
+    const { error: alertErr } = await supabase
       .from('pattern_alerts')
       .update({ status: 'confirmed', operator_action: 'link_incidents', resolved_at: new Date().toISOString() })
       .eq('id', patternAlertId)
+    if (alertErr) console.error('link-pattern — pattern_alerts update failed:', alertErr)
   }
 
   // Dismiss the notification
-  await supabase
+  const { error: queueErr } = await supabase
     .from('war_room_queue')
     .update({ status: 'approved', processed_at: new Date().toISOString() })
     .eq('id', id)
+  if (queueErr) {
+    console.error('link-pattern — queue update failed:', queueErr)
+    return NextResponse.json({ error: 'Links created but the notification could not be dismissed — it may reappear.', links_created: linksCreated }, { status: 500 })
+  }
 
-  await supabase.from('training_signals').insert({
+  const { error: signalErr } = await supabase.from('training_signals').insert({
     incident_id:      null,
     action:           'pattern_confirmed',
     decision:         'approve',
@@ -82,6 +87,7 @@ export async function POST(
       operator_action: 'link_incidents',
     },
   })
+  if (signalErr) console.error('link-pattern — training_signal insert failed (non-fatal):', signalErr)
 
   return NextResponse.json({ ok: true, links_created: linksCreated })
 }

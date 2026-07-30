@@ -25,7 +25,11 @@ export async function GET(req: NextRequest) {
     .gte('incident_date', `${year}-01-01`)
     .lt( 'incident_date', `${year + 1}-01-01`)
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    // Log the detail server-side; PostgREST messages leak schema internals.
+    console.error('map query error:', error.message, error.code)
+    return NextResponse.json({ error: 'Upstream query failed' }, { status: 500 })
+  }
 
   const features = (data ?? []).map(inc => ({
     type:     'Feature',

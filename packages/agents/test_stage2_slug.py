@@ -64,6 +64,16 @@ check("date suffix survives truncation", out.endswith("-jul-2026"))
 # Bad month guard (defensive).
 check("invalid month falls back to base", stamp("yishun-x-jan-2024", "2026-13-01") == "yishun-x")
 
+# Charset guard: the LLM slug must be forced into ^[a-z0-9-]+$ before it can
+# reach incidents.slug — a '/' or unicode slug publishes an unroutable page
+# (the frontend's sanitiser strips those chars, so it 404s forever).
+check("slash is squashed", stamp("yishun/void-deck", "2026-07-11") == "yishun-void-deck-jul-2026")
+check("spaces are squashed", stamp("yishun void deck", "2026-07-11") == "yishun-void-deck-jul-2026")
+check("unicode is squashed", stamp("yishun-café-噪音", "2026-07-11") == "yishun-caf-jul-2026")
+check("uppercase is lowered", stamp("Yishun-Fire", "2026-07-11") == "yishun-fire-jul-2026")
+check("charset result matches ^[a-z0-9-]+$",
+      __import__("re").fullmatch(r"[a-z0-9-]+", stamp("Yishun / Café @ Blk 123!", "2026-07-11")) is not None)
+
 # _build_user_message now includes the date line (feeds prose too).
 msg = sw._build_user_message({"source_name":"CNA","url":"u","title":"t","content":"c","date":"2026-07-16"})
 check("user message includes Date line", "Date: 2026-07-16" in msg)

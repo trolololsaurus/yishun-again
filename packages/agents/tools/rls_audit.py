@@ -55,7 +55,17 @@ CONTROLS = [
 ]
 
 # Never public: operator review state and the learning signal behind it.
-ALSO_CHECK = ["war_room_queue", "training_signals", "source_reputation"]
+# pattern_alerts/people_profiles joined after the July-2026 audit found
+# migration 003 had left them with PUBLIC USING(true) policies (fixed in 013)
+# — people_profiles especially must never leak (names, aliases,
+# legal_sensitivity on unpublished profiles).
+ALSO_CHECK = [
+    "war_room_queue",
+    "training_signals",
+    "source_reputation",
+    "pattern_alerts",
+    "people_profiles",
+]
 
 
 def _client(key_env: str):

@@ -1,11 +1,11 @@
 """
 Stage 2 writer — Anthropic Claude (spec §4.3)
 
-Two-model pipeline:
-  1. claude-haiku-4-5-20251001  — classify the incident and extract structured
-                                   metadata (fast, cheap, deterministic fields)
-  2. claude-sonnet-4-6          — write title, summary, SEO copy and slug
-                                   (quality creative output)
+Two-call pipeline (both Haiku since the 2026-07 eval — see MODEL_WRITE):
+  1. MODEL_CLASSIFY — classify the incident and extract structured
+                      metadata (fast, cheap, deterministic fields)
+  2. MODEL_WRITE    — write title, summary, SEO copy and slug
+                      (env-overridable; STAGE2_WRITE_MODEL rolls back to Sonnet)
 
 hype_meter and chaos_contribution are computed deterministically in Python
 from the spec §7 formulas rather than relying on the model to calculate them.
@@ -279,12 +279,21 @@ def _parse_json(text: str) -> dict:
 
 
 def _compute_hype_meter(source_urls: list[str]) -> int:
-    """Count unique MSM sources in source_urls, capped at 5 (spec §7)."""
-    count = sum(
-        1 for url in source_urls
-        if any(domain in url for domain in _MSM_DOMAINS)
-    )
-    return min(5, count)
+    """
+    Count unique MSM DOMAINS in source_urls, capped at 5 (spec §7).
+
+    Dedup by domain, matching classifiers/corroboration.py — two CNA links to
+    the same story are one outlet, not two. (Legacy field: the frontend now
+    derives lightning from corroboration_count, but the two implementations
+    should not disagree.)
+    """
+    domains = {
+        domain
+        for url in source_urls
+        for domain in _MSM_DOMAINS
+        if domain in url
+    }
+    return min(5, len(domains))
 
 
 def _compute_chaos_contribution(classification: str, severity: int) -> float:
@@ -552,6 +561,18 @@ _SLUG_DATE_SUFFIX = re.compile(
 )
 
 
+def _sanitise_slug_charset(slug: str) -> str:
+    """
+    Force the LLM-authored slug into ^[a-z0-9-]+$ before it can reach
+    incidents.slug. The model occasionally emits unicode, spaces or '/' —
+    a published row with such a slug is unroutable (the frontend's slug
+    sanitiser strips those characters, so the page 404s forever).
+    """
+    slug = slug.lower()
+    slug = re.sub(r"[^a-z0-9-]+", "-", slug)
+    return re.sub(r"-{2,}", "-", slug).strip("-")
+
+
 def _stamp_slug_date(slug: str, date_str: str | None, max_len: int = 70) -> str:
     """
     Force the slug's trailing -month-year to match the authoritative incident
@@ -567,6 +588,7 @@ def _stamp_slug_date(slug: str, date_str: str | None, max_len: int = 70) -> str:
     dateless item never carries a fabricated year (its real date is set later at
     operator approval).
     """
+    slug = _sanitise_slug_charset(slug)
     base = _SLUG_DATE_SUFFIX.sub("", slug).rstrip("-")
 
     m = re.match(r'(\d{4})-(\d{2})-\d{2}', date_str or "")

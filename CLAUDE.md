@@ -284,7 +284,8 @@ suffix-aware, so `cnalifestyle.channelnewsasia.com` inherits CNA's approval.
 
 **Migrations are hand-applied in the Supabase SQL Editor (no runner).** Apply in
 order; the live DB depends on `006_phase1_apply_now.sql` + `007` + `009` having all
-run. `006_ingestion_learning_loop_schema.sql` is a **superseded draft — do not run.**
+run. `006_SUPERSEDED_DO_NOT_RUN_ingestion_learning_loop_schema.sql` is exactly what
+its name says (renamed 2026-07 so it can no longer be mistaken for a live step).
 Recent additions: **008** expands `incidents.latest_source_role` to include
 `sentencing` / `appeal` / `appeal_dismissed`; **009** adds `unpublish` to the
 `training_signals.action` CHECK (the War Room unpublish route writes it — before 009
@@ -310,6 +311,16 @@ not journalism; post date ≠ event date). The code change (`scrape_reddit` emit
 `'signal'`) is what enforces it in the pipeline; 012 is the defensive layer so
 `classify()` resolves reddit domains to signal too. Not required for the code
 path to work.
+
+**013 (RLS fix + reddit seed cleanup)** — ⚠️ security migration, apply promptly.
+Migration 003 had created `USING (true) WITH CHECK (true)` policies with no `TO`
+clause on `pattern_alerts` and `people_profiles`, which despite their names gave
+the **anon/publishable key full read AND write** on both tables. 013 drops them
+(RLS stays enabled with no policy → service-role only, like every other private
+table). It also removes the two reddit URLs that 005 seeded into
+`incidents.source_urls` (guardrail #2 breach once 012 reclassified reddit as
+signal) and decrements those rows' `corroboration_count`. `tools/rls_audit.py`
+now covers both tables.
 
 **RLS note:** `incidents` anon reads are filtered to `is_published = TRUE`
 (`anon_read_published_incidents`), so the **publishable key cannot see drafts at all** —

@@ -19,10 +19,23 @@ export async function PATCH(
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  // Strip any keys not in the allowlist
+  // Strip any keys not in the allowlist, and validate values — the key
+  // allowlist alone let is_active: "yes" or a negative interval straight
+  // through to Postgres.
   const update: Record<string, unknown> = {}
   for (const key of ALLOWED) {
-    if (key in body) update[key] = body[key]
+    if (!(key in body)) continue
+    const val = body[key]
+    if (key === 'is_active' || key === 'approved_by_operator') {
+      if (typeof val !== 'boolean') {
+        return NextResponse.json({ error: `${key} must be a boolean` }, { status: 400 })
+      }
+    } else if (key === 'scrape_interval_minutes') {
+      if (!Number.isInteger(val) || (val as number) < 0 || (val as number) > 10_080) {
+        return NextResponse.json({ error: 'scrape_interval_minutes must be an integer 0–10080' }, { status: 400 })
+      }
+    }
+    update[key] = val
   }
 
   if (Object.keys(update).length === 0) {
@@ -33,7 +46,7 @@ export async function PATCH(
 
   if (error) {
     console.error('PATCH /api/sources/[id]:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ error: 'Update failed' }, { status: 500 })
   }
 
   return NextResponse.json({ ok: true })

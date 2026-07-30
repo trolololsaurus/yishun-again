@@ -164,42 +164,53 @@ def _check_death_streak(
     triggered: list,
 ) -> None:
     """
-    Check death-free streak milestones and streak-broken events.
+    Check death-free streak milestones.
 
-    If draft has deaths >= 1 → annotate the queue item with streak_broken badge.
-    Otherwise → check if the current streak has crossed a positive threshold.
+    If the draft has deaths >= 1 no positive milestone can fire (the streak
+    reset is implicit in the data). Otherwise, check whether the current
+    streak has crossed a positive threshold.
+
+    The streak is measured from incident_date — the real event date — NOT
+    published_at. This archive backfills historical incidents, and measuring
+    from published_at meant publishing a years-old death story yesterday
+    reset the "N days without a fatality" counter to 1, producing a public
+    factual claim that was simply wrong.
     """
     today = date.fromisoformat(today_str)
 
-    # Most recent published incident with a confirmed death
+    # Most recent published incident with a confirmed death, by event date.
+    # The gte on incident_date also excludes NULL dates (SQL comparison with
+    # NULL is never true), so a dateless row can't anchor the streak.
     last_death_res = (
         client.table("incidents")
-        .select("published_at")
+        .select("incident_date")
         .gte("deaths", 1)
         .eq("is_published", True)
-        .order("published_at", desc=True)
+        .gte("incident_date", "1900-01-01")
+        .order("incident_date", desc=True)
         .limit(1)
         .execute()
     )
 
-    last_death_pub = (
-        last_death_res.data[0].get("published_at") if last_death_res.data else None
+    last_death_date_str = (
+        last_death_res.data[0].get("incident_date") if last_death_res.data else None
     )
-    if last_death_pub:
-        last_death_date = date.fromisoformat(last_death_pub[:10])
+    if last_death_date_str:
+        last_death_date = date.fromisoformat(str(last_death_date_str)[:10])
         current_streak = (today - last_death_date).days
     else:
-        # No confirmed deaths on record — streak from first published incident
+        # No confirmed deaths on record — streak from the earliest event date
         first_res = (
             client.table("incidents")
-            .select("published_at")
+            .select("incident_date")
             .eq("is_published", True)
-            .order("published_at")   # ascending — oldest first
+            .gte("incident_date", "1900-01-01")
+            .order("incident_date")   # ascending — oldest first
             .limit(1)
             .execute()
         )
-        first_pub = first_res.data[0].get("published_at") if first_res.data else None
-        current_streak = (today - date.fromisoformat(first_pub[:10])).days if first_pub else 0
+        first_date = first_res.data[0].get("incident_date") if first_res.data else None
+        current_streak = (today - date.fromisoformat(str(first_date)[:10])).days if first_date else 0
 
     logger.debug("Herald: death-free streak = %d days (deaths_in_draft=%r)", current_streak, deaths)
 

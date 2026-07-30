@@ -81,14 +81,21 @@ steps:
       # IAM-protected — never expose the pipeline endpoints publicly
       # (docs/WAR_ROOM_DEPLOY.md §8). Callers need roles/run.invoker.
       - --no-allow-unauthenticated
+      # These MUST match the canonical deploy in CLAUDE.md: a daily pass runs
+      # 5–20 min, so --timeout=3600 is required (the 300 s default kills it on
+      # a first-time deploy through this file), 1Gi matches the documented
+      # service config (this file previously downgraded it to 512Mi on every
+      # build), and max-instances=2 is the cost control.
+      - --timeout
+      - "3600"
       - --memory
-      - 512Mi
+      - 1Gi
       - --cpu
       - "1"
       - --min-instances
       - "0"
       - --max-instances
-      - "3"
+      - "2"
       - --port
       - "8080"
       # ── Pinned behaviour flags ────────────────────────────────────────────
