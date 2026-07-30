@@ -125,10 +125,15 @@ def load_recent_signal_patterns(client=None, limit: int = MAX_SIGNAL_ROWS) -> st
     if client is None:
         client = get_supabase_client()
 
+    # edited_classification is what the War Room approve route actually writes
+    # on an edit_approve (apps/war-room .../approve/route.ts). The previous
+    # column name here, corrected_classification, is written by NOTHING — so
+    # Category 1 below could never fire and only reject examples ever reached
+    # the prompt.
     result = (
         client.table("training_signals")
         .select("id, decision, reject_reason, proposed_classification, "
-                "corrected_classification, queue_id, incident_id, created_at")
+                "edited_classification, queue_id, incident_id, created_at")
         .order("created_at", desc=True)
         .limit(limit)
         .execute()
@@ -142,7 +147,7 @@ def load_recent_signal_patterns(client=None, limit: int = MAX_SIGNAL_ROWS) -> st
     # ── Category 1: the operator changed the classification ─────────────────
     reclass: list[str] = []
     for r in rows:
-        p, c = r.get("proposed_classification"), r.get("corrected_classification")
+        p, c = r.get("proposed_classification"), r.get("edited_classification")
         title = titles.get(r["id"])
         if p and c and p != c and title:
             reclass.append(

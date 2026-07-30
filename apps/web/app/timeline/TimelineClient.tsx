@@ -22,40 +22,49 @@ export function TimelineClient() {
   const [year,       setYear]       = useState<string>('')
   const sentinelRef                 = useRef<HTMLDivElement>(null)
 
-  // Reset on filter change
-  useEffect(() => {
-    setItems([])
-    setPage(-1)
-    setHasMore(true)
-  }, [filter, minSev, year])
+  // Monotonic token: bumped on every filter reset so responses from a
+  // superseded request are discarded instead of rendering under the new filter.
+  const seqRef = useRef(0)
 
-  const loadMore = useCallback(async (pageNum: number) => {
-    if (loading) return
+  const loadMore = useCallback(async (pageNum: number, seq: number) => {
     setLoading(true)
     try {
       const p = new URLSearchParams({ page: String(pageNum) })
       if (filter !== 'all') p.set('classification', filter)
       if (year)             p.set('year', year)
       if (minSev > 1)       p.set('min_severity', String(minSev))   // QA M1
-      const res  = await fetch(`/api/incidents?${p}`)
+      const res = await fetch(`/api/incidents?${p}`)
+      if (seq !== seqRef.current) return          // superseded by a newer reset
+      if (!res.ok) { setHasMore(false); return }  // 429/5xx returns {error} — don't spread it into the list
       const data = (await res.json()) as Row[]
+      if (seq !== seqRef.current) return
 
       setItems(prev => pageNum === 0 ? data : [...prev, ...data])
       setPage(pageNum)
       if (data.length < PAGE_SIZE) setHasMore(false)
+    } catch {
+      if (seq === seqRef.current) setHasMore(false)  // network failure — stop paging quietly
     } finally {
-      setLoading(false)
+      if (seq === seqRef.current) setLoading(false)
     }
-  }, [loading, filter, year, minSev])
+  }, [filter, year, minSev])
 
-  useEffect(() => { if (page === -1) loadMore(0) }, [page]) // eslint-disable-line
+  // Reset on filter change. Load page 0 directly — the old page === -1
+  // signal was a no-op when a second change landed while page was already -1.
+  useEffect(() => {
+    seqRef.current += 1
+    setItems([])
+    setPage(-1)
+    setHasMore(true)
+    void loadMore(0, seqRef.current)
+  }, [filter, minSev, year]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Intersection observer for infinite scroll
   useEffect(() => {
     const el = sentinelRef.current
     if (!el) return
     const obs = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting && hasMore && !loading) loadMore(page + 1)
+      if (entry.isIntersecting && hasMore && !loading) loadMore(page + 1, seqRef.current)
     }, { rootMargin: '200px' })
     obs.observe(el)
     return () => obs.disconnect()

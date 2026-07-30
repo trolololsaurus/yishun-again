@@ -1,14 +1,20 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 
 interface Props { incidentId?: string }
 
 export function UTMLogger({ incidentId }: Props) {
   const searchParams = useSearchParams()
+  const pathname     = usePathname()
 
   useEffect(() => {
+    // Mounted twice on incident pages: once from the root layout (no
+    // incidentId) and once from the page (with incidentId). Only the page
+    // instance logs there, or every share click writes two utm_events rows.
+    if (!incidentId && pathname?.startsWith('/incidents/')) return
+
     const utm_source   = searchParams.get('utm_source')
     const utm_medium   = searchParams.get('utm_medium')
     const utm_campaign = searchParams.get('utm_campaign')

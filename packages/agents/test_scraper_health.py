@@ -7,17 +7,20 @@ Run: .venv/Scripts/python.exe test_scraper_health.py
 WHAT THIS FILE IS GUARDING
 --------------------------
 The table had a writer (`scrapers.log_scraper_run`) that lost its only caller
-when ingestion moved to the source adapters, while ops/supervisor.py and the War
-Room kept reading it. Nothing failed — the fleet was simply graded on rows that
-had stopped moving. So the tests that matter are the boring structural ones:
+when ingestion moved to the source adapters, while the War Room kept reading it.
+Nothing failed — the fleet was simply displayed from rows that had stopped
+moving. So the tests that matter are the boring structural ones:
 
   1. A pass writes a row for every source it FETCHED, and for no source it
-     skipped (a phantom zero-item row walks a source toward a false zero-streak).
-  2. The row is keyed by the STABLE SOURCE ID, the same key as pipeline_state.
-     The supervisor joins the two tables on it and counts distinct sources
-     toward the ">= 3 anomalous" email threshold — two spellings of one source
-     would mail as if it were two.
+     skipped (a phantom zero-item row misreports a source as silently dead).
+  2. The row is keyed by the STABLE SOURCE ID, the same key as pipeline_state,
+     so one source can never render as two under different spellings.
   3. A failed fetch still writes a row, as status='error'.
+
+NOT covered here: the supervisor's zero-streak alerting. That derives from
+`pipeline_run_history` (see ops/supervisor.py and test_ops_agents.py), which is
+written on every real pass. scraper_health feeds the War Room health *views*;
+alerting deliberately does not depend on it.
 """
 import importlib
 import logging
@@ -242,54 +245,6 @@ check("the healthy source in the same pass is unaffected", blocked["cna"]["statu
 check("dry_run writes NO health rows (a dry run writes nothing at all)",
       run_pass([FakeSource("cna")], dry_run=True) == [])
 
-
-# ── supervisor: stale rows are no longer graded as today's fleet ─────────────
-
-print("\nsupervisor — stale health rows:\n")
-
-sup = importlib.import_module("ops.supervisor")
-NOW = datetime(2026, 7, 30, 14, 58, tzinfo=timezone.utc)
-
-
-def st(name, hours_ago, zeros):
-    return {"source_name": name, "consecutive_zeros": zeros, "status": "warning",
-            "scraped_at": (NOW - timedelta(hours=hours_ago)).isoformat()}
-
-
-def state(name):
-    return {"source_name": name, "last_status": "ok", "watermark": "2026-07-29",
-            "consecutive_failures": 0, "last_run_at": (NOW - timedelta(hours=1)).isoformat()}
-
-
-fresh = sup.classify_findings(pipeline_state=[state("stomp")],
-                              scraper_health=[st("stomp", 2, 6)], now=NOW)
-check("a fresh zero-streak row is still an anomaly",
-      [f["code"] for f in fresh] == ["zero_streak"])
-
-stale = sup.classify_findings(pipeline_state=[state("stomp")],
-                              scraper_health=[st("stomp", 24 * 30, 6)], now=NOW)
-check("a month-old row is NOT graded as today's fleet",
-      "zero_streak" not in [f["code"] for f in stale])
-check("...it reports the blind spot instead",
-      [f["code"] for f in stale] == ["health_rows_stale"])
-check("the blind spot is a warning, not an anomaly (it must not mail on its own)",
-      stale[0]["level"] == "warning" and stale[0]["source"] is None)
-
-mixed = sup.classify_findings(
-    pipeline_state=[state("stomp"), state("cna")],
-    scraper_health=[st("stomp", 2, 6), st("cna", 24 * 30, 9)], now=NOW)
-check("one fresh row is enough to suppress the blind-spot warning",
-      [f["code"] for f in mixed] == ["zero_streak"] and mixed[0]["source"] == "stomp")
-
-check("an empty table says nothing (pipeline_state findings cover a dead pass)",
-      sup.classify_findings(pipeline_state=[state("stomp")], scraper_health=[], now=NOW) == [])
-
-no_stamp = sup.classify_findings(
-    pipeline_state=[state("stomp")],
-    scraper_health=[{"source_name": "stomp", "consecutive_zeros": 6, "status": "warning"}],
-    now=NOW)
-check("a row with no timestamp is taken at face value, not discarded",
-      [f["code"] for f in no_stamp] == ["zero_streak"])
 
 
 print(f"\n{passed} passed, {failed} failed")

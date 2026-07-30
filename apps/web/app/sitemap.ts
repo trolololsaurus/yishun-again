@@ -9,12 +9,17 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     .eq('is_published', true)
     .order('incident_date', { ascending: false, nullsFirst: false })
 
-  const incidentRoutes: MetadataRoute.Sitemap = (incidents ?? []).map(inc => ({
-    url:             `${SITE_URL}/incidents/${inc.slug}`,
-    lastModified:    new Date(inc.published_at ?? inc.incident_date),
-    changeFrequency: 'weekly',
-    priority:        0.8,
-  }))
+  const incidentRoutes: MetadataRoute.Sitemap = (incidents ?? []).map(inc => {
+    const modified = inc.published_at ?? inc.incident_date
+    return {
+      url:             `${SITE_URL}/incidents/${inc.slug}`,
+      // new Date(null) is 1970-01-01 — omit lastModified when both dates are
+      // null rather than advertise the epoch to crawlers.
+      ...(modified ? { lastModified: new Date(modified) } : {}),
+      changeFrequency: 'weekly' as const,
+      priority:        0.8,
+    }
+  })
 
   return [
     {

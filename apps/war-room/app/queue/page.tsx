@@ -24,11 +24,13 @@ export default async function QueuePage() {
       .from('war_room_queue')
       .select('id', { count: 'exact', head: true })
       .gte('created_at', since24h),
-    // Most recent backfill summary notification (notification_type sentinel row)
+    // Most recent backfill summary notification (notification_type sentinel row).
+    // \_ escapes LIKE's single-char wildcard — unescaped, any 18-char prefix
+    // ending in "backfill?summary?" would also match the sentinel filter.
     supabase
       .from('war_room_queue')
       .select('raw_content, created_at')
-      .like('source_url', '_backfill_summary_%')
+      .like('source_url', '\\_backfill\\_summary\\_%')
       .order('created_at', { ascending: false })
       .limit(1),
   ])

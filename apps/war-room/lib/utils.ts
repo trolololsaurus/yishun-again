@@ -80,3 +80,17 @@ export function validateUUID(id: string | undefined): string | null {
 export function today(): string {
   return new Date().toISOString().split('T')[0]
 }
+
+// Scraped/pipeline URLs are rendered into operator-clicked <a href>. React
+// escapes text but not URL schemes — a javascript: URL from a hostile RSS
+// entry would execute in the War Room origin on click (and the CSP does not
+// block javascript: navigation). Only http(s) survives; anything else
+// renders as a dead link.
+export function safeHref(url: string | null | undefined): string {
+  if (!url) return '#'
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return url
+  } catch { /* not a parseable absolute URL */ }
+  return '#'
+}

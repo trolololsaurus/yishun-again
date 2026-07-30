@@ -175,21 +175,55 @@ threshold. All leave it `pending` for the operator; none reject anything:
 | `unapproved_source_domain` | `source_allowlist` | Operator approves the domain |
 
 **The pipeline is autonomous as of July 2026.** One Cloud Scheduler job at
-**14:58 SGT daily** POSTs `/orchestrator/daily`, which runs eight agents in a
-fixed order (`ops/daily.py`): ingestion → auto-publish → integrity → supervisor
-→ learning monitor → backend health → maintenance digest → monthly report (1st
-only). Steps are failure-isolated: one agent crashing does not cost you the rest.
+**14:58 SGT daily** POSTs `/orchestrator/daily`, which runs twelve agents in a
+fixed order (`ops/daily.py`): recalibration → ingestion → auto-publish →
+integrity → supervisor → learning monitor → backend health → pattern detection →
+lifecycle (Mondays) → source discovery (first Monday) → maintenance digest →
+monthly report (1st). Steps are failure-isolated: one agent crashing does not
+cost you the rest.
+
+**The cadence lives in `ops/daily.py` and nowhere else.** `main.py`'s in-process
+APScheduler has exactly one job (the daily chain) and is off in production
+anyway. Until 2026-07-30 it also carried pattern detection, recalibration,
+lifecycle and discovery — which meant those four had **never run in production**,
+because Cloud Run scales to zero and that scheduler never starts. Do not add a
+second scheduling surface; add a cadence-gated step to `ops/daily.py` and a case
+to `cadence_plan()`. Two things worth knowing:
+- **Recalibration must stay ahead of ingestion.** It writes `calibration_log.json`
+  on an ephemeral disk and Stage 2 reads it while drafting *in the same pass*.
+  Moved below ingestion, the calibration loop becomes a silent no-op.
+- **`dry_run` skips every cadence-gated step.** None of them has a read-only mode.
+
+**Lifecycle auto-conclude is wired but OFF** (`LIFECYCLE_AUTO_CONCLUDE`). It is
+the only agent that edits an already-published incident unattended, so enabling
+it is an operator decision — see `docs/AUTONOMY.md` §5d.
 
 **Read `docs/AUTONOMY.md` before changing any of this.** It documents the
 auto-publish gates, the alert throttling, the exit conditions, the cost model,
 and the runbook (including the `AUTO_PUBLISH_CONFIDENCE=2.0` panic switch).
 **§5b** is the oversized-merge gate that lifts itself once earned; **§5c** is the
-`max_tokens` truncation guard and its recovery ladder.
+`max_tokens` truncation guard and its recovery ladder; **§5d** is the lifecycle
+switch.
 
 **Read `docs/PIPELINE_CHANGES_2026-07-30.md` before touching clustering,
 consolidation, Stage 2 length/groundedness, or the casualty check.** It records
 what was measured, and — more usefully — the three things in the original brief
 that turned out to be wrong about this codebase, so they are not re-attempted.
+
+**The recency watermark advances on DECISIONS, not on writes.** A Stage 1
+rejection and a consolidation duplicate-skip are verdicts, and neither writes a
+row, so `dedup.is_duplicate` (which reads only `war_room_queue.source_url` and
+`incidents.source_urls`) can never see them again — the watermark is the only
+thing that can. Each source gets a `WatermarkTracker` (`ingestion/watermark.py`)
+and **every `continue`/`break` in the candidate loop must mark it exactly once**:
+`decided()` for a verdict, `unresolved()` for an interruption (error, deadline,
+budget halt, a gathered candidate the cluster phase never reached). Marking
+neither either loses the story or re-buys its Gemini + Haiku calls every day. Two
+rules keep advancing safe and must not be removed — the **retry floor** (only
+decided dates strictly below the earliest unresolved date advance) and the
+**same-day grace** (never advance onto the pass's own date; the source is still
+publishing and `RecencyFilter` drops `published_at <= watermark`). See
+`docs/PIPELINE_CHANGES_2026-07-30.md` §9. Guard: `test_watermark_advance.py`.
 
 Two things that are easy to get wrong:
 - **Production does NOT use APScheduler.** `ENABLE_INPROCESS_SCHEDULER` is false.
@@ -258,12 +292,21 @@ weeks under the old behaviour.
 
 **`scraper_health` is written by `ingestion/health.py`**, called once per fetched
 source from the orchestrator's per-source loop — keyed on the **stable source id**
-(`stomp`), the same key as `pipeline_state`, because `ops/supervisor.py` joins the
-two and counts distinct sources toward its email threshold. The previous writer
-(`scrapers.log_scraper_run`, inside `scrape_all`) was orphaned by the adapter port
-and both are now deleted: the table went stale while the supervisor and War Room
-kept reading it, which is a worse failure than having no health table at all. See
-`docs/AUTONOMY.md` §5.
+(`stomp`), the same key as `pipeline_state`, so one source can never render as two
+under different spellings. The previous writer (`scrapers.log_scraper_run`, inside
+`scrape_all`) was orphaned by the adapter port and both are now deleted: the table
+went stale while the supervisor and War Room kept reading it, which is a worse
+failure than having no health table at all. See `docs/AUTONOMY.md` §5.
+
+**Display reads `scraper_health`; alerting does not.** `ops/supervisor.py`'s
+zero-streak check derives from `pipeline_run_history` (`state_store.record_run`,
+written at the end of every real pass), *not* from `scraper_health` — deliberately,
+even though the table now has a live writer again. An append-only table that stops
+being appended to looks exactly like a healthy quiet one, and that is precisely the
+failure the supervisor exists to catch, so its alerting must not be the thing that
+goes quiet with it. `scraper_health` powers the War Room health views (7-day
+window) and `ops/maintenance.py`'s error digest. Keep it that way: if you need a
+new *alert*, base it on run history.
 
 ---
 
@@ -293,7 +336,8 @@ suffix-aware, so `cnalifestyle.channelnewsasia.com` inherits CNA's approval.
 
 **Migrations are hand-applied in the Supabase SQL Editor (no runner).** Apply in
 order; the live DB depends on `006_phase1_apply_now.sql` + `007` + `009` having all
-run. `006_ingestion_learning_loop_schema.sql` is a **superseded draft — do not run.**
+run. `006_SUPERSEDED_DO_NOT_RUN_ingestion_learning_loop_schema.sql` is exactly what
+its name says (renamed 2026-07 so it can no longer be mistaken for a live step).
 Recent additions: **008** expands `incidents.latest_source_role` to include
 `sentencing` / `appeal` / `appeal_dismissed`; **009** adds `unpublish` to the
 `training_signals.action` CHECK (the War Room unpublish route writes it — before 009
@@ -319,6 +363,16 @@ not journalism; post date ≠ event date). The code change (`scrape_reddit` emit
 `'signal'`) is what enforces it in the pipeline; 012 is the defensive layer so
 `classify()` resolves reddit domains to signal too. Not required for the code
 path to work.
+
+**013 (RLS fix + reddit seed cleanup)** — ⚠️ security migration, apply promptly.
+Migration 003 had created `USING (true) WITH CHECK (true)` policies with no `TO`
+clause on `pattern_alerts` and `people_profiles`, which despite their names gave
+the **anon/publishable key full read AND write** on both tables. 013 drops them
+(RLS stays enabled with no policy → service-role only, like every other private
+table). It also removes the two reddit URLs that 005 seeded into
+`incidents.source_urls` (guardrail #2 breach once 012 reclassified reddit as
+signal) and decrements those rows' `corroboration_count`. `tools/rls_audit.py`
+now covers both tables.
 
 **RLS note:** `incidents` anon reads are filtered to `is_published = TRUE`
 (`anon_read_published_incidents`), so the **publishable key cannot see drafts at all** —

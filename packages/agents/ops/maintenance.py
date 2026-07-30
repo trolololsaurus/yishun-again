@@ -370,6 +370,11 @@ def _digest(run_ctx, client, stats: dict) -> None:
                            limit=400, client=client)
     runs = recent_runs(hours=WINDOW_HOURS, limit=200, client=client)
     state = _load(client, "pipeline_state", "source_name,last_status,last_reason,updated_at")
+    # scraper_health is live again: `ingestion/health.py` writes one row per
+    # fetched source per pass, so this read carries real per-source error text
+    # (the old writer inside scrapers.scrape_all was orphaned by the adapter port
+    # and both are deleted). It is a reporting surface only — ops/supervisor.py
+    # deliberately does NOT alert off this table; see its module docstring.
     health = _load(
         client, "scraper_health", "source_name,scraped_at,errors,status,status_reason",
         build=lambda q: q.gte("scraped_at", since).order("scraped_at", desc=True),

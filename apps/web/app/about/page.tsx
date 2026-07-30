@@ -88,9 +88,9 @@ export default function AboutPage() {
           <div>
             <div className="font-bold text-text-primary mb-1">Hype — ⚡⚡⚡</div>
             <p className="text-text-secondary leading-relaxed">
-              Lightning bolts show how many <strong className="text-text-primary">independent mainstream
-              media outlets</strong> reported the incident — one ⚡ per source. More bolts mean the story
-              was more widely corroborated. Forum chatter is never counted as a source.
+              Lightning bolts show how widely <strong className="text-text-primary">independent mainstream
+              media outlets</strong> corroborated the incident — one ⚡ per source beyond the first
+              (2 sources = ⚡, 3 = ⚡⚡, …). Forum chatter is never counted as a source.
             </p>
           </div>
         </div>

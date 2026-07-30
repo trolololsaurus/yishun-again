@@ -6,7 +6,7 @@ import { DISMISS_CATEGORIES } from '@/lib/types'
 import {
   CLASS_ICON, CLASS_COLOR, CLASS_LABEL,
   confidenceColor, confidenceLabel,
-  severityDiamonds, hypeMeter,
+  severityDiamonds, hypeMeter, safeHref,
 } from '@/lib/utils'
 
 const REJECT_REASONS: { value: RejectReason; label: string }[] = [
@@ -192,7 +192,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
               Raw Source
             </div>
             <a
-              href={item.source_url}
+              href={safeHref(item.source_url)}
               target="_blank"
               rel="noopener noreferrer"
               className="text-yellow text-sm font-body hover:underline break-all"
@@ -218,7 +218,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
               </div>
               {triggeredByUrl && (
                 <a
-                  href={triggeredByUrl}
+                  href={safeHref(triggeredByUrl)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-yellow font-body hover:underline break-all"
@@ -459,7 +459,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
                           </span>
                         )}
                         <a
-                          href={url}
+                          href={safeHref(url)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className={`font-body text-sm hover:underline break-all ${
@@ -472,7 +472,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
                       {val?.wayback_url && (
                         <div className="pl-14">
                           <a
-                            href={val.wayback_url}
+                            href={safeHref(val.wayback_url)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="font-body text-blue-400 text-xs hover:underline break-all"

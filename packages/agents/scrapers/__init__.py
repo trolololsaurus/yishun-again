@@ -17,12 +17,20 @@ import json
 import logging
 import os
 import re
+import socket
 import urllib.request
 from datetime import date
 
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
+
+# feedparser.parse(<url>) fetches via urllib with NO timeout — one wedged TCP
+# connection to a feed host would hang the pass past the orchestrator's
+# deadline (its checks run between fetches and can't interrupt one). This
+# default applies only to sockets without an explicit timeout; httpx calls
+# set their own and are unaffected.
+socket.setdefaulttimeout(30)
 
 # ── English keyword list (spec §4.1) ────────────────────────────────────────
 YISHUN_KEYWORDS = [

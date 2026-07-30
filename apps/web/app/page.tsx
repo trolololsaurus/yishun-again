@@ -58,7 +58,6 @@ export default async function HomePage() {
     { data: mapRows },
     { data: feedRows },
     { data: yearRows },
-    { data: allRows },
     { data: incidentDateRows },
   ] = await Promise.all([
     // Map markers — current-year incidents with coordinates. QA H5: scope to the
@@ -92,12 +91,6 @@ export default async function HomePage() {
       .eq('is_published', true)
       .gte('incident_date', `${currentYear}-01-01`)
       .lt( 'incident_date', `${currentYear + 1}-01-01`),
-
-    // All-time classification counts for map filter chip badges
-    supabase
-      .from('incidents')
-      .select('classification')
-      .eq('is_published', true),
 
     // Distinct incident years for the year dropdown
     supabase
@@ -142,17 +135,6 @@ export default async function HomePage() {
   const deaths   = rows.reduce((s, r) => s + (r.deaths   ?? 0), 0)
   const injuries = rows.reduce((s, r) => s + (r.injuries ?? 0), 0)
 
-  // ── All-time counts for filter chips ──────────────────────────────────────
-  const allTimeCounts = (allRows ?? []).reduce(
-    (acc, r) => {
-      const cls = r.classification as 'heart' | 'clown' | 'dagger'
-      acc[cls] = (acc[cls] ?? 0) + 1
-      acc.total += 1
-      return acc
-    },
-    { heart: 0, clown: 0, dagger: 0, total: 0 }
-  )
-
   // ── Available years for dropdown ───────────────────────────────────────────
   const yearSet = new Set(
     (incidentDateRows ?? [])
@@ -172,7 +154,6 @@ export default async function HomePage() {
     counts,
     deaths,
     injuries,
-    allTimeCounts,
     availableYears,
   }
 

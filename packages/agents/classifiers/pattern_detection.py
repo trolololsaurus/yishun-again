@@ -5,9 +5,24 @@ Detects three pattern types across published incidents:
 
   1. ENTITY    — named entity in 3+ separate incidents within 365 days.
                  Claude Haiku extracts entities from title+summary.
-                 Results are cached in _entity_cache (module-level dict)
-                 so the same incident is never re-processed within a single
-                 Cloud Run instance lifetime.
+
+                 ⚠ `_entity_cache` buys nothing in production. Cloud Run runs
+                 with min-instances=0 and this agent is called once a day from
+                 ops/daily.py, so the "instance lifetime" the cache spans is a
+                 single pass: every pass re-extracts from cold. The cache is
+                 real only for repeated calls inside one process (local dev,
+                 back-to-back manual triggers).
+
+                 That makes PATTERN_MAX_EXTRACTIONS a hard coverage limit, not
+                 the catch-up-over-time cap it reads as: the incident pool is
+                 ordered newest-first, so the same newest N are re-extracted
+                 daily and anything past N is never entity-checked at all. With
+                 the pool under the cap this is only a cost question (~N Haiku
+                 calls/day). Over the cap, entity detection is blind to the
+                 tail, and run() says so in `entities_uncovered` and an
+                 explicit log line rather than reporting a partial sweep as a
+                 clean one. Raise the cap, or give extraction a persistent
+                 store, before trusting entity coverage on a large archive.
 
   2. CRIME TYPE — same classification at severity ≥ 4 in 3+ incidents within
                   90 days, within the same area_name or block-number prefix.
@@ -22,7 +37,8 @@ For each new pattern:
 Public API
 ----------
 run(supabase_client=None) -> dict
-    Returns: {alerts_created, patterns_found, entities_checked, errors}
+    Returns: {alerts_created, patterns_found, entities_checked,
+              entities_uncovered, errors}
 """
 
 import json
@@ -54,11 +70,16 @@ LOCATION_THRESHOLD      = 5
 CRIMETYPE_MIN_SEVERITY  = 4
 ALERT_DEDUP_DAYS        = 30
 
-# Cap Haiku entity-extraction calls per run to bound cost on cold-start.
-_MAX_EXTRACTIONS_PER_RUN = 100
+# Cap Haiku entity-extraction calls per run. Env-settable so the operator can
+# raise it without a redeploy when the archive outgrows it — see the module
+# docstring for why exceeding it is a coverage limit, not just a cost one.
+try:
+    _MAX_EXTRACTIONS_PER_RUN = int(os.getenv("PATTERN_MAX_EXTRACTIONS", "100"))
+except ValueError:
+    _MAX_EXTRACTIONS_PER_RUN = 100
 
 # Module-level entity cache: incident_id → [entity strings].
-# Persists for the lifetime of the Cloud Run instance.
+# Lives for the lifetime of the PROCESS, which in production is one pass.
 _entity_cache: dict[str, list[str]] = {}
 
 
@@ -254,12 +275,18 @@ def _fire_alert(
 
 # ── Pattern checks ────────────────────────────────────────────────────────────
 
-def _check_entity_patterns(supabase, incidents: list[dict], anthropic_client) -> tuple[int, int]:
+def _check_entity_patterns(supabase, incidents: list[dict],
+                           anthropic_client) -> tuple[int, int, int]:
     """
-    Returns (alerts_created, entities_checked).
+    Returns (alerts_created, entities_checked, uncovered).
+
+    `uncovered` is how many incidents the extraction cap excluded. It is not a
+    backlog that clears itself: the pool is newest-first and the cache is cold
+    every pass, so the same incidents are excluded every day (module docstring).
     """
     entities_checked = 0
     alerts_created   = 0
+    uncovered        = 0
 
     # entity_name → list of incident dicts
     entity_map: dict[str, list[dict]] = defaultdict(list)
@@ -267,7 +294,8 @@ def _check_entity_patterns(supabase, incidents: list[dict], anthropic_client) ->
     extractions_this_run = 0
     for inc in incidents:
         if extractions_this_run >= _MAX_EXTRACTIONS_PER_RUN and inc["id"] not in _entity_cache:
-            continue   # cap reached for this run; daily cron will catch up
+            uncovered += 1
+            continue
         if inc["id"] not in _entity_cache:
             extractions_this_run += 1
         entities = _extract_entities(
@@ -285,7 +313,7 @@ def _check_entity_patterns(supabase, incidents: list[dict], anthropic_client) ->
         if _fire_alert(supabase, "entity", entity, ids, titles, ENTITY_WINDOW_DAYS):
             alerts_created += 1
 
-    return alerts_created, entities_checked
+    return alerts_created, entities_checked, uncovered
 
 
 def _check_crime_type_patterns(supabase, incidents: list[dict]) -> int:
@@ -349,7 +377,11 @@ def run(supabase_client=None) -> dict:
     Run all three pattern checks against published incidents.
 
     Returns:
-        {alerts_created, patterns_found, entities_checked, errors}
+        {alerts_created, patterns_found, entities_checked, entities_uncovered,
+         errors}
+
+    A non-zero `entities_uncovered` means the entity sweep was partial and will
+    stay partial on the same incidents every day — see the module docstring.
     """
     if supabase_client is None:
         from classifiers.corroboration import get_supabase_client
@@ -359,7 +391,8 @@ def run(supabase_client=None) -> dict:
             logger.error("Pattern detection: Supabase not configured: %s", exc)
             return {"alerts_created": 0, "patterns_found": 0, "entities_checked": 0, "errors": 1}
 
-    stats = {"alerts_created": 0, "patterns_found": 0, "entities_checked": 0, "errors": 0}
+    stats = {"alerts_created": 0, "patterns_found": 0, "entities_checked": 0,
+             "entities_uncovered": 0, "errors": 0}
 
     now     = datetime.now(timezone.utc)
     cutoffs = {
@@ -399,12 +432,24 @@ def run(supabase_client=None) -> dict:
     # ── 1. Entity patterns ────────────────────────────────────────────────────
     try:
         anthropic_client = _get_anthropic_client()
-        entity_alerts, entities_checked = _check_entity_patterns(
+        entity_alerts, entities_checked, uncovered = _check_entity_patterns(
             supabase_client, entity_incidents, anthropic_client
         )
-        stats["alerts_created"]  += entity_alerts
-        stats["patterns_found"]  += entity_alerts
-        stats["entities_checked"] = entities_checked
+        stats["alerts_created"]    += entity_alerts
+        stats["patterns_found"]    += entity_alerts
+        stats["entities_checked"]   = entities_checked
+        stats["entities_uncovered"] = uncovered
+        if uncovered:
+            # Never let a partial sweep read as a clean one: without this line,
+            # "0 entity patterns found" is indistinguishable from "we only looked
+            # at the newest 100 incidents and will only ever look at those".
+            logger.warning(
+                "Pattern detection: entity coverage INCOMPLETE — %d of %d incident(s) "
+                "checked, %d never examined (PATTERN_MAX_EXTRACTIONS=%d). Entity "
+                "patterns involving the excluded incidents cannot be found.",
+                entities_checked, len(entity_incidents), uncovered,
+                _MAX_EXTRACTIONS_PER_RUN,
+            )
     except Exception as exc:
         logger.error("Entity pattern check failed: %s", exc)
         stats["errors"] += 1
@@ -429,8 +474,8 @@ def run(supabase_client=None) -> dict:
 
     logger.info(
         "Pattern detection complete — alerts_created=%d patterns_found=%d "
-        "entities_checked=%d errors=%d",
+        "entities_checked=%d entities_uncovered=%d errors=%d",
         stats["alerts_created"], stats["patterns_found"],
-        stats["entities_checked"], stats["errors"],
+        stats["entities_checked"], stats["entities_uncovered"], stats["errors"],
     )
     return stats

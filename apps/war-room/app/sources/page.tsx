@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import type { Source } from '@/lib/types'
+import { safeHref } from '@/lib/utils'
 
 const TYPE_COLOR: Record<string, string> = {
   msm:       'text-green',
@@ -93,7 +94,7 @@ function SourceTable({
           <tr key={src.id} className="border-b border-border hover:bg-surface/50">
             <td className="py-2 pr-4">
               <a
-                href={src.url}
+                href={safeHref(src.url)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-text-primary hover:text-yellow"

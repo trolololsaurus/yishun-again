@@ -93,8 +93,6 @@ export interface ChaosData {
   counts:           { heart: number; clown: number; dagger: number; total: number }
   deaths:           number
   injuries:         number
-  // All-time totals — used for map filter chip counts, unaffected by year selection
-  allTimeCounts:    { heart: number; clown: number; dagger: number; total: number }
   availableYears:   number[]
 }
 

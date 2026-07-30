@@ -38,6 +38,14 @@ export async function GET(req: Request) {
       .not('incident_date', 'is', null),
   ])
 
+  // A failed query must be a 500, not a silent score of 0 — otherwise a DB
+  // outage renders (and CDN-caches) "Quiet" with all-zero counts, and the
+  // client's error path never fires because the status was 200.
+  if (yearRes.error || incidentDateRes.error) {
+    console.error('chaos query error:', yearRes.error?.message ?? incidentDateRes.error?.message)
+    return NextResponse.json({ error: 'Upstream query failed' }, { status: 500 })
+  }
+
   const rows = yearRes.data ?? []
 
   const score  = computeChaosScore(rows)
