@@ -1,6 +1,6 @@
 # Cost + Classification Programme — 2026-07-30
 
-**Status:** Landed, tests green (22/22 files), **not yet deployed**.
+**Status:** Landed, tests green (23/23 files), **not yet deployed**.
 **Companion to:** `AUTONOMY.md` (§5b, §5c are new), `INGESTION_CHANGELOG.md`, `QA_BACKLOG.md`.
 
 Everything below was measured against the live archive, not assumed. Where a
@@ -396,6 +396,109 @@ degrade the learning loop:
 
 ---
 
+## 9. The watermark advanced on WRITES, not on decisions
+
+Found by the QA review of this programme, and it is the one item here that was
+costing money every day rather than merely risking it.
+
+`pipeline_state.watermark` is defined (INGESTION_DESIGN.md §8) as the max
+`published_at` **actually ingested**. The orchestrator read "ingested" as "written
+to `war_room_queue`": `max_published_at` moved only when `queued` was true, and the
+`'on'` path's `per_source_max` only for a written cluster's non-signal members.
+
+Everything else in the candidate loop is invisible twice over:
+
+| Outcome | Written anywhere? | Visible to `dedup.is_duplicate` next pass? |
+|---|---|---|
+| Stage 1 rejection (60–70% of raw volume) | no | **no** |
+| Consolidation `skip` (duplicate of a *pending* queue row) | no | **no** |
+| Non-primary member of a written cluster | only in `raw_content` | no, until the incident is published |
+| Signal member of a written cluster | never in `source_urls` (guardrail #2) | **never** |
+
+`dedup` looks only at `war_room_queue.source_url` — which `build_queue_row` sets
+to the **primary** member's URL alone — and at `incidents.source_urls`. So for
+every row of that table the watermark was the only mechanism that could stop a
+re-fetch, and it was declining to move. Those articles were re-fetched,
+re-Stage-1'd (Gemini), re-drafted (two Haiku calls) and re-judged by consolidation
+on **every daily pass**, until an unrelated candidate from the same source happened
+to drag the watermark past them.
+
+### The fix: `decided` vs `unresolved`, in `ingestion/watermark.py`
+
+The distinction that matters is not written-vs-unwritten, it is **settled vs
+interrupted**. Every branch of the candidate loop now marks its source's
+`WatermarkTracker` exactly one way — `decided(c)` for a verdict another pass would
+only pay to reproduce, `unresolved(c)` for an interruption (model or DB error, pass
+deadline, mid-pass Stage 1 budget halt, a gathered candidate the cluster phase
+never reached). **A new `continue` or `break` in that loop that marks neither
+either loses the story or re-buys it daily.**
+
+### Two holdbacks, and why the fix is unsafe without them
+
+`RecencyFilter` drops `published_at <= watermark`, so the watermark is a
+date-granular guillotine: advancing it to one candidate's date drops every same-day
+sibling. While only written candidates advanced it that was a rare corner; now it
+is the common case, so both of these are part of the fix, not decoration.
+
+1. **Retry floor.** Only decided dates *strictly below* the earliest unresolved
+   date advance. Without it a candidate whose write errored would be deleted from
+   the future by its own successfully-decided siblings. This also closes a latent
+   data loss that predates the change: a mid-pass Stage 1 budget halt `break`s the
+   candidate loop but still wrote the watermark, and because most RSS lists
+   newest-first the candidates it never examined were the *older* ones — silently
+   dropped.
+2. **Same-day grace.** A decided candidate dated on or after the pass date is held
+   anyway. An outlet publishes all day; the pass runs once, at 14:58 SGT.
+   Advancing onto today's date would drop everything that source filed after the
+   pass ran, unseen and unlogged — far worse than the cost bug being fixed.
+
+> **The residual cost is one extra pass per article, and that is deliberate.**
+> Tomorrow the date is in the past and advances normally. Eliminating even that
+> would mean persisting every rejected URL — a new table and a hand-applied
+> migration (QA M15) to save a bounded 2×, against the unbounded ∞ this replaces.
+> Not worth it; **do not "optimise" the grace away** without replacing it with
+> something that keeps this afternoon's stories reachable.
+
+### Also changed, same root cause
+
+- **`'on'` mode advanced nothing when nothing cleared Stage 1.** The watermark
+  write lived inside `if gathered and not abort_pass`, so the emptiest passes —
+  the ones with the least to show for their Gemini spend — kept every candidate
+  for tomorrow. It now runs whenever sources were fetched.
+- **Signal members of a written cluster now advance their own source's watermark.**
+  Excluding them meant a merged Reddit/EDMW post was re-drafted every pass, and
+  once its MSM siblings had been deduped away it came back **alone** — as an
+  unverified signal-only queue row for a story already in the archive.
+- The vestigial `for grp in [cluster]:` single-iteration loop (left from the
+  pre-§2 shred) is gone, and `_write_clusters` no longer needs its
+  `if aborted: advance nothing` special case: per-candidate holds are strictly
+  more precise, so a source whose every member was written before an abort still
+  advances.
+
+### Measured
+
+**Structurally, not against the live archive** — the saving is per-article calls
+per pass, and this branch is not deployed, so there is no live delta to quote yet.
+`test_watermark_advance.py` asserts it as a call count: a consolidation-skipped
+article costs Stage 1 + Stage 2 on the pass that discovers it and **0 + 0** on the
+next, where before it cost the same again every pass indefinitely.
+
+To measure it live once deployed, read the new pass note — `N candidate(s) dropped
+by consolidation as duplicates of rows already awaiting review` — across
+consecutive `pipeline_run_history` rows. Under the bug that count was recurring
+spend; it should now fall to only genuinely new duplicates. Read it with
+`baseline_report.py`'s single-source percentage, per the warning at the top of this
+document.
+
+> **One case a watermark cannot fix, unchanged: dateless candidates.** They bypass
+> `RecencyFilter` entirely by design (QA H3), so a dateless candidate that Stage 1
+> rejects or consolidation skips *is* still re-processed every pass — there is no
+> date to advance to. The tracker records nothing for them rather than pretending
+> otherwise. This is bounded only by the rule that a source must supply
+> `published_at` to be registered at all.
+
+---
+
 ## New environment variables
 
 All optional; defaults match the values shipped. See `.env.example` for the
@@ -552,7 +655,7 @@ chose them. It is applied.
 ## How to verify after deploying
 
 ```bash
-# 1. Suite (22 files, all must pass)
+# 1. Suite (23 files, all must pass)
 cd packages/agents && for f in test_*.py; do ./.venv/Scripts/python.exe "$f" || echo "FAIL $f"; done
 
 # 2. Security gate — exits 1 if any ops table is publicly readable

@@ -210,6 +210,21 @@ consolidation, Stage 2 length/groundedness, or the casualty check.** It records
 what was measured, and — more usefully — the three things in the original brief
 that turned out to be wrong about this codebase, so they are not re-attempted.
 
+**The recency watermark advances on DECISIONS, not on writes.** A Stage 1
+rejection and a consolidation duplicate-skip are verdicts, and neither writes a
+row, so `dedup.is_duplicate` (which reads only `war_room_queue.source_url` and
+`incidents.source_urls`) can never see them again — the watermark is the only
+thing that can. Each source gets a `WatermarkTracker` (`ingestion/watermark.py`)
+and **every `continue`/`break` in the candidate loop must mark it exactly once**:
+`decided()` for a verdict, `unresolved()` for an interruption (error, deadline,
+budget halt, a gathered candidate the cluster phase never reached). Marking
+neither either loses the story or re-buys its Gemini + Haiku calls every day. Two
+rules keep advancing safe and must not be removed — the **retry floor** (only
+decided dates strictly below the earliest unresolved date advance) and the
+**same-day grace** (never advance onto the pass's own date; the source is still
+publishing and `RecencyFilter` drops `published_at <= watermark`). See
+`docs/PIPELINE_CHANGES_2026-07-30.md` §9. Guard: `test_watermark_advance.py`.
+
 Two things that are easy to get wrong:
 - **Production does NOT use APScheduler.** `ENABLE_INPROCESS_SCHEDULER` is false.
   Cloud Run scales to zero, so an in-process scheduler simply does not fire
