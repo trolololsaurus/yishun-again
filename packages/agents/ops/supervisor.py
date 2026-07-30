@@ -3,10 +3,25 @@ Scraper supervisor (req #9) — watch the live sources, mail the operator only
 when something is genuinely broken.
 
 The pipeline already records everything this agent needs: `pipeline_state`
-(per-source status + failure streak), `scraper_health` (items found, zero
-streaks) and `agent_runs`/`agent_events` (what the fleet actually did). Nothing
-here scrapes or probes — it reads the record and decides whether a human has to
-hear about it tonight.
+(per-source status + failure streak), `pipeline_run_history` (per-source fetch
+counts, one row per pass) and `agent_runs`/`agent_events` (what the fleet
+actually did). Nothing here scrapes or probes — it reads the record and decides
+whether a human has to hear about it tonight.
+
+WHY ZERO STREAKS COME FROM pipeline_run_history, NOT scraper_health
+-------------------------------------------------------------------
+`scraper_health.consecutive_zeros` is the obvious source for this and it is the
+one this agent used to read. It was dead. That column is only ever written by
+`scrapers.log_scraper_run`, which is only ever called from
+`scrapers.scrape_all` — and nothing calls `scrape_all`: the live pipeline is
+`ingestion/orchestrator.run_ingestion_pass` over `ingestion/sources/`. So the
+read returned stale rows or none, and the zero-streak check could not fire no
+matter how broken a source got. That is the precise failure this agent exists to
+catch, so it cannot be built on a table nothing writes.
+
+`pipeline_run_history` is written by `state_store.record_run` at the end of every
+real pass and carries `report.per_source[].fetched`, which is the same
+measurement. Deriving the streak from it needs no new writes and no new table.
 
 WHY THE EMAIL BAR IS DELIBERATELY HIGH
 --------------------------------------
@@ -54,10 +69,16 @@ FAILURE_STREAK_ANOMALY = 3
 # missed pass is a Cloud Run hiccup; two is a stopped scheduler.
 STALE_HOURS = 48
 
-# Yishun-specific filtering legitimately returns 0 items on most days — zero
-# items is the NORMAL case, not a failure. Only a long unbroken streak means the
-# scraper stopped seeing the page it used to parse.
+# Yishun-specific filtering legitimately returns 0 PUBLISHABLE items on most
+# days, which is why the streak is measured on `fetched` — what the listing page
+# offered before any filtering — and not on what survived to the queue. A source
+# that fetches nothing for five passes running has stopped seeing the page it
+# used to parse.
 ZERO_STREAK_ANOMALY = 5
+
+# How far back to look when computing that streak. Must comfortably exceed
+# ZERO_STREAK_ANOMALY, or the threshold is unreachable by construction.
+ZERO_STREAK_PASSES = 12
 
 # An ingestion pass is minutes, not hours. Still 'running' after 90 minutes
 # means the row was never closed — i.e. the process died.
@@ -117,34 +138,60 @@ def load_pipeline_state(client=None) -> list[dict]:
         return []
 
 
-def load_scraper_health(client=None, limit: int = 300) -> list[dict]:
+def load_run_history(client=None, passes: int = ZERO_STREAK_PASSES) -> list[dict]:
     """
-    Latest scraper_health row per source.
+    The last `passes` ingestion reports, newest first. Returns [] on failure —
+    which degrades to "no zero-streak findings", never to a crash.
 
-    scraper_health is append-only, so the table is read newest-first and the
-    first row seen for a source wins. `consecutive_zeros` is already cumulative
-    on each row (scrapers.log_scraper_run computes it), so one row per source is
-    all the history this agent needs.
+    No dry-run filter is needed: `state_store.record_run` is only called on a
+    real pass, so every row here is one.
     """
     c = _client(client)
     if not c:
         return []
     try:
-        res = (c.table("scraper_health")
-               .select("source_name,scraped_at,items_found,errors,status,"
-                       "status_reason,consecutive_zeros")
-               .order("scraped_at", desc=True)
-               .limit(limit).execute())
+        res = (c.table("pipeline_run_history")
+               .select("ran_at,report")
+               .order("ran_at", desc=True)
+               .limit(passes).execute())
+        return res.data or []
     except Exception as exc:                      # noqa: BLE001
-        logger.warning("supervisor: scraper_health read failed: %s", exc)
+        logger.warning("supervisor: pipeline_run_history read failed: %s", exc)
         return []
 
-    latest: dict[str, dict] = {}
-    for row in res.data or []:
-        name = row.get("source_name")
-        if name and name not in latest:
-            latest[name] = row
-    return list(latest.values())
+
+def zero_streaks(history) -> list[dict]:
+    """
+    Per-source count of consecutive most-recent passes that fetched nothing. Pure.
+
+    `history` is newest-first. Walking back from the newest pass, a source's
+    streak ends at the first pass where it fetched something.
+
+    A pass where the source is ABSENT, or where it was blocked/unavailable, is
+    skipped rather than counted or treated as breaking the streak — neither is
+    evidence about whether the listing page still parses. Counting them would
+    double-report the blocked source that `pipeline_state` already covers;
+    letting them break the streak would let a source flapping between blocked and
+    empty look healthy forever.
+    """
+    running: dict[str, int] = {}
+    settled: set[str] = set()
+
+    for row in history or []:
+        report = row.get("report") if isinstance(row.get("report"), dict) else {}
+        for source in report.get("per_source") or []:
+            name = source.get("name")
+            if not name or name in settled:
+                continue
+            if (source.get("status") or "").strip().lower() not in ("ok", "degraded"):
+                continue                          # no evidence either way
+            if int(source.get("fetched") or 0) > 0:
+                settled.add(name)                 # streak broken; ignore older passes
+                continue
+            running[name] = running.get(name, 0) + 1
+
+    return [{"source_name": name, "consecutive_zeros": count}
+            for name, count in sorted(running.items())]
 
 
 def chronic_sources(client=None, days: int = CHRONIC_DAYS) -> set[str]:
@@ -175,7 +222,7 @@ def _finding(level: str, code: str, message: str, source: str | None = None, **d
     return {"level": level, "code": code, "message": message, "source": source, "detail": detail}
 
 
-def classify_findings(*, pipeline_state, scraper_health=(), stuck=(), now=None) -> list[dict]:
+def classify_findings(*, pipeline_state, streaks=(), stuck=(), now=None) -> list[dict]:
     """
     Turn raw state rows into findings. No I/O, no side effects.
 
@@ -237,14 +284,14 @@ def classify_findings(*, pipeline_state, scraper_health=(), stuck=(), now=None) 
             sources=sorted(known),
         ))
 
-    for row in scraper_health or []:
+    for row in streaks or []:
         zeros = int(row.get("consecutive_zeros") or 0)
         if zeros >= ZERO_STREAK_ANOMALY:
             name = row.get("source_name") or "?"
             findings.append(_finding(
                 "anomaly", "zero_streak",
-                f"{name}: 0 items for {zeros} consecutive runs — the listing "
-                f"page probably changed shape (status={row.get('status')})",
+                f"{name}: fetched 0 items on {zeros} consecutive passes — the "
+                f"listing page probably changed shape",
                 source=name, consecutive_zeros=zeros,
             ))
 
@@ -365,7 +412,7 @@ def run(supabase_client=None, trigger: str = "scheduler", now=None) -> dict:
 
 def _supervise(run_ctx, client, stats: dict, now=None) -> None:
     state = load_pipeline_state(client)
-    health = load_scraper_health(client)
+    streaks = zero_streaks(load_run_history(client))
     stuck = stale_runs(older_than_minutes=STUCK_RUN_MINUTES, client=client)
     chronic = chronic_sources(client)
 
@@ -376,7 +423,7 @@ def _supervise(run_ctx, client, stats: dict, now=None) -> None:
         run_ctx.set_summary("No pipeline_state rows to supervise.")
         return
 
-    findings = classify_findings(pipeline_state=state, scraper_health=health, stuck=stuck, now=now)
+    findings = classify_findings(pipeline_state=state, streaks=streaks, stuck=stuck, now=now)
 
     for finding in findings:
         emit = run_ctx.anomaly if finding["level"] == "anomaly" else run_ctx.warn

@@ -58,77 +58,14 @@ def _job_pipeline() -> None:
 # work the ingestion pass already does — and every one of them needed the
 # in-process scheduler to be running. Source health now comes from the real
 # pass, via pipeline_state and ops/supervisor.py.
-
-
-def _job_pattern_detection() -> None:
-    """Daily pattern detection + recalibration check."""
-    from classifiers.pattern_detection import run as pattern_run
-    from classifiers.recalibration     import check as recal_check
-    try:
-        stats = pattern_run()
-        logger.info(
-            "Pattern detection job: alerts_created=%d patterns_found=%d "
-            "entities_checked=%d errors=%d",
-            stats["alerts_created"], stats["patterns_found"],
-            stats["entities_checked"], stats["errors"],
-        )
-    except Exception as exc:
-        logger.error("Pattern detection job failed: %s", exc)
-
-    try:
-        recal = recal_check()
-        if recal["recalibrated"]:
-            logger.info(
-                "Recalibration: updated signal types: %s",
-                recal["signal_types_updated"],
-            )
-    except Exception as exc:
-        logger.warning("Recalibration check failed (non-fatal): %s", exc)
-
-
-def _job_lifecycle() -> None:
-    """Weekly timeout check — auto-concludes developing stories with no updates in 180 days."""
-    from classifiers.lifecycle import run as lifecycle_run
-    try:
-        stats = lifecycle_run()
-        logger.info(
-            "Lifecycle job: concluded=%d errors=%d",
-            stats["concluded"], stats["errors"],
-        )
-    except Exception as exc:
-        logger.error("Lifecycle job failed: %s", exc)
-
-
-def _job_discovery() -> None:
-    """Monthly source discovery — flags new outlets for operator review."""
-    from scrapers.scrape_discovery import discover
-    from classifiers.corroboration import get_supabase_client
-    try:
-        candidates = discover()
-        logger.info(
-            "Source discovery: %d candidate(s) found", len(candidates),
-        )
-        if not candidates:
-            return
-        # Write candidates to sources table (approved_by_operator = FALSE).
-        # Operator reviews them in War Room → Sources tab.
-        client = get_supabase_client()
-        for c in candidates:
-            try:
-                client.table("sources").insert({
-                    "name":                 c["name"],
-                    "url":                  c["url"],
-                    "type":                 c.get("type", "msm"),
-                    "approved_by_operator": False,
-                    "discovery_notes":      c.get("notes", ""),
-                    "scrape_interval_minutes": 60,
-                }).execute()
-                logger.info("  Candidate inserted: %s", c["name"])
-            except Exception as exc:
-                # Duplicate name — already known, skip silently.
-                logger.debug("  Candidate skip (%s): %s", c["name"], exc)
-    except Exception as exc:
-        logger.error("Source discovery job failed: %s", exc)
+#
+# The pattern-detection, recalibration, lifecycle and source-discovery jobs are
+# gone from here for a sharper reason: they were only ever registered on this
+# scheduler, which production does not start, so in production they had never
+# run at all. They are now cadence-gated steps inside ops/daily.py, on the same
+# schedules, reached by the one entry point Cloud Scheduler actually calls. Two
+# places defining one schedule is what let them drift into being dead code; there
+# is now exactly one.
 
 
 # ---------------------------------------------------------------------------
@@ -154,32 +91,17 @@ def _scheduler_enabled() -> bool:
     return os.getenv("ENABLE_INPROCESS_SCHEDULER", "false").strip().lower() in ("true", "1", "yes")
 
 
+# ONE job. The chain it triggers carries every cadence — daily, weekly and
+# monthly — inside ops/daily.py, so this list stays a single entry no matter how
+# many agents the fleet grows.
 _JOBS = [
-    # Full daily chain — ingestion → auto-publish → monitoring fleet.
-    # 14:58 SGT, matching the Cloud Scheduler cron so local and prod agree.
+    # Full daily chain — ingestion → auto-publish → monitoring fleet → the
+    # cadence-gated agents. 14:58 SGT, matching the Cloud Scheduler cron so
+    # local and prod agree.
     (
         _job_pipeline,
         CronTrigger(hour=14, minute=58, timezone="Asia/Singapore"),
         "daily_orchestrator",
-    ),
-    # Daily pattern detection — 06:00 SGT
-    (
-        _job_pattern_detection,
-        CronTrigger(hour=6, minute=0, timezone="Asia/Singapore"),
-        "pattern_detection",
-    ),
-    # Weekly lifecycle timeout — auto-concludes developing stories after 180 days
-    (
-        _job_lifecycle,
-        CronTrigger(day_of_week="mon", hour=0, minute=0, timezone="Asia/Singapore"),
-        "lifecycle_timeout",
-    ),
-    # Monthly source discovery
-    (
-        _job_discovery,
-        CronTrigger(day="1-7", day_of_week="mon", hour=9, minute=0,
-                    timezone="Asia/Singapore"),
-        "source_discovery",
     ),
 ]
 
@@ -275,9 +197,13 @@ async def trigger_daily(
     THE production entry point. Cloud Scheduler POSTs here once a day at 14:58 SGT.
 
     Runs ingestion -> auto-publish -> integrity -> supervisor -> learning ->
-    health -> maintenance (-> monthly report on the 1st). Individual agent
-    failures are isolated and reported; see ops/daily.py for the ordering
-    rationale.
+    health -> pattern detection -> recalibration -> lifecycle (Mondays) ->
+    source discovery (first Monday) -> maintenance (-> monthly report on the
+    1st). Individual agent failures are isolated and reported; see ops/daily.py
+    for the ordering rationale and the cadence gates.
+
+    dry_run skips every cadence-gated step outright — none of them has a
+    read-only mode, so "run the chain writing nothing" cannot include them.
 
     Long-running by design (~5-20 min). The Cloud Run service is deployed with
     --timeout=3600 to accommodate it.
@@ -357,7 +283,11 @@ async def trigger_recalibration(_: None = Depends(_require_ops_token)):
 async def trigger_lifecycle(_: None = Depends(_require_ops_token)):
     """
     Manually trigger the lifecycle timeout check.
-    Equivalent to the weekly Monday cron — safe to run at any time.
+
+    Equivalent to the Monday step in the daily chain, and safe to run at any
+    time. Note this endpoint does NOT consult LIFECYCLE_AUTO_CONCLUDE: that flag
+    gates the unattended run, and calling this by hand IS the operator decision
+    the flag exists to require. Auto-conclusion edits published incidents.
     """
     import asyncio
     from classifiers.lifecycle import run as lifecycle_run
@@ -365,6 +295,22 @@ async def trigger_lifecycle(_: None = Depends(_require_ops_token)):
     loop = asyncio.get_event_loop()
     stats = await loop.run_in_executor(None, lifecycle_run)
     return stats
+
+
+@app.post("/discovery/run", tags=["ops"])
+async def trigger_discovery(_: None = Depends(_require_ops_token)):
+    """
+    Manually trigger source discovery.
+
+    Files novel outlets seen in Google News as `sources` rows that are neither
+    approved nor active, for review in War Room. Nothing is scraped or cited
+    until the operator approves the domain.
+    """
+    import asyncio
+    from scrapers.scrape_discovery import run as discovery_run
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, discovery_run)
 
 
 @app.post("/backfill/run", tags=["ops"])

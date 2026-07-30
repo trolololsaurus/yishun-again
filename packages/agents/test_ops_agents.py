@@ -131,16 +131,73 @@ check("blocked source is not ALSO reported as stale (double-count guard)",
 
 f8 = sup.classify_findings(
     pipeline_state=[state("stomp")],
-    scraper_health=[{"source_name": "stomp", "consecutive_zeros": 4, "status": "warning"}],
+    streaks=[{"source_name": "stomp", "consecutive_zeros": 4}],
     now=NOW)
 check("4 zero-item runs -> nothing (Yishun filter legitimately returns 0)", f8 == [])
 
 f9 = sup.classify_findings(
     pipeline_state=[state("stomp")],
-    scraper_health=[{"source_name": "stomp", "consecutive_zeros": 5, "status": "warning"}],
+    streaks=[{"source_name": "stomp", "consecutive_zeros": 5}],
     now=NOW)
 check("5 zero-item runs in a row -> anomaly",
       codes(f9) == ["zero_streak"] and f9[0]["level"] == "anomaly")
+
+
+# ── supervisor: deriving those streaks from the LIVE surface ─────────────────
+# scraper_health is only written by scrapers.log_scraper_run, only reachable from
+# scrapers.scrape_all, which nothing calls — so the streak is derived from
+# pipeline_run_history, which every real pass writes.
+
+print("\nsupervisor — zero streaks from pipeline_run_history:")
+
+
+def hist(*passes):
+    """Newest-first run history. Each pass is {source: (status, fetched)}."""
+    return [{"ran_at": f"2026-07-{20 - n:02d}T14:58:00+00:00", "dry_run": False,
+             "report": {"per_source": [
+                 {"name": name, "status": status, "fetched": fetched}
+                 for name, (status, fetched) in p.items()]}}
+            for n, p in enumerate(passes)]
+
+
+def zeros_for(streaks, source):
+    return next((s["consecutive_zeros"] for s in streaks if s["source_name"] == source), 0)
+
+
+s1 = sup.zero_streaks(hist(*[{"stomp": ("ok", 0)}] * 6))
+check("six empty passes -> streak of 6", zeros_for(s1, "stomp") == 6)
+
+s2 = sup.zero_streaks(hist({"stomp": ("ok", 0)}, {"stomp": ("ok", 0)},
+                           {"stomp": ("ok", 7)}, {"stomp": ("ok", 0)}))
+check("the streak stops at the last pass that fetched something",
+      zeros_for(s2, "stomp") == 2)
+
+s3 = sup.zero_streaks(hist({"stomp": ("blocked", 0)}, {"stomp": ("ok", 0)},
+                           {"stomp": ("ok", 0)}))
+check("a blocked pass is no evidence — skipped, not counted (pipeline_state "
+      "already reports it)", zeros_for(s3, "stomp") == 2)
+
+s4 = sup.zero_streaks(hist({"cna": ("ok", 3)}, {"stomp": ("ok", 0)},
+                           {"stomp": ("ok", 0)}))
+check("a source absent from a pass does not break its streak",
+      zeros_for(s4, "stomp") == 2)
+check("...and a source that fetched something has no streak at all",
+      zeros_for(s4, "cna") == 0)
+
+check("no history at all -> no streaks, not an error", sup.zero_streaks([]) == [])
+check("a malformed history row is ignored rather than fatal",
+      sup.zero_streaks([{"ran_at": "x", "report": None}]) == [])
+
+check("the lookback window must exceed the anomaly threshold, or it can never fire",
+      sup.ZERO_STREAK_PASSES > sup.ZERO_STREAK_ANOMALY)
+
+streak_db = FakeSupabase(
+    pipeline_state=[state("stomp"), state("cna"), state("zaobao")],
+    pipeline_run_history=hist(*[{"stomp": ("ok", 0), "cna": ("ok", 4)}] * 6))
+with mock.patch.object(sup, "notify", return_value=SENT):
+    stats = sup.run(supabase_client=streak_db, now=NOW)
+check("run() reads the history table and raises the anomaly end to end",
+      stats["anomalies"] == 1 and stats["errors"] == 0)
 
 # ── supervisor: fleet-wide + stuck runs ──────────────────────────────────────
 
