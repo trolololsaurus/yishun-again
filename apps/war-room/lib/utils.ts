@@ -80,3 +80,23 @@ export function validateUUID(id: string | undefined): string | null {
 export function today(): string {
   return new Date().toISOString().split('T')[0]
 }
+
+/**
+ * ISO timestamp for `days` days ago — the lower bound of a "last N days" window.
+ *
+ * Callers are async Server Components with `revalidate = 0`: they re-render per
+ * request, and reading the clock is the whole point. `react-hooks/purity` flags
+ * a bare `Date.now()` in a component body because a clock read makes a *client*
+ * render impure (two renders of identical props disagree) — it has no way to
+ * tell a Server Component from a client one, so it fired on all three call
+ * sites. The rule only analyses component and hook bodies, so hoisting the
+ * clock read into this plain function is both what quiets it and what removes
+ * three copies of the same day-to-milliseconds arithmetic.
+ *
+ * If you ever need `Date.now()` directly inside a Server Component body, that
+ * is legitimate — suppress the rule at the call site rather than making the
+ * value stale.
+ */
+export function isoDaysAgo(days: number): string {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+}
