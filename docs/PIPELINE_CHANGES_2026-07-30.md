@@ -459,7 +459,7 @@ none reject anything.
 | `edited_draft` == `original_draft` in all 36 rows | §8 |
 | `AUTONOMY.md`'s "about 5 clean approvals to clear 0.700" is wrong (it is 2) | §2 |
 | `_write_draft` `max_tokens` now over-provisioned after `pixel_art_prompt` removal | §7 — harmless, guarded |
-| **0a RLS gate never verified** — operator elected to skip it | If RLS is off on the six ops tables they are readable via PostgREST with the publishable key |
+| ~~0a RLS gate never verified~~ ✅ **PASS** — audited 2026-07-30 | `tools/rls_audit.py`, see below |
 
 ### `CLUSTER_BEFORE_WRITE` was untracked config — now pinned ✅
 
@@ -498,15 +498,82 @@ create a second source of truth to drift.
 
 ---
 
+## The 0a security gate — PASS (2026-07-30)
+
+Originally specified as a hand-run `pg_class` query in the Supabase SQL Editor,
+and skipped. It is now `tools/rls_audit.py` — read-only, exit code 1 on
+exposure, so it can gate a deploy and cannot be skipped by omission again.
+
+**It tests something stronger than the catalog query did.** `pg_class.relrowsecurity`
+tells you RLS is *enabled*; it says nothing about a permissive `USING (true)`
+SELECT policy, which passes that check while leaving the table world-readable.
+This instead attempts the read with the publishable key and reports what comes
+back.
+
+```
+table                        secret  publishable   verdict
+agent_runs                       88            0   protected
+agent_events                    999            0   protected
+notifications                    39            0   protected
+learning_snapshots               15            0   protected
+monthly_reports                   0            0   protected (table empty — weak evidence)
+backend_health_checks            65            0   protected
+war_room_queue                  220            0   protected
+training_signals                172            0   protected
+source_reputation                 9            0   protected
+
+CONTROL incidents: secret sees 166, publishable sees 160, published=160 -> as documented
+```
+
+**The control is what makes the zeros trustworthy.** `incidents` returns exactly
+the 160 published rows to the publishable key — so the key demonstrably *can*
+read, and a 0 elsewhere is RLS doing its job rather than a misconfigured client.
+Drafts are invisible to it, as CLAUDE.md documents.
+
+Caveat kept honest in the output: `monthly_reports` is empty, so "protected" is
+weak evidence there. Re-run once the first monthly report exists.
+
+**Migration 011, second half of the gate — APPLIED.** Proven from existing rows
+rather than a trial insert (a row that exists carrying a post-011 value is proof
+the CHECK accepts it, and costs no write):
+
+```
+decided_by column present     : True  (values seen: ['agent', 'operator'])
+action='auto_approve' rows    : 2  -> CHECK accepts it (pre-011 would reject)
+action='auto_publish_reverted': 0  (none yet — expected, it is a rare path)
+```
+
+Without 011 every autonomous decision insert is silently rejected while every
+publish succeeds — live incidents nobody approved, and no record that an agent
+chose them. It is applied.
+
+---
+
 ## How to verify after deploying
 
 ```bash
 # 1. Suite (22 files, all must pass)
 cd packages/agents && for f in test_*.py; do ./.venv/Scripts/python.exe "$f" || echo "FAIL $f"; done
 
-# 2. The success measure — re-run after a few daily passes
+# 2. Security gate — exits 1 if any ops table is publicly readable
+./.venv/Scripts/python.exe tools/rls_audit.py
+
+# 3. The success measure — re-run after a few daily passes
 ./.venv/Scripts/python.exe tools/baseline_report.py
 ```
 
 Read **single-source %** and cost together. Cost falling while single-source
 percentage rises means the saving broke grouping.
+
+**Pre-deployment reading, locked in 2026-07-30 06:36 UTC** (re-confirmed
+unchanged after the programme landed, because none of it is deployed yet):
+
+| | |
+|---|---|
+| Published, 60-day window | 127 |
+| `cardinality(source_urls) = 1` | 96 |
+| **Single-source percentage** | **75.6%** |
+| Last daily pass | 2026-07-29T07:02 UTC |
+
+This number cannot move until the branch is deployed AND several daily passes
+have run — clustering only affects incidents written *after* it ships.
