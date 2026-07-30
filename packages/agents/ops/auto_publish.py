@@ -115,15 +115,93 @@ def can_record_decisions(client) -> tuple[bool, str]:
         )
 
 
+# ── Oversized-merge trust (an exit condition, not a permanent gate) ─────────
+
+# Same FORMULA as learning_monitor's source reputation, deliberately stricter
+# settings. Laplace smoothing alone clears 0.70 after just TWO clean approvals
+# ((2+1)/(2+0+2) = 0.75), which is nowhere near enough evidence to hand over
+# merge autonomy — a wrong large merge conflates several real events into one
+# public record. So: a minimum sample floor, and a threshold high enough that one
+# rejection costs several more approvals to recover from.
+#
+#   samples   record   trust   trusted?
+#         0      0-0    0.50   no (below the sample floor)
+#         5      5-0    0.86   YES  — earned
+#         6      5-1    0.75   no   — re-armed by one rejection
+#        15     14-1    0.88   YES  — a long record outweighs one bad call
+OVERSIZED_TRUST_THRESHOLD = float(os.getenv("OVERSIZED_MERGE_TRUST", "0.80"))
+OVERSIZED_MIN_SAMPLES = int(os.getenv("OVERSIZED_MERGE_MIN_SAMPLES", "5"))
+
+
+def oversized_merge_trust(client) -> tuple[float, int, int]:
+    """
+    How far has the batched grouper earned the right to auto-publish an unusually
+    large merge? Returns (trust, approvals, rejections).
+
+    Laplace-smoothed, the same shape as learning_monitor.rebuild_source_reputation:
+
+        trust = (approvals + 1) / (approvals + rejections + 2)
+
+    A gate with no exit is just permanent homework: the operator would approve
+    oversized merges forever and the system would never bank the fact that it
+    kept getting them right. So the hold is temporary and self-lifting — see
+    `oversized_merges_trusted()` for the floor + threshold that decide it. A
+    rejection re-arms the gate automatically. Nothing is flipped by hand in
+    either direction.
+
+    Never raises. On any failure it returns 0.0 — which HOLDS oversized merges
+    for review. An unreadable history is not evidence of good judgement.
+    """
+    try:
+        res = (client.table("war_room_queue")
+               .select("status,raw_content")
+               .in_("status", ["approved", "update_approved", "rejected"])
+               .order("created_at", desc=True)
+               .limit(500).execute())
+        rows = res.data or []
+    except Exception as exc:                          # noqa: BLE001
+        logger.warning("auto_publish: oversized-merge history unavailable (%s) — holding for review", exc)
+        return 0.0, 0, 0
+
+    approvals = rejections = 0
+    for r in rows:
+        rc = r.get("raw_content")
+        if not isinstance(rc, dict) or not rc.get("_oversized_cluster"):
+            continue
+        if r.get("status") in ("approved", "update_approved"):
+            approvals += 1
+        elif r.get("status") == "rejected":
+            rejections += 1
+    return (approvals + 1) / (approvals + rejections + 2), approvals, rejections
+
+
+def oversized_merges_trusted(trust: float, approvals: int, rejections: int) -> bool:
+    """
+    May oversized merges auto-publish yet? Pure, so the graduation rule is
+    testable without a database.
+
+    BOTH conditions must hold: enough decisions on record to be evidence at all,
+    and a high enough hit rate among them. The sample floor is the important
+    half — Laplace smoothing on its own reads 0.75 after two approvals, and two
+    data points is not a track record.
+    """
+    return (approvals + rejections) >= OVERSIZED_MIN_SAMPLES and trust >= OVERSIZED_TRUST_THRESHOLD
+
+
 # ── Eligibility ─────────────────────────────────────────────────────────────
 
-def check_eligibility(item: dict, threshold: float) -> tuple[bool, str]:
+def check_eligibility(item: dict, threshold: float,
+                      *, oversized_merges_trusted: bool = False) -> tuple[bool, str]:
     """
     Pure function: may this queue row publish itself?
 
     Returns (ok, reason). Reason is a stable machine code on failure — it is
     logged per row and aggregated in the run stats, so "why did nothing publish
     last night" is answerable without re-running anything.
+
+    `oversized_merges_trusted` is computed once per run by oversized_merge_trust()
+    and passed in, so this stays pure and offline-testable. It defaults to False:
+    a caller that has not consulted the history does not get to skip the hold.
     """
     rc = item.get("raw_content") or {}
 
@@ -179,6 +257,28 @@ def check_eligibility(item: dict, threshold: float) -> tuple[bool, str]:
         return False, "no_real_date"
     if rc.get("_date_fallback"):
         return False, "date_fallback"
+
+    # Stage 2's deterministic groundedness check found a number or a proper noun
+    # in the summary that appears in no source, and a regeneration did not clear
+    # it. Publishing that is publishing an invented specific. There is no trust
+    # curve here: unlike an oversized merge (a judgement call that can be earned),
+    # an ungrounded specific is a factual defect in THIS row.
+    grounding = rc.get("_groundedness")
+    if isinstance(grounding, dict) and grounding.get("flagged"):
+        return False, "ungrounded_specifics"
+
+    # Stage 2's deterministic casualty check found the source language and the
+    # model's deaths/injuries disagreeing. A wrong death count is the most
+    # damaging factual error this archive can publish, so it goes to a human.
+    casualty = rc.get("_casualty_check")
+    if isinstance(casualty, dict) and casualty.get("flagged"):
+        return False, "casualty_mismatch"
+
+    # An unusually large merge: one grouping call decided that N articles are all
+    # the same event. That is a bigger single bet than a normal row, so it waits
+    # for a human — but only until the grouper has earned merges at this size.
+    if rc.get("_oversized_cluster") and not oversized_merges_trusted:
+        return False, "oversized_cluster_unproven"
 
     return True, "eligible"
 
@@ -397,6 +497,20 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
         stats["considered"] = len(rows)
         arun.stat("queue_size", len(rows))
 
+        # Computed once per run, not per row: has the batched grouper earned the
+        # right to auto-publish an unusually large merge yet?
+        trust, ovr_ok, ovr_no = oversized_merge_trust(client)
+        oversized_trusted = oversized_merges_trusted(trust, ovr_ok, ovr_no)
+        stats["oversized_merge_trust"] = round(trust, 3)
+        arun.stat("oversized_merge_trust", round(trust, 3))
+        if ovr_ok or ovr_no:
+            arun.info(
+                "oversized_trust",
+                f"oversized merges: {ovr_ok} approved / {ovr_no} rejected -> trust {trust:.2f} "
+                f"({'AUTO-PUBLISHING' if oversized_trusted else 'still held for review'}; "
+                f"needs >= {OVERSIZED_MIN_SAMPLES} decisions and trust >= {OVERSIZED_TRUST_THRESHOLD:.2f})",
+            )
+
         published_titles: list[str] = []
         for item in rows:
             if stats["published"] >= MAX_AUTO_PUBLISH_PER_RUN:
@@ -405,7 +519,8 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
                              f"{len(rows) - stats['published']} row(s) left for review")
                 break
 
-            ok, reason = check_eligibility(item, threshold)
+            ok, reason = check_eligibility(item, threshold,
+                                           oversized_merges_trusted=oversized_trusted)
             stats["reasons"][reason] = stats["reasons"].get(reason, 0) + 1
 
             if not ok:

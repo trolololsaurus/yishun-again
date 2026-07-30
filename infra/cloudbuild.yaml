@@ -15,10 +15,18 @@
 # GEMINI_API_KEY replaces it. STAGE1_MODEL/STAGE1_RPM/STAGE1_RPD are plain env
 # vars (not secrets) so the model/limits can change without a redeploy of code.
 #
+# ⚠️ --set-env-vars REPLACES the service's entire env-var set; any key not listed
+# is deleted. The command below is therefore only safe as genuine FIRST-TIME
+# setup. To change one value later use --update-env-vars, which merges.
+# CLUSTER_BEFORE_WRITE is included below because omitting it from a --set-env-vars
+# run silently reverts clustering to the code default 'off' (a valid mode that
+# fails quietly — see docs/PIPELINE_CHANGES_2026-07-30.md). The deploy step also
+# re-pins it on every build, so a mistake here self-heals on the next deploy.
+#
 # One-time setup:
 #   gcloud run services update yishun-agents \
 #     --region asia-southeast1 \
-#     --set-env-vars "SUPABASE_URL=...,CF_R2_BUCKET_NAME=yishun-assets,STAGE1_MODEL=gemini-3.1-flash-lite,STAGE1_RPM=30,STAGE1_RPD=1500,..." \
+#     --set-env-vars "SUPABASE_URL=...,CF_R2_BUCKET_NAME=yishun-assets,STAGE1_MODEL=gemini-3.1-flash-lite,STAGE1_RPM=30,STAGE1_RPD=1500,CLUSTER_BEFORE_WRITE=on,..." \
 #     --set-secrets "SUPABASE_SECRET_KEY=supabase-secret-key:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest,GEMINI_API_KEY=gemini-api-key:latest,CF_R2_ACCOUNT_ID=cf-r2-account-id:latest,CF_R2_ACCESS_KEY_ID=cf-r2-access-key-id:latest,CF_R2_SECRET_ACCESS_KEY=cf-r2-secret-access-key:latest,MODAL_TOKEN_ID=modal-token-id:latest,MODAL_TOKEN_SECRET=modal-token-secret:latest"
 #
 # Retire the old secret once the migration is verified:
@@ -83,6 +91,25 @@ steps:
       - "3"
       - --port
       - "8080"
+      # ── Pinned behaviour flags ────────────────────────────────────────────
+      # --update-env-vars MERGES: it sets these keys and leaves every other env
+      # var on the service untouched. Do NOT change this to --set-env-vars,
+      # which REPLACES the whole set and would wipe the secrets and the Stage 1
+      # config that are managed separately.
+      #
+      # Only vars whose CODE DEFAULT DIFFERS FROM PRODUCTION INTENT belong here.
+      # Everything else (STAGE2_WRITE_MODEL, STAGE2_SUMMARY_RATIO, the max_tokens
+      # caps, OVERSIZED_MERGE_*) already defaults correctly in code, so pinning
+      # them would just create a second source of truth to drift.
+      #
+      # CLUSTER_BEFORE_WRITE qualifies: the code default is 'off'
+      # (ingestion/orchestrator.py), production runs 'on', and 'off' is a VALID
+      # mode — it raises nothing and logs nothing, it just silently goes back to
+      # one queue row per URL. The only symptom is the single-source rate
+      # drifting back toward its 75.6% baseline over weeks. See
+      # docs/PIPELINE_CHANGES_2026-07-30.md.
+      - --update-env-vars
+      - CLUSTER_BEFORE_WRITE=on
 
 images:
   - $_IMAGE:$COMMIT_SHA

@@ -143,6 +143,29 @@ with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlis
     ok, reason = ap.check_eligibility(_row(), 0.95)
     check("clean high-confidence row is eligible", ok and reason == "eligible")
 
+    # ── Oversized merge: held for review, but only until it is EARNED ────────
+    _big = _row()
+    _big["raw_content"] = {**_big["raw_content"], "_oversized_cluster": 9}
+
+    ok, reason = ap.check_eligibility(_big, 0.95)
+    check("an oversized merge is held for review by default",
+          not ok and reason == "oversized_cluster_unproven")
+
+    ok, reason = ap.check_eligibility(_big, 0.95, oversized_merges_trusted=True)
+    check("...and auto-publishes once the grouper has earned it",
+          ok and reason == "eligible")
+
+    ok, reason = ap.check_eligibility(_row(), 0.95, oversized_merges_trusted=True)
+    check("earned trust does not weaken any other gate",
+          ok and reason == "eligible")
+
+    # Trust must not let an oversized row bypass a real guardrail.
+    _big_bad = _row(agent_confidence=0.10)
+    _big_bad["raw_content"] = {**_big_bad["raw_content"], "_oversized_cluster": 9}
+    ok, reason = ap.check_eligibility(_big_bad, 0.95, oversized_merges_trusted=True)
+    check("a trusted oversized row still fails the confidence gate",
+          not ok and reason == "below_threshold")
+
     ok, reason = ap.check_eligibility(_row(agent_confidence=0.94), 0.95)
     check("0.94 is below a 0.95 threshold", not ok and reason == "below_threshold")
 
@@ -275,6 +298,77 @@ with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlis
     stats = ap.run(supabase_client=client, dry_run=False, trigger="manual")
     check(f"per-run cap holds at {ap.MAX_AUTO_PUBLISH_PER_RUN}",
           stats["published"] == ap.MAX_AUTO_PUBLISH_PER_RUN)
+
+print("\n=== oversized-merge trust (the exit condition) ===")
+
+
+class _TrustClient:
+    """Returns a fixed processed-queue history for oversized_merge_trust()."""
+    def __init__(self, rows, boom=False):
+        self._rows, self._boom = rows, boom
+
+    def table(self, name):
+        outer = self
+
+        class _Q:
+            def select(self, *a, **k):  return self
+            def in_(self, *a, **k):     return self
+            def order(self, *a, **k):   return self
+            def limit(self, *a, **k):   return self
+            def execute(self):
+                if outer._boom:
+                    raise RuntimeError("supabase down")
+                return type("R", (), {"data": outer._rows})()
+        return _Q()
+
+
+def _hist(n_ok, n_no, noise=0):
+    rows = [{"status": "approved", "raw_content": {"_oversized_cluster": 8}} for _ in range(n_ok)]
+    rows += [{"status": "rejected", "raw_content": {"_oversized_cluster": 8}} for _ in range(n_no)]
+    # Ordinary rows must not count towards the grouper's record either way.
+    rows += [{"status": "approved", "raw_content": {"source_urls": ["u"]}} for _ in range(noise)]
+    return rows
+
+
+def _trusted(n_ok, n_no, noise=0):
+    t, a, r = ap.oversized_merge_trust(_TrustClient(_hist(n_ok, n_no, noise)))
+    return ap.oversized_merges_trusted(t, a, r), t, a, r
+
+
+ok_, t, a, r = _trusted(0, 0)
+print(f"    record {a}-{r}  trust {t:.2f}")
+check("cold start: nothing on record -> held for review", not ok_)
+
+ok_, t, a, r = _trusted(2, 0)
+print(f"    record {a}-{r}  trust {t:.2f}")
+check("2 approvals clear the RATE but not the sample floor -> still held",
+      not ok_ and t >= 0.70)
+
+ok_, t, a, r = _trusted(4, 0)
+print(f"    record {a}-{r}  trust {t:.2f}")
+check("4 clean approvals: one short of the sample floor -> still held", not ok_)
+
+ok_, t, a, r = _trusted(5, 0)
+print(f"    record {a}-{r}  trust {t:.2f}")
+check("5 clean approvals: EARNED — gate lifts itself, no human action", ok_)
+
+ok_, t, a, r = _trusted(5, 1)
+print(f"    record {a}-{r}  trust {t:.2f}")
+check("one rejection after that: gate RE-ARMS automatically", not ok_)
+
+ok_, t, a, r = _trusted(14, 1)
+print(f"    record {a}-{r}  trust {t:.2f}")
+check("a long good record outweighs one bad call: trusted again", ok_)
+
+ok_, t, a, r = _trusted(5, 0, noise=40)
+check("ordinary (non-oversized) rows do not inflate the grouper's record", (a, r) == (5, 0))
+
+t, a, r = ap.oversized_merge_trust(_TrustClient([], boom=True))
+check("unreadable history -> trust 0.0, held for review, never raises",
+      t == 0.0 and (a, r) == (0, 0) and not ap.oversized_merges_trusted(t, a, r))
+
+check("granting merge autonomy uses a stricter bar than a confidence nudge",
+      ap.OVERSIZED_TRUST_THRESHOLD >= 0.80 and ap.OVERSIZED_MIN_SAMPLES >= 5)
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

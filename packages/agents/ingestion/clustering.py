@@ -50,7 +50,12 @@ import os
 from datetime import date
 
 from classifiers.source_allowlist import canonical_source_type
-from consolidation.rules import extract_keywords, keyword_overlap
+from consolidation.rules import (
+    extract_keywords,
+    extract_locality_tokens,
+    keyword_overlap,
+    locality_conflict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +77,17 @@ CLUSTER_MAX_JUDGES = int(os.getenv("CLUSTER_MAX_JUDGES", "20"))
 # keyword pass chaining a beehive story, a car crash and a fatal fall into one
 # cluster because they all share "block"/"flat"/"fire"/"dead" inside the date
 # window and union-find fuses the transitive blob. Dropping these tokens from the
-# CLUSTERING keyword set (not consolidation's) cuts most false edges; the LLM
-# confirmation below is the real precision layer. Deliberately keeps act words
-# (stab, fire-as-verb is ambiguous but kept), names, and numbers (block 107, "42").
+# CLUSTERING keyword set (not consolidation's) cuts most false edges; the batched
+# grouper is the real precision layer. Deliberately keeps act words (stab;
+# fire-as-verb is ambiguous but kept) and names.
+#
+# NUMBERS ARE NOT RETAINED. extract_keywords is re.findall(r"[a-z]{4,}"), which
+# cannot match a digit — "block 107" contributes only the token "block", and that
+# is in the generic set above, so it contributes nothing at all. An earlier
+# version of this comment claimed numbers were kept; they never were, and no
+# threshold tuning here can change it. Block and street numbers are handled
+# separately by consolidation.rules.extract_locality_tokens, which group_candidates
+# applies as a post-grouping VETO (see _veto_group) rather than as a merge signal.
 _GENERIC_TOKENS = frozenset({
     "block", "blk", "flat", "unit", "hdb", "resident", "residents", "void", "deck",
     "road", "street", "avenue", "lane", "ring", "near", "along", "outside", "home",
@@ -266,6 +279,190 @@ def cluster_with_confirmation(
     clusters.sort(key=lambda cl: idx_of[id(cl[0])])
     stats = {"edges_proposed": len(edges), "edges_judged": judged,
              "edges_confirmed": confirmed, "judge_errors": errors}
+    return clusters, stats
+
+
+def _veto_group(group_global_idx, loc) -> tuple[str, str] | None:
+    """
+    The locality veto. Returns the first conflicting token pair found in the
+    group, or None if the group is locality-consistent.
+
+    Deterministic and offline — no model call. It overrules the grouper because
+    block and street numbers are ground truth the grouper is structurally bad at
+    weighing: two Yishun car-park fires read almost identically in prose, and the
+    ONE fact that separates them is a number the keyword layer cannot even see
+    (extract_keywords is [a-z]{4,}).
+    """
+    for a_pos in range(len(group_global_idx)):
+        for b_pos in range(a_pos + 1, len(group_global_idx)):
+            a, b = loc[group_global_idx[a_pos]], loc[group_global_idx[b_pos]]
+            if locality_conflict(a, b):
+                return (",".join(sorted(a)), ",".join(sorted(b)))
+    return None
+
+
+def _validate_index_groups(raw, n):
+    """
+    Accept a grouper's answer only if it is an EXACT partition of range(n).
+
+    Returns the normalised list of index groups, or None if the answer is not a
+    partition — a missing index, a repeated one, a non-integer, an out-of-range
+    value, an empty group, or a non-list. None means "keep everything split".
+
+    Deliberately all-or-nothing. A merge corrupts a published incident and is
+    hard to unwind, so a partially-parseable answer is not salvaged into
+    "merge the bit we understood" — an unparseable response is exactly the case
+    where we know least about what the model meant.
+    """
+    if not isinstance(raw, (list, tuple)):
+        return None
+    out: list[list[int]] = []
+    seen: set[int] = set()
+    for grp in raw:
+        if not isinstance(grp, (list, tuple)) or not grp:
+            return None
+        members: list[int] = []
+        for v in grp:
+            # bool is an int subclass; `True` must not silently mean index 1.
+            if isinstance(v, bool) or not isinstance(v, int):
+                return None
+            if v < 0 or v >= n or v in seen:
+                return None
+            seen.add(v)
+            members.append(v)
+        out.append(members)
+    if len(seen) != n:
+        return None
+    return out
+
+
+def group_candidates(
+    candidates,
+    grouper,
+    *,
+    min_overlap: int = CLUSTER_MIN_OVERLAP,
+    date_window_days: int = CLUSTER_DATE_WINDOW_DAYS,
+) -> tuple[list[list], dict]:
+    """
+    Cluster with ONE batched grouping decision instead of per-pair judgements.
+
+    `grouper(candidates) -> list[list[int]]` is injected (the orchestrator wraps
+    a single Haiku call) so this module stays pure and offline-testable. It is
+    handed only the candidates the keyword pass found a plausible peer for, and
+    returns index groups into that list.
+
+    ## Why this replaces cluster_with_confirmation
+
+    Pairwise judging plus union-find creates TRANSITIVE merges: A~B confirmed and
+    B~C confirmed merges A, B and C even though nothing ever compared A to C.
+    That is the mechanism behind the beehive / car-crash / fatal-fall blob the
+    shadow run caught — no single judgement was obviously wrong, the blob was
+    assembled by the union-find between them. One grouping call has no union-find
+    and can contrast every member simultaneously, so a group is only ever formed
+    by a decision that actually saw all of its members.
+
+    ## What each layer still does
+
+    - The keyword pass is now purely an INPUT FILTER: a candidate is offered to
+      the grouper only if it shares >= min_overlap distinctive tokens with some
+      other anchor inside date_window_days. This bounds prompt size, and an
+      anchor with no plausible peer is a singleton without paying for a call.
+      It no longer decides who merges — the grouper does.
+    - Signal and dateless members keep their existing handling via
+      _attach_non_anchors: signals ATTACH to at most one group and never bridge;
+      dateless MSM members stay standalone.
+
+    An errored, unparseable, or non-partition grouper response degrades to
+    all-singletons (split-safe) — never to a merge. Never raises.
+
+    Returns (clusters, stats).
+    """
+    n = len(candidates)
+    stats = {"pool_size": 0, "edges_proposed": 0, "groups_returned": 0,
+             "merges": 0, "grouper_errors": 0, "grouper_called": False,
+             "locality_vetoes": 0}
+    if n <= 1:
+        return ([[c] for c in candidates], stats)
+
+    kw = [_kw(_text(c)) for c in candidates]
+    dates = [_pub_date(c) for c in candidates]
+    signal = [_is_signal(c) for c in candidates]
+    loc = [extract_locality_tokens(_text(c)) for c in candidates]
+    anchor = [(not signal[i]) and (dates[i] is not None) for i in range(n)]
+
+    # Input filter: who even gets offered to the grouper.
+    in_pool = [False] * n
+    for i in range(n):
+        if not anchor[i]:
+            continue
+        for j in range(i + 1, n):
+            if not anchor[j]:
+                continue
+            if keyword_overlap(kw[i], kw[j]) < min_overlap:
+                continue
+            if abs((dates[i] - dates[j]).days) > date_window_days:
+                continue
+            stats["edges_proposed"] += 1
+            in_pool[i] = in_pool[j] = True
+
+    pool = [i for i in range(n) if in_pool[i]]
+    stats["pool_size"] = len(pool)
+
+    # Anchors the filter found no plausible peer for: singletons, no call needed.
+    groups: dict = {("solo", i): [i] for i in range(n) if anchor[i] and not in_pool[i]}
+
+    merged: list[list[int]] | None = None
+    if len(pool) >= 2 and grouper is not None:
+        stats["grouper_called"] = True
+        raw = None
+        try:
+            raw = grouper([candidates[i] for i in pool])
+        except Exception as exc:                      # noqa: BLE001 — split-safe
+            stats["grouper_errors"] += 1
+            logger.warning("clustering: grouper failed for %d candidate(s) "
+                           "(all kept split): %s", len(pool), exc)
+        if raw is not None:
+            partition = _validate_index_groups(raw, len(pool))
+            if partition is None:
+                stats["grouper_errors"] += 1
+                logger.warning(
+                    "clustering: grouper returned an invalid partition of %d candidate(s) "
+                    "— missing, duplicate or out-of-range indices (all kept split)", len(pool))
+            else:
+                merged = [[pool[t] for t in grp] for grp in partition]
+
+    if merged is None:
+        merged = [[i] for i in pool]                  # split-safe default
+
+    # ── Locality veto ────────────────────────────────────────────────────────
+    # Applied AFTER the grouper and overruling it. A group holding two members
+    # that name different blocks is split back to singletons wholesale rather
+    # than partially repaired: once the group contains a provable contradiction
+    # we no longer trust its shape, and splitting is the cheap error.
+    vetoed: list[list[int]] = []
+    for grp in merged:
+        conflict = _veto_group(grp, loc) if len(grp) > 1 else None
+        if conflict:
+            stats["locality_vetoes"] += 1
+            logger.warning(
+                "clustering: locality veto — refusing to merge %d candidate(s); "
+                "conflicting locality tokens %s vs %s", len(grp), conflict[0], conflict[1],
+            )
+            vetoed.extend([[i] for i in grp])
+        else:
+            vetoed.append(grp)
+    merged = vetoed
+
+    for k, grp in enumerate(merged):
+        groups[("g", k)] = grp
+    stats["groups_returned"] = len(merged)
+    stats["merges"] = sum(1 for g in merged if len(g) > 1)
+
+    _attach_non_anchors(candidates, kw, anchor, signal, groups, min_overlap)
+
+    clusters = [[candidates[i] for i in sorted(idxs)] for idxs in groups.values()]
+    idx_of = {id(c): k for k, c in enumerate(candidates)}
+    clusters.sort(key=lambda cl: idx_of[id(cl[0])])
     return clusters, stats
 
 

@@ -28,10 +28,10 @@ from dataclasses import dataclass, field
 import anthropic
 from dotenv import load_dotenv
 
+from filters.model_call import create_with_headroom
+
 from consolidation.rules import (
     CANDIDATE_FETCH_LIMIT,
-    EARLY_EXIT_CONFIDENCE,
-    MAX_JUDGEMENTS_PER_CANDIDATE,
     MIN_KEYWORD_OVERLAP,
     QUEUE_FETCH_LIMIT,
     RELATED_LINK_THRESHOLD,
@@ -41,11 +41,24 @@ from consolidation.rules import (
     keyword_overlap,
 )
 
+# MAX_JUDGEMENTS_PER_CANDIDATE and EARLY_EXIT_CONFIDENCE are deliberately no
+# longer imported. Both existed to bound a per-candidate fan-out of pairwise
+# Haiku calls; the comparison now costs exactly ONE call regardless of pool size,
+# so there is no call count to cap and nothing to exit early from. They stay
+# defined in consolidation/rules.py so an existing env override is not an error.
+
 load_dotenv(override=False)
 
 logger = logging.getLogger(__name__)
 
 MODEL = "claude-haiku-4-5-20251001"
+
+# Output caps, env-overridable — raising one is the whole fix for a truncation,
+# and it should not need a redeploy. Measured against the full live pool (53
+# records) the batch judge used 128/1024 tokens, so both carry large headroom;
+# filters/model_call guards them regardless.
+PAIR_MAX_TOKENS = int(os.getenv("CONSOLIDATION_PAIR_MAX_TOKENS", "400"))
+BATCH_MAX_TOKENS = int(os.getenv("CONSOLIDATION_BATCH_MAX_TOKENS", "1024"))
 
 
 # ── Result type ──────────────────────────────────────────────────────────────
@@ -147,15 +160,122 @@ def _judge_pair(
         f"Date: {existing['incident_date']}\n"
     )
 
-    response = client.messages.create(
+    response, _retried = create_with_headroom(
+        client,
+        call="consolidation._judge_pair",
+        env_var="CONSOLIDATION_PAIR_MAX_TOKENS",
         model=MODEL,
-        max_tokens=400,
+        max_tokens=PAIR_MAX_TOKENS,
         temperature=0.0,
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_msg}],
     )
 
     return _parse_json(response.content[0].text)
+
+
+# ── Batched judgement (one call per candidate, not one per pair) ─────────────
+
+# Per-record summary budget inside the batch prompt. Shorter than the pairwise
+# 600 because the batch carries many records; the opening sentences are what
+# identify the entity, act and location that decide a match.
+BATCH_RECORD_CHARS = 400
+
+_BATCH_SYSTEM_PROMPT = """\
+You are a deduplication and incident-linking agent for Yishun Again, \
+a satirical Yishun incident archive.
+
+You are given ONE new candidate incident and a numbered list of EXISTING archive
+records. Decide which existing record, if any, describes the SAME event as the
+candidate, and which others are related but distinct.
+
+1. same event: the same entity performing the same core act.
+   - Entity = the specific person / animal / object involved
+   - Act = the specific thing that happened (stabbing, theft, fire, etc.)
+   - A later report about the SAME act (update, charge, trial, sentencing) is
+     still the same event.
+   - Different acts by the same entity on different days are NOT the same event.
+   - The same kind of act at a different block or street, or on a different day,
+     is NOT the same event.
+
+2. related (only for records that are NOT the same event):
+   - related: different entities/acts but clearly connected
+   - follow_up: a later development of a broader situation
+   - same_location: same block or street, different incident — only when it
+     would genuinely be useful to a reader browsing the archive
+
+Return JSON only (no markdown fences):
+{
+  "match_index": integer index of the same-event record, or null,
+  "match_confidence": float 0.0-1.0,
+  "match_reason": string (1-2 sentences),
+  "related": [
+    {"index": integer, "confidence": float 0.0-1.0, "reason": string,
+     "link_type": "related" | "follow_up" | "same_location"}
+  ]
+}
+
+At most ONE match_index. If no record is the same event, set it to null.
+Never emit an index that is not in the list.
+"""
+
+
+def _judge_batch(
+    client: anthropic.Anthropic,
+    candidate: dict,
+    records: list[dict],
+) -> dict:
+    """
+    One Haiku call: which of these N archive records, if any, is the same event?
+
+    Replaces the per-pair fan-out. Besides the call-count saving, the model can
+    contrast the whole shortlist at once — under pairwise judging each record was
+    scored in isolation, so two near-identical archive rows could both come back
+    confident and only the ranking order decided which one won.
+    """
+    cand_date = candidate.get("incident_date") or candidate.get("date") or "unknown"
+    lines = []
+    for i, rec in enumerate(records):
+        lines.append(
+            f"[{i}] date={rec.get('incident_date') or 'unknown'}\n"
+            f"    title: {rec.get('title', '')}\n"
+            f"    summary: {(rec.get('summary') or '')[:BATCH_RECORD_CHARS]}"
+        )
+    user_msg = (
+        f"NEW CANDIDATE:\n"
+        f"Title: {candidate.get('title', '')}\n"
+        f"Summary: {candidate.get('summary', candidate.get('content', ''))[:600]}\n"
+        f"Date: {cand_date}\n"
+        f"URL: {candidate.get('url', '')}\n\n"
+        f"EXISTING ARCHIVE RECORDS ({len(records)}):\n" + "\n\n".join(lines)
+    )
+
+    response, _retried = create_with_headroom(
+        client,
+        call="consolidation._judge_batch",
+        env_var="CONSOLIDATION_BATCH_MAX_TOKENS",
+        model=MODEL,
+        max_tokens=BATCH_MAX_TOKENS,
+        temperature=0.0,
+        system=_BATCH_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_msg}],
+    )
+
+    return _parse_json(response.content[0].text)
+
+
+def _coerce_index(value, n: int):
+    """An in-range int index, or None. bool is rejected (it is an int subclass)."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 0 <= value < n else None
+
+
+def _coerce_conf(value) -> float:
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 # ── Published incident fetcher ───────────────────────────────────────────────
@@ -251,14 +371,14 @@ def check(candidate: dict, supabase_client=None) -> ConsolidationResult:
     if not published and not queued:
         return ConsolidationResult(action="new", matched_incident_id=None)
 
-    # ── Keyword pre-filter, ranked and capped ────────────────────────────────
-    # Score every eligible pair by keyword overlap, then judge only the top
-    # MAX_JUDGEMENTS_PER_CANDIDATE. The cap is what keeps this the pipeline's
-    # dominant cost from scaling with the archive: a genuine same-incident
-    # report shares the distinctive tokens, so it ranks near the top, while the
-    # long tail of one-shared-common-word pairs (the bulk of the fan-out) is
-    # dropped. sort() is stable, so equal-overlap ties keep the published-before-
-    # queue, recency-desc order the pools arrived in.
+    # ── Keyword pre-filter, ranked ───────────────────────────────────────────
+    # Score every eligible record by keyword overlap. The ranking is retained
+    # because it puts the likeliest match first in the prompt, but it no longer
+    # gates a call count: every eligible record goes into ONE batched judgement
+    # (see _judge_batch), so the long tail that the old cap discarded is now
+    # judged too rather than silently dropped. sort() is stable, so equal-overlap
+    # ties keep the published-before-queue, recency-desc order the pools
+    # arrived in.
     candidate_text = f"{candidate.get('title', '')} {candidate.get('summary', candidate.get('content', ''))}"
     candidate_kw   = extract_keywords(candidate_text)
 
@@ -275,18 +395,9 @@ def check(candidate: dict, supabase_client=None) -> ConsolidationResult:
         return ConsolidationResult(action="new", matched_incident_id=None)
 
     scored.sort(key=lambda t: t[0], reverse=True)
-    candidates_to_judge = [(kind, rec) for _, kind, rec in scored[:MAX_JUDGEMENTS_PER_CANDIDATE]]
-    dropped = len(scored) - len(candidates_to_judge)
-    if dropped > 0:
-        # Never a silent cap: record how many plausible pairs went unjudged, so a
-        # missed duplicate can be traced here rather than looking like a model
-        # error. ops/integrity.py re-scans for duplicates and is the backstop.
-        logger.info(
-            "Consolidation: '%s' — judging top %d of %d overlapping record(s), %d dropped by cap",
-            candidate.get("title", "")[:50], len(candidates_to_judge), len(scored), dropped,
-        )
+    candidates_to_judge = [(kind, rec) for _, kind, rec in scored]
 
-    # ── Claude judgement loop ─────────────────────────────────────────────────
+    # ── One batched Claude judgement ─────────────────────────────────────────
     try:
         claude = _get_anthropic_client()
     except EnvironmentError as exc:
@@ -298,53 +409,61 @@ def check(candidate: dict, supabase_client=None) -> ConsolidationResult:
     best_match_result: dict | None = None
     best_match_confidence: float   = 0.0
     related_links: list[RelatedLink] = []
-    judged = 0
 
-    for i, (kind, rec) in enumerate(candidates_to_judge):
-        try:
-            judgement = _judge_pair(claude, candidate, rec)
-            judged += 1
-        except Exception as exc:
-            logger.warning("Consolidation: judge_pair failed for %s: %s", rec["id"], exc)
+    records = [rec for _, rec in candidates_to_judge]
+    try:
+        verdict = _judge_batch(claude, candidate, records)
+    except Exception as exc:
+        # A failed batch loses the whole comparison for this candidate, where a
+        # failed pair used to lose one. Treating it as NEW keeps the old
+        # fail-open direction (a duplicate row an operator can merge, never a
+        # silently dropped story); ops/integrity.py re-scans for duplicates.
+        logger.warning(
+            "Consolidation: batch judge failed for '%s' over %d record(s) — treating as new: %s",
+            candidate.get("title", "")[:50], len(records), exc,
+        )
+        return ConsolidationResult(action="new", matched_incident_id=None)
+
+    match_index = _coerce_index(verdict.get("match_index"), len(records))
+    if match_index is None and verdict.get("match_index") is not None:
+        logger.warning(
+            "Consolidation: batch judge returned unusable match_index %r for %d record(s) "
+            "— treating as no match", verdict.get("match_index"), len(records),
+        )
+    if match_index is not None:
+        best_kind, best_match = candidates_to_judge[match_index]
+        best_match_confidence = _coerce_conf(verdict.get("match_confidence"))
+        best_match_result     = {"same_incident_reason": verdict.get("match_reason", "")}
+
+    # Related-but-distinct links only make sense against published incidents
+    # (incident_links joins two published rows). Skip queue comparisons, and skip
+    # the matched record itself — it is an update target, not a sibling link.
+    raw_related = verdict.get("related")
+    for rel in raw_related if isinstance(raw_related, list) else []:
+        if not isinstance(rel, dict):
             continue
+        idx = _coerce_index(rel.get("index"), len(records))
+        if idx is None or idx == match_index:
+            continue
+        kind, rec = candidates_to_judge[idx]
+        if kind != "published":
+            continue
+        rel_conf  = _coerce_conf(rel.get("confidence"))
+        link_type = rel.get("link_type") or "related"
+        if link_type not in ("related", "follow_up", "same_location"):
+            link_type = "related"
+        if rel_conf >= RELATED_LINK_THRESHOLD:
+            related_links.append(RelatedLink(
+                incident_id = rec["id"],
+                confidence  = rel_conf,
+                reason      = rel.get("reason", "") or "",
+                link_type   = link_type,
+            ))
 
-        same_conf = float(judgement.get("same_incident_confidence", 0.0))
-
-        if judgement.get("same_incident") and same_conf > best_match_confidence:
-            best_match_confidence = same_conf
-            best_kind             = kind
-            best_match            = rec
-            best_match_result     = judgement
-
-        # Related-but-distinct links only make sense against published incidents
-        # (incident_links joins two published rows). Skip for queue comparisons.
-        if kind == "published" and not judgement.get("same_incident") and judgement.get("related"):
-            rel_conf  = float(judgement.get("related_confidence", 0.0))
-            link_type = judgement.get("link_type") or "related"
-            if link_type not in ("related", "follow_up", "same_location"):
-                link_type = "related"
-            if rel_conf >= RELATED_LINK_THRESHOLD:
-                related_links.append(RelatedLink(
-                    incident_id = rec["id"],
-                    confidence  = rel_conf,
-                    reason      = judgement.get("related_reason", ""),
-                    link_type   = link_type,
-                ))
-
-        # Early exit: a near-certain same_incident match settles the action
-        # (UPDATE for a published match, SKIP for a queue one). Because pairs are
-        # judged in overlap-ranked order, this match is already the best target;
-        # the remaining lower-overlap pairs only hunt for secondary related-links
-        # and are not worth the API cost once the outcome is fixed.
-        if best_match_confidence >= EARLY_EXIT_CONFIDENCE:
-            logger.info(
-                "Consolidation: early exit after confident match (conf=%.2f) — %d pair(s) left unjudged",
-                best_match_confidence, len(candidates_to_judge) - (i + 1),
-            )
-            break
-
-    logger.debug("Consolidation: made %d Haiku judgement(s) for '%s'",
-                 judged, candidate.get("title", "")[:50])
+    logger.debug(
+        "Consolidation: 1 batched Haiku judgement over %d record(s) for '%s'",
+        len(records), candidate.get("title", "")[:50],
+    )
 
     # ── Decision ─────────────────────────────────────────────────────────────
     if best_match and best_match_confidence >= UPDATE_MATCH_THRESHOLD:

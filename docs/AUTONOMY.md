@@ -222,6 +222,93 @@ overrun, not a hypothetical:
 / `source_unavailable`), plus `pipeline_state.last_reason` and
 `consecutive_failures`. That is what the supervisor and maintenance agents read.
 
+### 5b. Exit conditions that open, not just close: oversized merges
+
+Every limit above is a ceiling that stays put. This one is a **hold the agent can
+lift by being right**, and it is the template for future ones.
+
+A cluster larger than `CLUSTER_MAX_SIZE` (6) used to be *shredded* — written as
+one queue row per member. That made sense when grouping was pairwise judgements
+fused by union-find: a group of 8 could be a transitive blob no single decision
+ever saw whole (A~B and B~C merged A, B **and** C with nothing comparing A to C).
+Batched grouping removed union-find, so a group of 8 is now one call that saw all
+8 at once — and the shred had become a net negative, burning N Sonnet drafts to
+produce either one single-source row or several near-duplicates. The live archive
+holds 7-, 9-, 10- and 12-source incidents; a cap of 6 shredded every one.
+
+Now: the cluster is written **intact, as one row**, flagged
+`raw_content._oversized_cluster = N`. `auto_publish.check_eligibility` holds a
+flagged row (`oversized_cluster_unproven`) — but only until the grouper has
+earned merges that size:
+
+```
+trust = (approvals + 1) / (approvals + rejections + 2)     # over flagged rows
+trusted = (approvals + rejections) >= OVERSIZED_MERGE_MIN_SAMPLES   # default 5
+          and trust >= OVERSIZED_MERGE_TRUST                        # default 0.80
+```
+
+| Record | Trust | Auto-publishes? |
+|---|---|---|
+| 0-0 (cold start) | 0.50 | no — below the sample floor |
+| 2-0 | 0.75 | no — clears the rate, not the floor |
+| 5-0 | 0.86 | **yes — earned, gate lifts itself** |
+| 5-1 | 0.75 | no — one rejection **re-arms** it |
+| 14-1 | 0.88 | yes — a long record outweighs one bad call |
+
+Same formula as `learning_monitor.rebuild_source_reputation`, deliberately
+stricter settings: smoothing alone reads 0.75 after **two** approvals, and two
+data points is not a track record for a decision that can conflate several real
+events into one public record. The sample floor is the load-bearing half.
+
+Nothing is flipped by hand in either direction, and no other gate is weakened —
+a trusted oversized row still has to clear confidence, both source guardrails and
+the date check. An unreadable history returns trust 0.0, which holds: *absence of
+evidence is not evidence of good judgement.*
+
+### 5c. Model output caps, and what to do when one is hit
+
+Every model call in the pipeline asks for JSON. A reply that stops at
+`max_tokens` is cut off mid-object, so `_parse_json` fails with *"No JSON object
+in model response"* — **the identical message a model returning prose produces.**
+`stop_reason` was read nowhere in the repo, so the two were indistinguishable,
+and the trivially fixable fault looked like the hard one.
+
+`filters/model_call.py` closes that. Every JSON-parsing call now goes through
+`create_with_headroom`, which raises a named `TruncatedResponse` rather than
+returning half an object.
+
+**Measured headroom** on the largest real inputs in the archive — nothing is
+close to its cap today; the guard is for when the inputs grow:
+
+| Call | Cap | Observed | Spare | Env var |
+|---|---:|---:|---:|---|
+| `stage2._write_draft` | 2048 | 763 | 63% | `STAGE2_WRITE_MAX_TOKENS` |
+| `stage2._classify` | 512 | 167 | 67% | `STAGE2_CLASSIFY_MAX_TOKENS` |
+| `consolidation._judge_batch` | 1024 | 128 | 88% | `CONSOLIDATION_BATCH_MAX_TOKENS` |
+| `clustering._make_grouper` | 1024 | 132 | 87% | `CLUSTER_GROUPER_MAX_TOKENS` |
+| `consolidation._judge_pair` | 400 | — | — | `CONSOLIDATION_PAIR_MAX_TOKENS` |
+
+**Recovery, in order:**
+
+1. **Automatic.** One retry at double the cap. A truncation means exactly one
+   thing — the reply did not fit — and a second call costs far less than dropping
+   a candidate the scrapers and Stage 1 already paid for. Exactly one retry: if
+   double also truncates, the cap is not the problem and looping would just burn
+   tokens.
+2. **Recorded.** A recovered `_write_draft` sets `raw_content._write_truncation_retry`.
+   It does **not** block publishing (the retry produced a complete draft) — it is
+   there so a *recurring* retry is visible before it becomes a failure.
+3. **Loud.** A second truncation raises `TruncatedResponse` naming the call, the
+   cap and the env var. The orchestrator's existing circuit breaker sees it like
+   any other write error, so it lands in `agent_events` and the pass notes.
+4. **Operator lever.** Raise that call's env var on Cloud Run and re-run. No
+   redeploy — which is the point of the env vars existing at all.
+
+The grouper deserves special attention: a truncated partition is not an *exact*
+partition, so `group_candidates` correctly falls back to all-singletons. That is
+safe, but it means **a pass would silently stop merging entirely** while looking
+healthy. The guard converts that into a visible retry.
+
 ---
 
 ## 6. Cost (req #12)

@@ -34,6 +34,12 @@ CONFIDENCE_ADJUSTMENT = 0.10    # max nudge applied to agent_confidence
 MAX_SIGNAL_ROWS = 50             # most-recent training_signals rows read
 MAX_PATTERNS_PER_CATEGORY = 5    # distinct patterns surfaced per category
 
+# Few-shot example bounds. The block is injected into BOTH the Haiku classify
+# call and the write call, so it is kept deliberately small.
+MAX_EXAMPLES = 8
+EXAMPLE_TITLE_CHARS = 110
+MAX_EXAMPLES_CHARS = 1400        # hard ceiling on the rendered block
+
 
 def load_source_reputation(client=None) -> dict[str, float]:
     """
@@ -53,23 +59,76 @@ def load_source_reputation(client=None) -> dict[str, float]:
     return {row["source_domain"]: float(row["trust_score"]) for row in (result.data or [])}
 
 
+def _resolve_titles(client, rows: list[dict]) -> dict[str, str]:
+    """
+    training_signals -> the title of the item the operator judged.
+
+    Two paths, because the table is populated by two writers and neither fills
+    both keys: `queue_id` -> war_room_queue.proposed_title (set by the War Room
+    review routes) and `incident_id` -> incidents.title (set once a row has been
+    published). Measured on live data: queue_id resolves 35/35 where present,
+    incident_id covers 137/172 rows. Batched — two SELECTs, not one per row.
+
+    Returns {row_id: title}. Never raises; an unresolvable row is simply omitted
+    and its example is skipped rather than rendered titleless.
+    """
+    out: dict[str, str] = {}
+    qids = list({r["queue_id"] for r in rows if r.get("queue_id")})
+    iids = list({r["incident_id"] for r in rows if r.get("incident_id")})
+
+    q_titles: dict[str, str] = {}
+    i_titles: dict[str, str] = {}
+    if qids:
+        try:
+            res = client.table("war_room_queue").select("id,proposed_title").in_("id", qids).execute()
+            q_titles = {x["id"]: (x.get("proposed_title") or "") for x in (res.data or [])}
+        except Exception as exc:                  # noqa: BLE001
+            logger.warning("learning: queue title lookup failed: %s", exc)
+    if iids:
+        try:
+            res = client.table("incidents").select("id,title").in_("id", iids).execute()
+            i_titles = {x["id"]: (x.get("title") or "") for x in (res.data or [])}
+        except Exception as exc:                  # noqa: BLE001
+            logger.warning("learning: incident title lookup failed: %s", exc)
+
+    for r in rows:
+        t = q_titles.get(r.get("queue_id") or "") or i_titles.get(r.get("incident_id") or "")
+        if t:
+            out[r["id"]] = t.strip()
+    return out
+
+
 def load_recent_signal_patterns(client=None, limit: int = MAX_SIGNAL_ROWS) -> str:
     """
-    Compact natural-language summary of recent operator decisions
-    (LEARNING_LOOP.md §2.3 step 2), for injection into the Stage 2 prompt.
+    Concrete few-shot examples of recent operator decisions, for injection into
+    the Stage 2 prompts (LEARNING_LOOP.md §2.3 step 2).
 
-    Returns "" if there's no signal yet (cold start) — callers should treat
-    an empty string as "nothing to inject," not an error.
+    Returns "" if there is no signal yet (cold start) — callers treat an empty
+    string as "nothing to inject", not an error.
 
-    Bounded by `limit` (rows read) and MAX_PATTERNS_PER_CATEGORY (patterns
-    surfaced per category) so this stays small enough for a prompt.
+    ## Why examples and not counts
+
+    This used to emit aggregate statistics: "Operators re-classified 3 item(s)
+    from 'clown' to 'dagger'." That is unusable by a frozen model. It says a
+    correction happened but not WHICH KIND of story was corrected, so there is
+    nothing to pattern-match against — the model cannot tell whether the next
+    story in front of it is one of the three or not. A labelled example carries
+    the thing the statistic threw away: the story.
+
+    Bounded by MAX_EXAMPLES, EXAMPLE_TITLE_CHARS and a hard MAX_EXAMPLES_CHARS
+    ceiling, because this block goes into the classify call AND the write call.
+
+    Examples are round-robined across reject reasons rather than taken in recency
+    order: 10 of the 30 live rejections are 'duplicate', and eight duplicate
+    examples would teach one lesson eight times instead of teaching eight.
     """
     if client is None:
         client = get_supabase_client()
 
     result = (
         client.table("training_signals")
-        .select("decision, reject_reason, proposed_classification, corrected_classification")
+        .select("id, decision, reject_reason, proposed_classification, "
+                "corrected_classification, queue_id, incident_id, created_at")
         .order("created_at", desc=True)
         .limit(limit)
         .execute()
@@ -78,35 +137,52 @@ def load_recent_signal_patterns(client=None, limit: int = MAX_SIGNAL_ROWS) -> st
     if not rows:
         return ""
 
-    lines: list[str] = []
+    titles = _resolve_titles(client, rows)
 
-    # Pattern 1: what gets rejected, and why (reject_reason taxonomy, TechSpec §1.6)
-    reject_reasons = Counter(
-        row["reject_reason"]
-        for row in rows
-        if row.get("decision") == "reject" and row.get("reject_reason")
-    )
-    for reason, count in reject_reasons.most_common(MAX_PATTERNS_PER_CATEGORY):
-        lines.append(f"Operators recently rejected {count} item(s) as '{reason}'.")
+    # ── Category 1: the operator changed the classification ─────────────────
+    reclass: list[str] = []
+    for r in rows:
+        p, c = r.get("proposed_classification"), r.get("corrected_classification")
+        title = titles.get(r["id"])
+        if p and c and p != c and title:
+            reclass.append(
+                f'- "{title[:EXAMPLE_TITLE_CHARS]}"\n'
+                f"  agent said {p} -> operator corrected to {c}"
+            )
 
-    # Pattern 2: consistent reclassifications (proposed -> corrected)
-    reclassifications = Counter(
-        (row["proposed_classification"], row["corrected_classification"])
-        for row in rows
-        if row.get("proposed_classification")
-        and row.get("corrected_classification")
-        and row["proposed_classification"] != row["corrected_classification"]
-    )
-    for (proposed, corrected), count in reclassifications.most_common(MAX_PATTERNS_PER_CATEGORY):
-        lines.append(
-            f"Operators re-classified {count} item(s) from '{proposed}' to '{corrected}'."
-        )
+    # ── Category 2: the operator rejected it, with a reason ─────────────────
+    by_reason: dict[str, list[str]] = {}
+    for r in rows:
+        title = titles.get(r["id"])
+        if r.get("decision") == "reject" and r.get("reject_reason") and title:
+            by_reason.setdefault(r["reject_reason"], []).append(
+                f'- "{title[:EXAMPLE_TITLE_CHARS]}"\n'
+                f"  operator REJECTED as '{r['reject_reason']}'"
+            )
 
-    if not lines:
+    rejects: list[str] = []
+    while by_reason and len(rejects) < MAX_EXAMPLES:
+        for reason in list(by_reason):
+            if by_reason[reason]:
+                rejects.append(by_reason[reason].pop(0))
+            if not by_reason[reason]:
+                del by_reason[reason]
+            if len(rejects) >= MAX_EXAMPLES:
+                break
+
+    # Reclassifications first — a correction is a sharper lesson than a rejection.
+    examples = (reclass + rejects)[:MAX_EXAMPLES]
+    if not examples:
         return ""
 
-    header = f"Recent operator patterns (last {len(rows)} decisions):"
-    return "\n".join([header] + [f"- {line}" for line in lines])
+    # _build_user_message already prefixes "Recent operator patterns (advisory,
+    # do not override your judgment)", so this header adds only the framing that
+    # prefix lacks — these are worked examples, not rules.
+    header = "Worked examples of where the operator drew the line:"
+    block = "\n".join([header] + examples)
+    if len(block) > MAX_EXAMPLES_CHARS:
+        block = block[:MAX_EXAMPLES_CHARS].rsplit("\n", 1)[0]
+    return block
 
 
 def apply_source_reputation(

@@ -130,7 +130,7 @@ Execute strictly in sequence — do not skip ahead:
 | Backend | FastAPI | 0.110.x / Python 3.11+ |
 | Agent hosting | Google Cloud Run | asia-southeast1 |
 | Stage 1 filter | Gemini API | gemini-3.1-flash-lite |
-| Stage 2 writer | Anthropic API | claude-haiku-4-5-20251001 (classify), claude-sonnet-4-6 (write) |
+| Stage 2 writer | Anthropic API | claude-haiku-4-5-20251001 (classify **and** write) |
 | Orchestrator | LangGraph | 0.1.x |
 | Image gen | Modal.run | SDXL + custom LoRA |
 | Scheduling | APScheduler | 3.x (embedded in FastAPI) |
@@ -141,14 +141,38 @@ Execute strictly in sequence — do not skip ahead:
 ## Agent Pipeline
 
 ```
-Scrape Agent → Stage 1 Filter (Gemini) → Stage 2 Writer (Claude) → Corroboration Agent → war_room_queue
-                                                                                              ↓
-                                                                            confidence >= 0.95 ? ──yes──→ auto-publish
-                                                                                              ↓ no              ↓
-                                                                               Operator reviews in War Room ←──┘
-                                                                                              ↓         (training signal)
-                                                                               Approve → Art Agent → Publish
+Scrape → Stage 1 (Gemini) → CLUSTER by story (one Haiku call) → Stage 2 Writer (Haiku)
+                                                                          ↓
+                                            groundedness + casualty cross-checks (deterministic)
+                                                                          ↓
+                                              Consolidation (ONE batched Haiku call) → war_room_queue
+                                                                          ↓
+                                            all gates clear AND confidence >= 0.95 ? ──yes──→ auto-publish
+                                                                          ↓ no                     ↓
+                                                     Operator reviews in War Room ←────────────────┘
+                                                                          ↓         (training signal)
+                                                            Approve → Art Agent → Publish
 ```
+
+**Clustering runs BEFORE Stage 2, and is the reason drafts are written once per
+STORY rather than once per URL.** `CLUSTER_BEFORE_WRITE=on` is wired and live (a
+2026-07 `.env.example` comment claiming otherwise was stale). One batched Haiku
+call partitions the pass's Stage-1-passed candidates; the keyword pass is only
+the input filter that decides who is offered to it. See
+`docs/PIPELINE_CHANGES_2026-07-30.md` §1 — in particular, **do not reintroduce
+pairwise judging + union-find**: it merged transitively (A~B and B~C merged A, B
+*and* C with nothing comparing A to C) and that is what produced the blob the
+shadow run caught.
+
+**Four things now hold a row back from auto-publish** beyond the confidence
+threshold. All leave it `pending` for the operator; none reject anything:
+
+| `check_eligibility` reason | Set by | Clears |
+|---|---|---|
+| `ungrounded_specifics` | Stage 2 groundedness post-check (regenerates once first) | Never automatically — a factual defect in that row |
+| `casualty_mismatch` | `filters/casualty_check` — source language vs the model's deaths/injuries | Never automatically — same |
+| `oversized_cluster_unproven` | A grouping call merged > `CLUSTER_MAX_SIZE` articles | **Automatically**, once the grouper earns it (`AUTONOMY.md` §5b) |
+| `unapproved_source_domain` | `source_allowlist` | Operator approves the domain |
 
 **The pipeline is autonomous as of July 2026.** One Cloud Scheduler job at
 **14:58 SGT daily** POSTs `/orchestrator/daily`, which runs eight agents in a
@@ -159,6 +183,13 @@ only). Steps are failure-isolated: one agent crashing does not cost you the rest
 **Read `docs/AUTONOMY.md` before changing any of this.** It documents the
 auto-publish gates, the alert throttling, the exit conditions, the cost model,
 and the runbook (including the `AUTO_PUBLISH_CONFIDENCE=2.0` panic switch).
+**§5b** is the oversized-merge gate that lifts itself once earned; **§5c** is the
+`max_tokens` truncation guard and its recovery ladder.
+
+**Read `docs/PIPELINE_CHANGES_2026-07-30.md` before touching clustering,
+consolidation, Stage 2 length/groundedness, or the casualty check.** It records
+what was measured, and — more usefully — the three things in the original brief
+that turned out to be wrong about this codebase, so they are not re-attempted.
 
 Two things that are easy to get wrong:
 - **Production does NOT use APScheduler.** `ENABLE_INPROCESS_SCHEDULER` is false.
@@ -170,7 +201,20 @@ Two things that are easy to get wrong:
 
 **Stage 1 (Gemini):** Fast noise rejection. Pass threshold: confidence ≥ 0.4. Target 60–70% rejection of raw scrape volume.
 
-**Stage 2 (Claude):** Classification, draft writing, severity scoring, pixel art prompt generation. Returns JSON — see spec §4.3 for exact schema and system prompts.
+**Stage 2 (Claude Haiku):** Classification, draft writing, severity scoring. Returns
+JSON — see spec §4.3 for the schema, with three deltas since:
+
+- **`pixel_art_prompt` is no longer generated.** The War Room approve route
+  hardcodes `pixel_art_url: null`, so it was written on every draft and read by
+  nothing. The DB column and `pixel_art_url` are untouched — art generation is
+  dormant by design, not deleted.
+- **The write model is Haiku**, not Sonnet (`STAGE2_WRITE_MODEL` to roll back).
+  Justified by an eval over 30 real inputs; Haiku matched Sonnet on ungrounded
+  specifics on the multi-source half and on format compliance.
+- **Summary length is arithmetic, not an instruction.** `min(1600, RATIO x
+  non-signal source chars)`, floored at 400, interpolated into the prompt as a
+  hard number. The prose "~1600 char" ceiling was measurably ignored — Sonnet
+  exceeded it on 10 of 29 eval drafts, worst 2765.
 
 **Signal treatment (EDMW *and* Reddit):** a signal is never a quoted source and
 never the event date. Reddit joined this tier in July 2026 (was `'reddit'`) — it
@@ -289,20 +333,28 @@ under-count by the number of unpublished drafts.
 ## Legal Guardrails (Hardcoded — Never Remove)
 
 1. `source_urls` must contain ≥ 1 URL — database constraint enforces this.
-2. Sources with `type = 'signal'` (EDMW) are never included in `source_urls`.
+2. Sources with `type = 'signal'` (EDMW/HWZ **and Reddit**) are never included in `source_urls`.
 3. No personal information beyond what appears in public source URLs.
 4. If Stage 2 detects political content → set `confidence = 0`, flag `"[POLITICAL CONTENT DETECTED — REJECT]"`.
 
-> ⚠️ **Enforcement status (June-2026 QA — see `docs/QA_BACKLOG.md`).** These four are
-> the intended invariants and must never be weakened, but the QA sweep found the
-> automated enforcement is incomplete:
-> - **#1** the DB `CHECK (array_length(source_urls,1) >= 1)` does **not** reject an
->   empty array (`array_length('{}',1)` is NULL) — fix to `cardinality(...) >= 1` (QA C4).
-> - **#2** the ingestion orchestrator currently puts an `edmw` candidate's URL into
->   `source_urls` (latent — no EDMW adapter yet) (QA C2).
-> - **#4** Stage 2 only *logs* the marker; it never zeroes confidence or rejects (QA C1).
-> - **#3** has no programmatic check — operator-gate only.
-> Closing C1–C4 is the top priority in the QA backlog.
+> ✅ **Enforcement status (verified 2026-07-30 against the code — see
+> `docs/PIPELINE_CHANGES_2026-07-30.md`).** The June-2026 QA sweep found #1, #2
+> and #4 unenforced. **All three have since landed**; this block previously still
+> said they were open, which is why it is dated now:
+> - **#1** — closed by **migration 010**: `CHECK (cardinality(source_urls) >= 1)`.
+>   The old `array_length('{}',1)` returned NULL and let `'{}'` pass (QA C4).
+> - **#2** — closed in `ingestion/orchestrator.py`: a signal candidate gets
+>   `source_urls=[]` and carries only `edmw_signal_count`. Enforced via
+>   `source_allowlist.is_signal_source()`, **never** a bare `== 'edmw'` (QA C2).
+> - **#4** — closed in `filters/stage2_writer.py::_classify`: `political: true`
+>   forces `confidence = 0.0` before the merge, and `write_stage2` prepends the
+>   operator-visible reject marker (QA C1). Since 2026-07-30 it also **alerts** —
+>   marker, operator email and a `warning` `agent_events` row — because a
+>   silently-zeroed row was indistinguishable from any other low-confidence row.
+> - **#3** still has no programmatic check — operator-gate only.
+>
+> Regression guards: `test_stage2_guardrails.py`, `test_political_alert.py`,
+> `test_source_allowlist.py`. Strengthen these freely; never weaken them.
 
 ---
 

@@ -108,12 +108,14 @@ gathered = [{"candidate": g, "item": orch._candidate_to_item(g),
              "is_dateless": False, "source": g.source_name} for g in (xa, xb, y)]
 
 
-def judge_stab(a, b):
-    stab = lambda c_: "stab" in c_.title.lower()
-    return stab(a) and stab(b)
+def grouper_stab(cands):
+    """One batched decision: the stabbing reports group, everything else splits."""
+    stab = [i for i, c in enumerate(cands) if "stab" in c.title.lower()]
+    rest = [[i] for i, c in enumerate(cands) if "stab" not in c.title.lower()]
+    return ([stab] if stab else []) + rest
 
 
-with _patched(), mock.patch.object(orch, "_make_merge_judge", return_value=judge_stab):
+with _patched(), mock.patch.object(orch, "_make_grouper", return_value=grouper_stab):
     client = FakeClient()
     res = orch._write_clusters(
         gathered, client=client, dry_run=False, reputation={}, signal_summary="",
@@ -130,20 +132,50 @@ check("res counts: 2 queued, 2 new", res["queued"] == 2 and res["new"] == 2)
 check("per-source watermarks recorded for written sources",
       set(res["per_source_max"].keys()) == {"CNA", "MSN", "ST"})
 
-# ── judge rejects all -> no merge, 3 single-source rows ─────────────────────
-with _patched(), mock.patch.object(orch, "_make_merge_judge", return_value=lambda a, b: False):
+# ── grouper splits everything -> no merge, 3 single-source rows ─────────────
+with _patched(), mock.patch.object(
+        orch, "_make_grouper", return_value=lambda cands: [[i] for i in range(len(cands))]):
     client = FakeClient()
     res = orch._write_clusters(
         gathered, client=client, dry_run=False, reputation={}, signal_summary="",
         notes=[], activity=None, deadline=datetime.now(timezone.utc) + timedelta(hours=1),
         circuit_breaker_n=5,
     )
-check("judge rejects everything -> 3 single-source rows", len(client.rows) == 3)
-check("no row has >1 source when nothing confirmed",
+check("grouper splits everything -> 3 single-source rows", len(client.rows) == 3)
+check("no row has >1 source when nothing grouped",
       all(len(r["raw_content"]["source_urls"]) == 1 for r in client.rows))
 
+# ── malformed grouper response -> split-safe, never a merge ─────────────────
+def grouper_broken(cands):
+    raise ValueError("No JSON object in grouper response")
+
+
+with _patched(), mock.patch.object(orch, "_make_grouper", return_value=grouper_broken):
+    client = FakeClient()
+    res = orch._write_clusters(
+        gathered, client=client, dry_run=False, reputation={}, signal_summary="",
+        notes=[], activity=None, deadline=datetime.now(timezone.utc) + timedelta(hours=1),
+        circuit_breaker_n=5,
+    )
+check("malformed grouper response -> 3 single-source rows, pass survives", len(client.rows) == 3)
+check("a broken grouper never produces a merged row",
+      all(len(r["raw_content"]["source_urls"]) == 1 for r in client.rows))
+
+# ── grouper unavailable -> keyword-only fallback still groups ───────────────
+# (_make_grouper returns None when Anthropic is not configured.)
+with _patched(), mock.patch.object(orch, "_make_grouper", return_value=None):
+    client = FakeClient()
+    res = orch._write_clusters(
+        gathered, client=client, dry_run=False, reputation={}, signal_summary="",
+        notes=[], activity=None, deadline=datetime.now(timezone.utc) + timedelta(hours=1),
+        circuit_breaker_n=5,
+    )
+check("grouper unavailable -> keyword fallback used", res["cstats"] == {"grouper": "unavailable"},
+      f"-> {res['cstats']}")
+check("keyword fallback still merges the same-story pair", len(client.rows) == 2, f"-> {len(client.rows)}")
+
 # ── dry_run writes nothing ──────────────────────────────────────────────────
-with _patched(), mock.patch.object(orch, "_make_merge_judge", return_value=judge_stab):
+with _patched(), mock.patch.object(orch, "_make_grouper", return_value=grouper_stab):
     client = FakeClient()
     res = orch._write_clusters(
         gathered, client=client, dry_run=True, reputation={}, signal_summary="",
@@ -152,6 +184,63 @@ with _patched(), mock.patch.object(orch, "_make_merge_judge", return_value=judge
     )
 check("dry_run: nothing inserted", len(client.rows) == 0)
 check("dry_run: still reports what it would queue", res["queued"] == 2)
+
+print("\n_make_grouper (one Haiku call, strict JSON):\n")
+
+# NOT `import consolidation.check as _cc`: the package __init__ rebinds the name
+# `check` to the function, so that form yields the function, not the module.
+_cc = importlib.import_module("consolidation.check")
+
+
+def _client_returning(text):
+    """Anthropic client stub that returns `text` and records the request."""
+    seen = {}
+
+    class _Msgs:
+        def create(self, **kw):
+            seen.update(kw)
+            return type("R", (), {"content": [type("B", (), {"text": text})()]})()
+
+    return type("C", (), {"messages": _Msgs()})(), seen
+
+
+stub, seen = _client_returning('{"groups": [[0, 1], [2]]}')
+with mock.patch.object(_cc, "_get_anthropic_client", return_value=stub):
+    g = orch._make_grouper()
+    out = g([xa, xb, y])
+check("_make_grouper parses a well-formed partition", out == [[0, 1], [2]], f"-> {out}")
+check("_make_grouper makes exactly ONE call with all candidates numbered",
+      "[0]" in seen["messages"][0]["content"] and "[2]" in seen["messages"][0]["content"])
+check("_make_grouper sends every candidate's title", all(
+    c.title in seen["messages"][0]["content"] for c in (xa, xb, y)))
+check("_make_grouper uses temperature 0", seen.get("temperature") == 0.0)
+
+stub, _ = _client_returning('{"groups": [["0", "1"], ["2"]]}')
+with mock.patch.object(_cc, "_get_anthropic_client", return_value=stub):
+    out = orch._make_grouper()([xa, xb, y])
+check("_make_grouper coerces numeric-string indices", out == [[0, 1], [2]], f"-> {out}")
+
+stub, _ = _client_returning("I think articles 0 and 1 are the same story.")
+with mock.patch.object(_cc, "_get_anthropic_client", return_value=stub):
+    g = orch._make_grouper()
+    try:
+        g([xa, xb, y])
+        raised = False
+    except Exception:
+        raised = True
+check("_make_grouper raises on prose instead of JSON (caller splits)", raised)
+
+stub, _ = _client_returning('{"clusters": [[0, 1]]}')
+with mock.patch.object(_cc, "_get_anthropic_client", return_value=stub):
+    try:
+        orch._make_grouper()([xa, xb, y])
+        raised = False
+    except ValueError:
+        raised = True
+check("_make_grouper raises when 'groups' key is missing", raised)
+
+with mock.patch.object(_cc, "_get_anthropic_client", side_effect=EnvironmentError("no key")):
+    check("_make_grouper returns None when Anthropic is unconfigured", orch._make_grouper() is None)
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

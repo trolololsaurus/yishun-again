@@ -4,8 +4,8 @@ Stage 2 writer — Anthropic Claude (spec §4.3)
 Two-model pipeline:
   1. claude-haiku-4-5-20251001  — classify the incident and extract structured
                                    metadata (fast, cheap, deterministic fields)
-  2. claude-sonnet-4-6          — write title, summary, SEO copy, slug, and
-                                   pixel art prompt (quality creative output)
+  2. claude-sonnet-4-6          — write title, summary, SEO copy and slug
+                                   (quality creative output)
 
 hype_meter and chaos_contribution are computed deterministically in Python
 from the spec §7 formulas rather than relying on the model to calculate them.
@@ -23,12 +23,64 @@ import sys
 import anthropic
 from dotenv import load_dotenv
 
+try:
+    from filters.model_call import create_with_headroom
+except ImportError:  # pragma: no cover
+    # This module documents itself as runnable directly
+    # (python packages/agents/filters/stage2_writer.py), which puts filters/ on
+    # sys.path instead of packages/agents/, so the package-qualified import
+    # cannot resolve. Both spellings must work.
+    from model_call import create_with_headroom
+
 load_dotenv(override=False)
 
 logger = logging.getLogger(__name__)
 
 MODEL_CLASSIFY = "claude-haiku-4-5-20251001"
-MODEL_WRITE    = "claude-sonnet-4-6"
+# Env-overridable so a rollback is a config change, not a redeploy.
+#
+# Moved from claude-sonnet-4-6 after the 3.1 eval (tools/eval_l2_write.py) over 30
+# real inputs — 15 single-source, 15 clustered with 3-9 sources. On the gate
+# metric (ungrounded numbers and proper nouns, artifact-filtered) Haiku matched
+# Sonnet on the multi-source half, 4 occurrences across 2/15 drafts vs Sonnet's 4
+# across 3/15, and matched it on format compliance (100% on slug, title, and both
+# SEO limits for both models). It also ran ~24% shorter and breached the 1600-char
+# ceiling far less often (4/30 vs 10/29).
+MODEL_WRITE    = os.getenv("STAGE2_WRITE_MODEL", "claude-haiku-4-5-20251001")
+
+# ── Summary length: arithmetic, not an instruction the model self-polices ────
+#
+# The prompt has always said "as long as the sources genuinely support" with a
+# ~1600 char ceiling. The 3.1 eval showed both models ignore it on merged
+# multi-source input — Sonnet exceeded 1600 on 10 of 29 drafts (worst: 2765).
+# So the budget is now computed and passed as a hard number per call.
+#
+# RATIO derived from 30 real approved summaries measured against their own source
+# bodies. The distribution is strongly bimodal:
+#     single-source  median 0.612   (p25 0.494, p75 0.754)
+#     multi-source   median 0.104   (p25 0.086, p75 0.138)
+# A ~6x gap, because a merged cluster carries far more text than any summary
+# needs. Using the multi median would cap a 1343-char single source at 139 chars,
+# so the SINGLE-source end is what binds. 0.75 is that half's p75: it clears 75%
+# of real approved single-source summaries untruncated, while any cluster above
+# ~2.1k source chars still saturates the 1600 ceiling (every multi item in the
+# sample was >= 3633). A thin story cannot sprawl; a five-source cluster gets the
+# full budget.
+STAGE2_SUMMARY_RATIO = float(os.getenv("STAGE2_SUMMARY_RATIO", "0.75"))
+SUMMARY_HARD_CEILING = 1600
+# Floor, so a very short source cannot produce a two-sentence stub. Also keeps
+# the module's own smoke test invariant (300 <= len(summary)) reachable.
+SUMMARY_FLOOR = 400
+
+# ── Output caps ─────────────────────────────────────────────────────────────
+# Env-overridable because raising a cap is the entire fix for a truncation, and
+# an operator should be able to apply it without a redeploy. Measured usage on
+# the largest inputs in the archive: classify 167/512, write 763/2048 — so both
+# carry ~2-3x headroom today. filters/model_call guards them anyway: it retries
+# once at double, and a second truncation raises loudly instead of surfacing as
+# an unparseable-JSON error.
+CLASSIFY_MAX_TOKENS = int(os.getenv("STAGE2_CLASSIFY_MAX_TOKENS", "512"))
+WRITE_MAX_TOKENS = int(os.getenv("STAGE2_WRITE_MAX_TOKENS", "2048"))
 
 # MSM domains used by hype_meter computation (spec §7)
 _MSM_DOMAINS = [
@@ -159,7 +211,6 @@ Given source content, return JSON only:
   // Example: "yishun-cat-found-injured-park-aug-2023"
   "seo_title": string (max 60 chars),
   "seo_description": string (max 155 chars),
-  "pixel_art_prompt": string (detailed prompt for SDXL pixel art generation),
   "tags": string[],
   "confidence": float (0.0-1.0),
   "chaos_contribution": float (1-5 scale, Daggers weighted 3x, Clowns 1.5x, Hearts -1x),
@@ -180,12 +231,6 @@ Severity guide (dagger):
 3 = Assault, significant incident
 4 = Serious crime, major incident
 5 = Homicide, major catastrophe
-
-Pixel art prompt guide:
-- Always specify: "16-bit JRPG pixel art style, Yishun HDB environment"
-- Describe the scene without depicting real people
-- Keep it interpretive, not photorealistic
-- Example: "16-bit JRPG pixel art style, Yishun HDB void deck at night, yellow police tape, pixel art lamp post, dark atmospheric lighting"
 """
 
 
@@ -298,6 +343,132 @@ def _format_additional_sources(content: dict) -> str:
     return "".join(parts)
 
 
+# ── Source text + summary budget ────────────────────────────────────────────
+
+def _non_signal_articles(content: dict) -> list[dict]:
+    """Guardrail #2: signal (EDMW/Reddit) bodies are never source material."""
+    return [a for a in (content.get("source_articles") or [])
+            if a.get("source_type") != "signal"]
+
+
+def non_signal_source_text(content: dict) -> str:
+    """Everything the draft is allowed to be grounded in, concatenated."""
+    parts = [content.get("title", ""), content.get("content", "")]
+    for a in _non_signal_articles(content):
+        parts.append(a.get("title", ""))
+        parts.append(a.get("content", ""))
+    return "\n".join(p for p in parts if p)
+
+
+def summary_char_budget(content: dict) -> int:
+    """
+    The hard summary ceiling for THIS draft: min(1600, RATIO x source chars),
+    floored. Deterministic — the model is told the number rather than asked to
+    judge "as far as the sources support".
+    """
+    arts = _non_signal_articles(content)
+    total = (sum(len(a.get("content") or "") for a in arts) if arts
+             else len(content.get("content") or ""))
+    return max(SUMMARY_FLOOR, min(SUMMARY_HARD_CEILING, int(STAGE2_SUMMARY_RATIO * total)))
+
+
+# ── Groundedness post-check ─────────────────────────────────────────────────
+
+_NUM_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
+# Two or more consecutive capitalised words: "Khoo Teck Puat", "Tower Transit".
+_PROPER_RE = re.compile(r"\b[A-Z][a-z]+(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,}))+\b")
+
+
+def find_ungrounded(summary: str, source_text: str, date_str: str = "") -> dict:
+    """
+    Numbers and capitalised multi-word proper nouns in `summary` that appear
+    nowhere in the source text. Pure and deterministic.
+
+    Deliberately CONSERVATIVE, because a false positive costs a full
+    regeneration. Two classes of lexical artifact are excluded, both measured on
+    the 3.1 eval's 60 real drafts:
+
+      * 4-digit years — the incident year reaches the model through the `date`
+        field, not the article body, so "in 2026" is grounded but would not match.
+      * a phrase whose TAIL matches the source. A sentence-initial capital glues
+        an ordinary word onto a real name ("On August", "As Jethro"), and a
+        rewritten reference differs only by an article ("The Yishun Ring Road").
+
+    The cost of that conservatism is missing an invention that merely extends a
+    real name. That is the right direction: the flag blocks auto-publish, so a
+    miss degrades to today's behaviour while a false positive burns a model call.
+    """
+    src_nums = {m.group().replace(",", "") for m in _NUM_RE.finditer(source_text or "")}
+    src_nums |= set(re.findall(r"\d+", date_str or ""))
+    src_low = (source_text or "").lower()
+
+    # The incident date reaches the model as "2026-08-15", so a summary that
+    # writes "in August" is grounded in a fact the source text does not spell.
+    # Without this, "On August" / "In January" flag on every dated story.
+    m = re.match(r"\d{4}-(\d{2})-\d{2}", date_str or "")
+    if m and 1 <= int(m.group(1)) <= 12:
+        full = ("january", "february", "march", "april", "may", "june", "july",
+                "august", "september", "october", "november", "december")[int(m.group(1)) - 1]
+        src_low = f"{src_low}\n{full} {full[:3]}"
+
+    numbers = []
+    for m in _NUM_RE.finditer(summary or ""):
+        v = m.group().replace(",", "").rstrip(".")
+        if not v or v in src_nums:
+            continue
+        if len(v) == 4 and v.isdigit() and 1980 <= int(v) <= 2100:
+            continue
+        numbers.append(v)
+
+    proper_nouns = []
+    for m in _PROPER_RE.finditer(summary or ""):
+        phrase = m.group().strip()
+        if phrase.lower() in src_low:
+            continue
+        tail = phrase.split(None, 1)
+        if len(tail) == 2 and tail[1].lower() in src_low:
+            continue
+        proper_nouns.append(phrase)
+
+    return {"numbers": sorted(set(numbers)), "proper_nouns": sorted(set(proper_nouns))}
+
+
+def _enforce_groundedness(client, content: dict, classification: dict, draft: dict):
+    """
+    Check the draft, regenerate ONCE on failure, flag if it fails again.
+
+    Returns (draft, report). NEVER raises and never silently passes: a checker
+    error or a failed regeneration both degrade to flagged, because "we could not
+    verify this" and "this is verified" must not look the same downstream.
+    """
+    date_str = content.get("date") or ""
+    try:
+        src = non_signal_source_text(content)
+        found = find_ungrounded(draft.get("summary", ""), src, date_str)
+    except Exception as exc:                      # noqa: BLE001
+        logger.warning("Stage 2 groundedness check errored — flagging: %s", exc)
+        return draft, {"checked": False, "flagged": True, "attempts": 1,
+                       "reason": f"checker_error: {exc}"[:200]}
+
+    if not (found["numbers"] or found["proper_nouns"]):
+        return draft, {"checked": True, "flagged": False, "attempts": 1}
+
+    logger.warning("Stage 2 groundedness: regenerating once — ungrounded %s", found)
+    try:
+        retry = _write_draft(client, content, classification)
+        found2 = find_ungrounded(retry.get("summary", ""), src, date_str)
+    except Exception as exc:                      # noqa: BLE001
+        logger.warning("Stage 2 groundedness regeneration failed — flagging: %s", exc)
+        return draft, {"checked": True, "flagged": True, "attempts": 1, **found}
+
+    if not (found2["numbers"] or found2["proper_nouns"]):
+        logger.info("Stage 2 groundedness: regeneration recovered the draft")
+        return retry, {"checked": True, "flagged": False, "attempts": 2, "recovered": True}
+
+    logger.warning("Stage 2 groundedness: still ungrounded after retry — flagged %s", found2)
+    return retry, {"checked": True, "flagged": True, "attempts": 2, **found2}
+
+
 def _build_user_message(content: dict) -> str:
     learning_context = content.get("learning_context", "")
     learning_block = (
@@ -324,9 +495,12 @@ def _classify(client: anthropic.Anthropic, content: dict) -> dict:
     Returns: classification, severity, block_number, area_name,
              latitude, longitude, tags, confidence.
     """
-    response = client.messages.create(
+    response, _retried = create_with_headroom(
+        client,
+        call="stage2._classify",
+        env_var="STAGE2_CLASSIFY_MAX_TOKENS",
         model=MODEL_CLASSIFY,
-        max_tokens=512,
+        max_tokens=CLASSIFY_MAX_TOKENS,
         temperature=0.1,
         system=_CLASSIFY_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": _build_user_message(content)}],
@@ -406,34 +580,55 @@ def _stamp_slug_date(slug: str, date_str: str | None, max_len: int = 70) -> str:
 
 def _write_draft(client: anthropic.Anthropic, content: dict, classification: dict) -> dict:
     """
-    Sonnet call: write title, summary, SEO copy, slug, pixel art prompt.
+    Sonnet call: write title, summary, SEO copy and slug.
     Classification context from Haiku is passed in the user message so
     Sonnet writes content consistent with the determined incident type.
     """
-    # Provide classification as context so the tone matches
+    # Provide classification as context so the tone matches, plus the computed
+    # summary budget for THIS draft. The number is arithmetic (see
+    # summary_char_budget) rather than a judgement the model has to make — the
+    # 3.1 eval showed the prose ceiling being ignored on multi-source input.
+    budget = summary_char_budget(content)
     user_msg = (
         f"{_build_user_message(content)}\n\n"
         f"---\n"
         f"Incident already classified as: {classification['classification'].upper()}, "
         f"severity {classification['severity']}. "
-        f"Reflect this classification in your title, summary, and pixel art prompt."
+        f"Reflect this classification in your title and summary.\n"
+        f"HARD LIMIT: the summary must be at most {budget} characters. This is "
+        f"derived from how much source material actually exists for this story — "
+        f"do NOT pad to reach it, and never add detail no source states."
     )
 
     calibration_hints = _load_calibration_hints()
-    response = client.messages.create(
+    response, retried = create_with_headroom(
+        client,
+        call="stage2._write_draft",
+        env_var="STAGE2_WRITE_MAX_TOKENS",
         model=MODEL_WRITE,
-        max_tokens=2048,   # headroom for summaries up to 1600 chars + title/seo/slug/pixel-prompt
+        max_tokens=WRITE_MAX_TOKENS,
         temperature=0.4,
         system=STAGE2_SYSTEM_PROMPT + calibration_hints,
         messages=[{"role": "user", "content": user_msg}],
     )
 
     raw = response.content[0].text
-    logger.debug("Sonnet write raw: %s", raw[:500])
+    logger.debug("write raw: %s", raw[:500])
 
     result = _parse_json(raw)
+    if retried:
+        # Recovered, so the draft is complete and valid — this does NOT block
+        # publishing. It is recorded because a recurring retry means the cap is
+        # too tight for the shape of story now arriving, and that is only
+        # visible if each occurrence leaves a trace on the row.
+        result["_write_truncation_retry"] = {"cap": WRITE_MAX_TOKENS,
+                                             "retried_at": WRITE_MAX_TOKENS * 2}
 
-    required = ("title", "summary", "slug", "seo_title", "seo_description", "pixel_art_prompt")
+    # pixel_art_prompt is deliberately NOT required: it is no longer requested in
+    # the system prompt (the War Room approve route hardcodes pixel_art_url=None,
+    # so nothing consumed it) and a model that still volunteers it must not be
+    # treated as valid-or-invalid on that basis. Absence is the expected case.
+    required = ("title", "summary", "slug", "seo_title", "seo_description")
     for key in required:
         if key not in result:
             raise ValueError(f"Write response missing required field '{key}'")
@@ -474,8 +669,8 @@ def write_stage2(content: dict) -> dict:
     Returns:
         Complete war_room_queue draft dict — all fields from spec §4.3.
         Classification metadata fields (classification, severity, lat/lon, etc.)
-        come from Haiku. Creative fields (title, summary, SEO, slug, pixel prompt)
-        come from Sonnet. hype_meter and chaos_contribution are computed in Python.
+        come from Haiku. Creative fields (title, summary, SEO, slug) come from
+        Sonnet. hype_meter and chaos_contribution are computed in Python.
     """
     client = _get_client()
 
@@ -489,9 +684,13 @@ def write_stage2(content: dict) -> dict:
         classification["confidence"],
     )
 
-    # ── Step 2: Write draft (Sonnet) ─────────────────────────────────────────
-    logger.info("Stage 2 [write] calling Sonnet")
+    # ── Step 2: Write draft ──────────────────────────────────────────────────
+    logger.info("Stage 2 [write] calling %s (summary budget %d chars)",
+                MODEL_WRITE, summary_char_budget(content))
     draft = _write_draft(client, content, classification)
+
+    # ── Step 2b: Groundedness — regenerate once, then flag ───────────────────
+    draft, grounding = _enforce_groundedness(client, content, classification, draft)
 
     # ── Step 3: Compute deterministic fields ─────────────────────────────────
     source_urls  = content.get("source_urls", [content.get("url", "")])
@@ -556,7 +755,34 @@ def write_stage2(content: dict) -> dict:
         **({"date": content["date"]} if content.get("date") else {}),
         # Legal guardrail #4 — political flag propagates to the queue row
         "political":          classification.get("political", False),
+        # Groundedness verdict. build_queue_row spreads the draft into
+        # raw_content, so this lands as raw_content._groundedness and
+        # ops/auto_publish holds a flagged row for review.
+        "_groundedness":      grounding,
     }
+
+    # ── Deterministic deaths/injuries cross-check ────────────────────────────
+    # Never corrects the model's value — deaths/injuries stay exactly as
+    # classified above. It only records whether the SOURCE LANGUAGE agrees, and
+    # a disagreement blocks auto-publish. Wrapped because a regex bug must not
+    # take down a pass: on error the row is flagged, never silently passed.
+    try:
+        from filters.casualty_check import validate as _casualty_validate
+        verdict = _casualty_validate(
+            non_signal_source_text(content),
+            classification.get("deaths"),
+            classification.get("injuries"),
+        )
+        if not verdict["ok"]:
+            logger.warning("Stage 2 casualty check disagrees with the source: %s",
+                           verdict["flags"])
+            result["_casualty_check"] = {"flagged": True, **verdict}
+        else:
+            result["_casualty_check"] = {"flagged": False, "ok": True, "flags": []}
+    except Exception as exc:                      # noqa: BLE001
+        logger.warning("Stage 2 casualty check errored — flagging: %s", exc)
+        result["_casualty_check"] = {"flagged": True, "ok": False,
+                                     "reason": f"checker_error: {exc}"[:200], "flags": []}
 
     # Political content: confidence is already 0 (forced in _classify); prepend the
     # operator-visible reject marker so it cannot be silently approved.
@@ -564,6 +790,18 @@ def write_stage2(content: dict) -> dict:
         marker = "[POLITICAL CONTENT DETECTED — REJECT] "
         if not str(result.get("summary", "")).startswith(marker):
             result["summary"] = marker + str(result.get("summary", ""))
+        # A DISTINCT marker, not just confidence 0. Under unattended operation a
+        # confidence-0 row is indistinguishable from any other low-confidence row
+        # — it never publishes and nothing is said. This is what lets the
+        # orchestrator tell the two apart and raise an audible alert. It does not
+        # weaken the guardrail: confidence is already forced to 0 in _classify and
+        # nothing here can raise it.
+        result["_political_flagged"] = {
+            "detected_at":           "stage2_classify",
+            "confidence_forced_to":  0.0,
+            "source_url":            content.get("url", ""),
+            "source_name":           content.get("source_name", ""),
+        }
 
     logger.info(
         "Stage 2 complete: [%s] sev=%d hype=%d '%s'",
@@ -652,12 +890,15 @@ def run_tests() -> None:
             print(f"  seo_desc ({len(result.get('seo_description',''))}) : {result.get('seo_description','')[:80]}...")
             print(f"  summary ({summary_len} chars):")
             print(f"    {result.get('summary','')[:200]}...")
-            print(f"  pixel_prompt   : {result.get('pixel_art_prompt','')[:100]}...")
             print(f"  tags           : {result.get('tags', [])}")
             print(f"  block_number   : {result.get('block_number')}")
             print(f"  area_name      : {result.get('area_name')}")
             print(f"  deaths         : {result.get('deaths')!r}  (null=not mentioned, 0=confirmed none, N=confirmed)")
             print(f"  injuries       : {result.get('injuries')!r}")
+            # pixel_art_prompt is no longer requested; report whether the model
+            # volunteered it anyway, so a silent regression is visible here.
+            print(f"  draft keys     : {sorted(result.keys())}")
+            print(f"  pixel_art_prompt present? {'pixel_art_prompt' in result}")
 
             # Basic sanity checks
             assert "yishun" in result.get("title", "").lower(), "FAIL: 'Yishun' missing from title"
