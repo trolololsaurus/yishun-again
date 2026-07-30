@@ -13,6 +13,7 @@ from unittest import mock
 
 orch = importlib.import_module("ingestion.orchestrator")
 from ingestion.contracts import Candidate  # noqa: E402
+from ingestion.watermark import WatermarkTracker  # noqa: E402
 from consolidation.check import ConsolidationResult  # noqa: E402
 
 passed = failed = 0
@@ -53,6 +54,14 @@ def _cand(title, url, day, source_type="msm", name="src"):
                      discovered_via=name)
 
 
+def _trackers():
+    """A fresh watermark tracker per source. pass_date is well after every
+    candidate above, so the same-day grace never confuses these assertions —
+    test_watermark_advance.py is where that rule is exercised."""
+    return {name: WatermarkTracker(name, None, pass_date=date(2026, 8, 1))
+            for name in ("CNA", "MSN", "ST", "src")}
+
+
 def _draft_echo(stage2_input):
     # Draft echoes source_urls so we can inspect what got merged.
     return {"title": stage2_input.get("title", ""), "summary": "s",
@@ -90,6 +99,7 @@ print("orchestrator cluster-write:\n")
 # ── _emit: one candidate -> one single-source row ───────────────────────────
 with _patched():
     client = FakeClient()
+    trk = _trackers()
     c = _cand("Yishun stabbing at Block 873 market", "u/a", 1)
     item = orch._candidate_to_item(c)
     s2 = {**item, "source_urls": ["u/a"], "edmw_signal_count": 0}
@@ -117,10 +127,11 @@ def grouper_stab(cands):
 
 with _patched(), mock.patch.object(orch, "_make_grouper", return_value=grouper_stab):
     client = FakeClient()
+    trk = _trackers()
     res = orch._write_clusters(
         gathered, client=client, dry_run=False, reputation={}, signal_summary="",
         notes=[], activity=None, deadline=datetime.now(timezone.utc) + timedelta(hours=1),
-        circuit_breaker_n=5,
+        circuit_breaker_n=5, trackers=trk,
     )
 
 check("2 rows written (X merged, Y separate)", len(client.rows) == 2, f"-> {len(client.rows)}")
@@ -129,17 +140,22 @@ check("the stabbing cluster is one 2-source row", len(merged) == 1)
 check("merged row carries both outlets", merged and sorted(merged[0]["raw_content"]["source_urls"]) == ["u/cna", "u/msn"])
 check("corroboration_count reflects the merge (2)", merged and merged[0]["corroboration_count"] == 2)
 check("res counts: 2 queued, 2 new", res["queued"] == 2 and res["new"] == 2)
-check("per-source watermarks recorded for written sources",
-      set(res["per_source_max"].keys()) == {"CNA", "MSN", "ST"})
+check("every written source's watermark advanced to its own candidate's date",
+      (trk["CNA"].value(), trk["MSN"].value(), trk["ST"].value())
+      == (date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 1)),
+      f"-> {[trk[s].value() for s in ('CNA', 'MSN', 'ST')]}")
+check("nothing is left holding a watermark back after a clean write",
+      all(trk[s].floor is None for s in ("CNA", "MSN", "ST")))
 
 # ── grouper splits everything -> no merge, 3 single-source rows ─────────────
 with _patched(), mock.patch.object(
         orch, "_make_grouper", return_value=lambda cands: [[i] for i in range(len(cands))]):
     client = FakeClient()
+    trk = _trackers()
     res = orch._write_clusters(
         gathered, client=client, dry_run=False, reputation={}, signal_summary="",
         notes=[], activity=None, deadline=datetime.now(timezone.utc) + timedelta(hours=1),
-        circuit_breaker_n=5,
+        circuit_breaker_n=5, trackers=trk,
     )
 check("grouper splits everything -> 3 single-source rows", len(client.rows) == 3)
 check("no row has >1 source when nothing grouped",
@@ -152,10 +168,11 @@ def grouper_broken(cands):
 
 with _patched(), mock.patch.object(orch, "_make_grouper", return_value=grouper_broken):
     client = FakeClient()
+    trk = _trackers()
     res = orch._write_clusters(
         gathered, client=client, dry_run=False, reputation={}, signal_summary="",
         notes=[], activity=None, deadline=datetime.now(timezone.utc) + timedelta(hours=1),
-        circuit_breaker_n=5,
+        circuit_breaker_n=5, trackers=trk,
     )
 check("malformed grouper response -> 3 single-source rows, pass survives", len(client.rows) == 3)
 check("a broken grouper never produces a merged row",
@@ -165,10 +182,11 @@ check("a broken grouper never produces a merged row",
 # (_make_grouper returns None when Anthropic is not configured.)
 with _patched(), mock.patch.object(orch, "_make_grouper", return_value=None):
     client = FakeClient()
+    trk = _trackers()
     res = orch._write_clusters(
         gathered, client=client, dry_run=False, reputation={}, signal_summary="",
         notes=[], activity=None, deadline=datetime.now(timezone.utc) + timedelta(hours=1),
-        circuit_breaker_n=5,
+        circuit_breaker_n=5, trackers=trk,
     )
 check("grouper unavailable -> keyword fallback used", res["cstats"] == {"grouper": "unavailable"},
       f"-> {res['cstats']}")
@@ -177,10 +195,11 @@ check("keyword fallback still merges the same-story pair", len(client.rows) == 2
 # ── dry_run writes nothing ──────────────────────────────────────────────────
 with _patched(), mock.patch.object(orch, "_make_grouper", return_value=grouper_stab):
     client = FakeClient()
+    trk = _trackers()
     res = orch._write_clusters(
         gathered, client=client, dry_run=True, reputation={}, signal_summary="",
         notes=[], activity=None, deadline=datetime.now(timezone.utc) + timedelta(hours=1),
-        circuit_breaker_n=5,
+        circuit_breaker_n=5, trackers=trk,
     )
 check("dry_run: nothing inserted", len(client.rows) == 0)
 check("dry_run: still reports what it would queue", res["queued"] == 2)

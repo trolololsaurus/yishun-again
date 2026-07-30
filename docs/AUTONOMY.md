@@ -351,6 +351,27 @@ above `COST_ALERT_USD_PER_DAY` (default $2.00). It also flags the structural
 risk: **more than ~2 passes in 24 h**, which is how a runaway scheduler would
 announce itself.
 
+### The recency watermark was the other recurring cost
+
+Bounding consolidation per candidate does nothing if the *same candidates* come
+back every day, and they did. `pipeline_state.watermark` only advanced for a
+candidate that got WRITTEN, so a Stage 1 rejection or a consolidation
+duplicate-skip — neither of which writes a row, and neither of which
+`dedup.is_duplicate` can see, because it reads only
+`war_room_queue.source_url` and `incidents.source_urls` — left the watermark
+where it was. Those articles were re-fetched, re-Stage-1'd and re-drafted on
+every pass until an unrelated candidate dragged the watermark forward.
+
+The watermark now advances on **decisions**, not writes. `ingestion/watermark.py`
+holds the rule and `PIPELINE_CHANGES_2026-07-30.md` §9 the reasoning; the two
+things not to undo are the **retry floor** (only decided dates strictly below the
+earliest unresolved date advance, so a transient error is never deleted from the
+future by its successful siblings) and the **same-day grace** (never advance onto
+the pass's own date — the source is still publishing, and `RecencyFilter`'s `<=`
+would drop the rest of the day unseen). Each pass now reports how many candidates
+consolidation dropped as duplicates of rows already awaiting review; under the
+bug that number was recurring spend.
+
 > **Known gap — consolidation calls are not yet in the cost estimate (A12).**
 > The guard counts Stage 1 calls and Stage 2 drafts but not consolidation
 > judgements, which even bounded are ~$0.05/candidate at Haiku rates — on the

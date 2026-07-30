@@ -297,9 +297,16 @@ as signal.
 - **A8 — `autonomy_tracker.py` bypasses the shared client** 🟡 Uses
   `os.environ['SUPABASE_URL']` directly, raising `KeyError` instead of the friendly
   `EnvironmentError` every other module raises.
-- **A9 — `ingestion/orchestrator.py` has no test** 🟡 No coverage of the circuit
-  breaker, deadline abort, `Stage1HaltError`, or the `dedup.InfraError` whole-pass
-  abort — the exact paths that keep an unattended pass bounded.
+- **A9 — `ingestion/orchestrator.py` is only partly tested** 🟡 `test_watermark_advance.py`
+  (2026-07-30) now drives `run_ingestion_pass` end-to-end in both write modes and
+  covers the **mid-pass Stage 1 budget halt**, a **per-candidate transient error**,
+  and the **cluster-phase deadline abort** — via the watermark each leaves behind,
+  which is the observable that matters for "no window is ever skipped". Still
+  uncovered: the **circuit breaker**, the pre-fetch **deadline abort**,
+  `Stage1HaltError`, and the `dedup.InfraError` whole-pass abort. Note the deadline
+  paths cannot be reached through the `now` argument — `run_ingestion_pass` derives
+  its deadline from `now` but compares it against the real wall clock, so a test
+  must either patch the clock or call `_write_clusters` directly (as that file does).
 
 ---
 
