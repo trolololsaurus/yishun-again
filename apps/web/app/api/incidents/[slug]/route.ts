@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { supabase }    from '@/lib/supabase'
 import { rateLimit, getIp } from '@/lib/rateLimit'
 import { sanitiseSlug } from '@/lib/utils'
+import { PUBLIC_INCIDENT_COLUMNS } from '@/lib/publicColumns'
 
 export async function GET(req: Request, props: { params: Promise<{ slug: string }> }) {
   const params = await props.params
@@ -13,7 +14,7 @@ export async function GET(req: Request, props: { params: Promise<{ slug: string 
 
   const { data, error } = await supabase
     .from('incidents')
-    .select('*')
+    .select(PUBLIC_INCIDENT_COLUMNS)
     .eq('slug', slug)
     .eq('is_published', true)
     .single()

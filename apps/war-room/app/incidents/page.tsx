@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { classIcon, classLabel, classColor, severityDiamonds, hypeMeter } from '@/lib/utils'
+import { ArtPromptModal } from '@/components/ArtPromptModal'
 import type { Incident } from '@/lib/types'
 
 interface PageData { data: Incident[]; count: number; page: number; limit: number }
@@ -12,6 +13,7 @@ export default function IncidentsPage() {
   const [page, setPage]         = useState(1)
   const [error, setError]       = useState<{ page: number; message: string } | null>(null)
   const [unpublishing, setUnpublishing] = useState<string | null>(null)
+  const [promptFor, setPromptFor] = useState<{ id: string; title: string } | null>(null)
 
   // `loading` is derived, not stored: it just means "neither the data nor the
   // error I'm holding belongs to the page I'm on". Storing it meant setting it
@@ -122,6 +124,12 @@ export default function IncidentsPage() {
                       Preview
                     </Link>
                   )}
+                  <button
+                    onClick={() => setPromptFor({ id: inc.id, title: inc.title })}
+                    className="text-text-secondary hover:text-yellow hover:underline"
+                  >
+                    Prompt
+                  </button>
                   {inc.is_published && (
                     <button
                       onClick={() => unpublish(inc.id)}
@@ -158,6 +166,14 @@ export default function IncidentsPage() {
             Next →
           </button>
         </div>
+      )}
+
+      {promptFor && (
+        <ArtPromptModal
+          incidentId={promptFor.id}
+          title={promptFor.title}
+          onClose={() => setPromptFor(null)}
+        />
       )}
     </div>
   )

@@ -7,6 +7,7 @@ import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, se
 import { ShareButton }   from './ShareButton'
 import { UTMLogger }     from '@/components/UTMLogger'
 import { SITE_URL }      from '@/lib/site'
+import { PUBLIC_INCIDENT_COLUMNS } from '@/lib/publicColumns'
 import type { Incident, IncidentLink, RelatedIncident, SourceTimelineEntry } from '@/lib/types'
 
 export const revalidate = 3600
@@ -49,9 +50,14 @@ export default async function IncidentPage({ params }: Props) {
 
   const { data, error } = await supabase
     .from('incidents')
-    .select('*')
+    .select(PUBLIC_INCIDENT_COLUMNS)
     .eq('slug', slug)
     .eq('is_published', true)
+    // The column list is a runtime constant, so supabase-js cannot parse it into
+    // a row type the way it does an inline literal. `.returns` restores the
+    // shape this page codes against — the same assumption the previous
+    // `select('*') as Incident` made, just stated where the query is built.
+    .returns<Incident>()
     .single()
 
   if (error || !data) notFound()
