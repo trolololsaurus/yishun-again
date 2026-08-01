@@ -1,12 +1,13 @@
 """
 Baseline extraction (cost + classification programme, phase 0b).
 
-READ-ONLY. Queries Supabase with SUPABASE_SECRET_KEY and prints four sections:
+READ-ONLY. Queries Supabase with SUPABASE_SECRET_KEY and prints five sections:
 
   1. agent_runs      — count + max(started_at) per agent, last 14 days
   2. agent_events    — every clustering-related event, verbatim, with timestamps
   3. incidents       — published in the last 60 days: total, single-source count, pct
   4. war_room_queue  — row count by status
+  5. incidents       — published total, and how many carry a pixel_art_url
 
 Section 3 is the programme's success measure. Cost falling while the
 single-source percentage RISES means money was saved by breaking clustering.
@@ -103,6 +104,12 @@ def section_agent_runs(client) -> None:
         breakdown = ", ".join(f"{k}={v}" for k, v in sorted(statuses[agent].items()))
         print(f"  {agent:<22} {n:>5}  {latest[agent]:<30} {breakdown}")
     print(f"\n  TOTAL runs in window: {len(rows)} across {len(counts)} agent(s)")
+    # Expected shape is ~8 rows/day: daily_orchestrator plus seven named agents.
+    # Ingestion is deliberately absent — daily.py hands it the orchestrator's own
+    # run (activity=arun) instead of opening a second one, so a missing
+    # agent='ingestion' row is the design, not a dead agent.
+    print("  NOTE: no agent='ingestion' row is expected — ingestion runs inside")
+    print("        daily_orchestrator's run (daily.py passes activity=arun).")
 
 
 # ── 2. agent_events (clustering) ─────────────────────────────────────────────
@@ -221,6 +228,34 @@ def section_queue(client) -> None:
     print(f"\n  processed_at IS NULL (awaiting operator): {unprocessed}")
 
 
+# ── 5. pixel art coverage (all published incidents) ──────────────────────────
+
+def section_pixel_art(client) -> None:
+    _rule("5. Published incidents — pixel_art_url coverage (all time)")
+    try:
+        rows = _page_all(
+            client, "incidents", "id,pixel_art_url",
+            lambda q: q.eq("is_published", True),
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"  QUERY FAILED: {exc}")
+        return
+
+    total = len(rows)
+    if total == 0:
+        print("  No published incidents.")
+        return
+
+    def has_art(row: dict) -> bool:
+        url = row.get("pixel_art_url")
+        return isinstance(url, str) and url.strip() != ""
+
+    with_art = sum(1 for r in rows if has_art(r))
+    print(f"  Published incidents total    : {total}")
+    print(f"  pixel_art_url IS NOT NULL    : {with_art}")
+    print(f"  COVERAGE                     : {100.0 * with_art / total:.1f}%")
+
+
 def main() -> int:
     print("Yishun Again — baseline report (read-only)")
     print(f"Generated: {datetime.now(timezone.utc).isoformat()}")
@@ -234,6 +269,7 @@ def main() -> int:
     section_clustering_events(client)
     section_single_source(client)
     section_queue(client)
+    section_pixel_art(client)
     print()
     return 0
 

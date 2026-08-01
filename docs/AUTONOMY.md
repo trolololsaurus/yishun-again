@@ -88,7 +88,7 @@ A draft is published with **no human review** when `agent_confidence >= 0.95`
 > editorial decision by the site's owner, taken knowingly. It is recorded here
 > rather than silently implemented, and it is reversible in one env var.
 
-What the threshold does **not** override — the four hardcoded legal guardrails
+What the threshold does **not** override — the five hardcoded legal guardrails
 (`CLAUDE.md`, "Never Remove") and the preconditions the human approve route
 already enforces with a 422. A row failing any of these is **not rejected**; it
 stays `pending` for the operator. The failure mode is always "a human looks at
@@ -99,6 +99,7 @@ it", never "it disappears".
 | ≥ 1 source URL | `no_source_url` | Guardrail #1, also a DB CHECK |
 | No `type='signal'` URL | `no_approved_source_after_filter` | Guardrail #2 — EDMW is never a quoted source |
 | Not political | `political_marker` | Guardrail #4. Stage 2 forces confidence 0, so this is unreachable; asserted as defence in depth |
+| No `suicide` / `self-harm` tag | `image_suppressed` | Guardrail #5. Blocks image generation only — the incident still publishes, with `pixel_art_url` null |
 | Real `incident_date` | `no_real_date`, `date_fallback` | QA H3 — never stamp "today" |
 | Operator-approved domain | `unapproved_source_domain` | A URL from an unknown domain is not a *verifiable* source, which is guardrail #1's actual point |
 | Not a sentinel row | `notification_row` | Pattern alerts and lifecycle notices are operator prompts, not incidents |
@@ -111,6 +112,20 @@ Two more safety properties:
 - **Rollback on a half-write.** If the incident inserts but the queue row fails
   to close, the incident is immediately unpublished. Otherwise the next pass
   would see a still-`pending` row and publish a second copy (QA H2).
+
+**Guardrail #4 fails loud (landed 2026-07-30).** `political: true` forces
+`confidence = 0.0`, which on its own meant the incident silently never published
+and no notification was raised — under unattended operation the story was lost
+without trace, and a zeroed row was indistinguishable from any other
+low-confidence one. Stage 2 now also routes it to a distinct flagged state,
+emits an operator notification via `ops/notify.py` subject to the dedup ledger,
+and writes an `agent_events` row at level `warning`. The guardrail was not
+weakened — it was made audible. Guard: `test_political_alert.py`.
+
+> Worth knowing when reading those alerts: this classifier over-triggers on
+> ordinary news that merely mentions an MP or the People's Association. The
+> prompt already says such stories are NOT political, but a smaller model still
+> fires. The notification is what makes that visible rather than silent.
 
 Every auto-publish writes a `training_signals` row with `action='auto_approve'`,
 `decided_by='agent'`. That flag is what keeps the agent from grading its own

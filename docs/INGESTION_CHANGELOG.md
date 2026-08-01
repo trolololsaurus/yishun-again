@@ -113,6 +113,14 @@ Reddit URL; taxi-driver-murders and infant-murder wrong incident_dates).
 - **North–South Line** title en-dash was normalised to a hyphen during the audit; revert to the
   en-dash if typographic correctness is preferred (cosmetic).
 
+**Ingestion debt still open** beyond the operator items above: see Track A in the
+current work plan. As of 2026-07-31 the only unimplemented item is **A2 —
+consolidation prompt caching**, which is blocked on a design question rather than
+on effort: the comparison pool is filtered per-candidate by keyword overlap
+(`consolidation/check.py`), so there is no byte-identical prefix to cache without
+changing behaviour. A3 (batched judging), A4 (cluster size-cap decision and the
+numeric locality veto), A5–A9 have all landed.
+
 ---
 
 ## June-2026 feed + data-integrity + QA session

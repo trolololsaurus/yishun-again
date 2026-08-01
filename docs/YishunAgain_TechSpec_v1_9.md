@@ -14,6 +14,7 @@
 | 1.8 | June 2026 | Backfill scope expanded 1980–2025, Wikipedia promoted to primary discovery source, phased Google News batches, EDMW signal in backfill from 2015+, Reddit explicitly out of backfill scope, groq_budget.py added, wikipedia_discovery.py added, scrapers inventory table, pre-backfill checklist, backfill_agent.py year-range refactor documented |
 | 1.9.1 | July 2026 | **Stage 1 migrated Groq → Gemini** (`gemini-3.1-flash-lite`); Groq removed entirely, `groq_budget.py` deleted for `filters/stage1_quota.py` (RPM/RPD, not TPM) — §4.2, §4.8. **Adapter port complete:** `get_enabled_sources()` went from 2 → **14** live sources (all 13 non-signal scrapers + Google News RSS); gated on `published_at`, so 9 scrapers gained date extraction (`scrapers.resolve_published_at` for the HTML ones). **Scrapers now raise** `ScraperError`/`ScraperBlocked` instead of returning `[]` — a dead source no longer looks like "no news" (Stomp had been silently dead: its search endpoint moved to `www.stomp.sg`). **Source allowlist** (`classifiers/source_allowlist.py`) checks every `source_url` against the `sources` table: signal removed (guardrail #2), unapproved kept-and-flagged; table grew 17 → 43 with citation-only domains. **Multi-source fixes:** backfills no longer collapse to one `source_url`, and Stage 2 now writes from *every* source report, not just the primary. Stage 2 slug year is stamped from `incident_date` instead of guessed. Feed sorts newest-first (`is_developing` no longer floats stale stories). |
 | 1.9 | June 2026 | **Forward-looking ingestion architecture (Option B):** new §4.9 ingestion layer (trigger-agnostic `run_ingestion_pass()` entrypoint, pluggable Source interface, **SG MSM primary + Google News corroboration**, RecencyFilter, FallbackLadder, IngestionReport) — detailed design in `docs/INGESTION_DESIGN.md`. **Learning Loop** (`docs/LEARNING_LOOP.md`): Phase-1 contextual learning in scope (Futurist agent reads `source_reputation`+`training_signals`, steers frozen models; agent accumulates DATA never weights); Phase-2 graduated autonomy + Phase-3 LoRA roadmapped not built; permanent human-in-the-loop, crime/named-individual content never auto-publishes. Three-phase scope: Cold Start (1980–2023, Historical agent enriches the hand-built archive), Warm Start (2024–Jun 2026 litmus test), Forward (daily live). New §3.7 `pipeline_state`+`pipeline_run_history` tables (watermark store). Corrected §11.2 trigger model (Cloud Scheduler→HTTP replaces broken in-process APScheduler under min-instances 0). §4.0b reconciliation note (spec-vs-filesystem drift documented). Manual historical backfill 2008–2025 completed; `docs/CONSOLIDATION_RULES.md` governs it. Data-quality audit pass; 3 wrong dates corrected. CULTURE content type (`custom`/`CULTURE`/🌐) added. |
+| 1.10 | July 2026 | **Art pipeline rebuilt.** SDXL/Modal/LoRA removed entirely — the custom `yishunagain_v1` LoRA was never loaded by the deployed code, and the CivitAI SD1.5 replacement was never wired (base model stayed SDXL). Replaced with `gemini-3.1-flash-lite-image` at $0.0336/image, no GPU, no weights, no Modal. Prompt now written by Haiku from the **finished incident** after clustering and consolidation, not from raw sources and not per-candidate. Operator-editable in War Room. Output 1200×630 to match hardcoded OG dimensions; generated before insert to avoid ISR staleness. Guardrail #5 added (suicide/self-harm tag suppression). §9 superseded by `docs/ART_PIPELINE.md`. |
 
 ---
 
@@ -51,7 +52,7 @@ yishun-again/
 │   │   ├── filters/            # Stage 1 (Gemini) + Stage 2 (Claude) filters
 │   │   ├── classifiers/        # Classification + severity scoring
 │   │   ├── writers/            # Incident draft generation
-│   │   ├── art/                # Pixel art prompt generation + Modal.run calls
+│   │   ├── art/                # Image prompt (Haiku) + Gemini image API calls
 │   │   ├── cards/              # Share card generation (UTM-tagged)
 │   │   └── orchestrator/       # LangGraph orchestrator
 │   ├── db/                     # Supabase schema, migrations, types
@@ -82,7 +83,7 @@ yishun-again/
 | Stage 1 filter | Gemini API | — | `gemini-3.1-flash-lite` (migrated from Groq, July 2026 — see §4.2) |
 | Stage 2 writer | Anthropic API | — | claude-haiku-4-5-20251001 default, claude-sonnet-4-6 for quality tasks |
 | Orchestrator | LangGraph | 0.4.0 | Python |
-| Image gen | Modal.run | — | SDXL + LoRA yishunagain_v1 (trained, 456.5MB on R2) |
+| Image gen | Gemini API | `gemini-3.1-flash-lite-image` | Nano Banana 2 Lite, $0.0336/img. No GPU, no weights. See `docs/ART_PIPELINE.md` |
 | Scheduling | APScheduler | 3.x | Embedded in FastAPI |
 | CSS | Tailwind CSS | 3.x | Pixel art + retro tabloid theme |
 
@@ -553,11 +554,10 @@ Severity guide (dagger):
 4 = Serious crime, major incident  
 5 = Homicide, major catastrophe
 
-Pixel art prompt guide:
-- Always specify: "16-bit JRPG pixel art style, Yishun HDB environment"
-- Describe the scene without depicting real people
-- Keep it interpretive, not photorealistic
-- Example: "16-bit JRPG pixel art style, Yishun HDB void deck at night, yellow police tape, pixel art lamp post, dark atmospheric lighting"
+Pixel art prompt guide: see `docs/ART_PIPELINE.md` §3. Summary — prose not tag
+soup, exclusions inline (no negative prompt parameter exists), characters
+described positively as JRPG sprites with readable faces, art style stated
+positively rather than as negated render settings.
 """
 ```
 
@@ -1754,6 +1754,12 @@ Milestone items in War Room queue display:
 
 ## 9. ART PIPELINE
 
+> ⚠️ **SUPERSEDED — July 2026.** This section describes the removed SDXL/Modal
+> pipeline and is retained for history only. Two claims below are false: the
+> LoRA was never loaded by the deployed code, and `avr_loss=nan` is a hard
+> training failure, not a logging quirk. See `docs/ART_PIPELINE.md` for the
+> current design and `docs/ART_PIPELINE.md` §7 for what went wrong.
+
 ### 9.1 Style Lock
 
 **Status: TRAINED AND DEPLOYED ✅**
@@ -2262,7 +2268,8 @@ Step 9:  ✅ LangGraph orchestrator — 6-node graph
 Step 10: ✅ Next.js frontend — map, Chaos Panel, feed, detail pages
 Step 11: ✅ Frontend wired to Supabase — live data confirmed
 Step 12: ✅ Share card + UTM logging
-Step 13: ✅ Art pipeline — LoRA trained + deployed, generation ~12s
+Step 13: ⚠️ Art pipeline — SDXL/LoRA removed July 2026 (never functioned as
+documented). Rebuilt on Gemini image API — see docs/ART_PIPELINE.md
 Step 14: ✅ SEO — sitemap, robots.txt, JSON-LD
 Step 15: ✅ Cloudflare Access — War Room protected
 Step 16: ⏳ Historical backfill + hero incidents
@@ -2295,7 +2302,7 @@ v1.8 refactor: ⏳ Backfill scope expansion, Wikipedia discovery agent,
 | Pin geocoding precision | Medium | Backlogged | Block 349 + Block 323 overlap on map — OneMap returns street centroid not block |
 | `revalidate = 0` on homepage | Medium | ✅ Fixed (commit c709b32) | Changed to 60 in apps/web/app/page.tsx |
 | `items_passed_s1` always 0 in scraper_health | Low | ✅ Fixed (2026-07-30) | Counted per-source in the ingestion pass, where Stage 1 actually runs. The old writer ran before Stage 1 and could not know it. |
-| `avr_loss=nan` in LoRA training | Low | Monitor | Logging quirk, generation works |
+| `avr_loss=nan` in LoRA training | — | Resolved | NOT a logging quirk. Hard training failure — abort the run and verify base-model compatibility. Moot: LoRA training removed. |
 | Wikipedia scraper untested live | Medium | ⏳ Pending | `--year wiki` mode exists in backfill_agent.py but quota killed dry run before it ran. Test before first Wikipedia sweep. |
 | Backfill intra-batch dedup untested live | Medium | ⏳ Pending | Dry-run confirmed working. Needs live test WITH hero incidents in DB. |
 | REVALIDATE_SECRET not in Vercel | Medium | ✅ Fixed | Added to Vercel env vars |

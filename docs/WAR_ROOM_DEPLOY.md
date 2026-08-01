@@ -90,13 +90,61 @@ Set these in the Vercel project for the `war-room` app (Production environment):
 | `OPERATOR_EMAIL` | `blyatimirovich.putin@gmail.com` | Must be lowercase |
 | `CF_ACCESS_CLIENT_ID` | *(from step 4)* | Used by agents backend only |
 | `CF_ACCESS_CLIENT_SECRET` | *(from step 4)* | Used by agents backend only |
-| `NEXT_PUBLIC_SITE_URL` | `https://yishunagain.com` | |
+| `NEXT_PUBLIC_SITE_URL` | `https://www.yishunagain.com` | **www, not the apex** — see below |
 | `WAR_ROOM_URL` | `https://warroom.yishunagain.com` | |
+| `AGENTS_API_URL` | `https://yishun-agents-xxxxx-as.a.run.app` | Image generation (Track B) — see §5a |
+| `OPS_TOKEN` | *(same value as Cloud Run)* | Byte-identical or every render 401s |
+| `REVALIDATE_SECRET` | *(same value as the `web` project)* | Byte-identical or rectification silently no-ops |
+| `ART_TIMEOUT_MS` | `120000` | Optional. Approve path — sized for the full retry ladder |
+| `RECTIFY_TIMEOUT_MS` | `45000` | Optional. One attempt, no ladder |
 
 `OPERATOR_EMAIL` is the second line of defence in `middleware.ts`: even if a
 request somehow carries a valid CF Access header from a different email, the
 middleware rejects it with 403. The primary defence is the Cloudflare policy
 above.
+
+⚠️ **`NEXT_PUBLIC_SITE_URL` must carry the `www` host.** This table previously
+said the apex. The War Room's rectification route POSTs to
+`{NEXT_PUBLIC_SITE_URL}/api/revalidate`; against the apex that hits the
+apex→www redirect, which a POST does not survive. `lib/revalidate.ts` sets
+`redirect: 'error'` so the misconfiguration fails loudly rather than degrading
+to a silent 405.
+
+---
+
+## 5a. Image generation — the War Room calls the agents backend
+
+`pixel_art_url` has two writers: `ops/auto_publish.py` (Python, imports the
+generator directly) and this app's approve route (TypeScript, cannot). The War
+Room therefore calls `POST /art/generate` and `POST /art/rectify` on Cloud Run
+with `X-Ops-Token`. Reimplementing the guardrail-#5 suppression gate and the
+softening ladder in TypeScript would put the one check that must not fail into
+two languages in two repos.
+
+### ⚠️ Blocked as deployed — `X-Ops-Token` is not enough
+
+`yishun-agents` is deployed `--no-allow-unauthenticated`, and its only IAM
+binding is `roles/run.invoker` for `yishun-scheduler@…`. Vercel has no identity
+there, so Google's IAM layer answers **403 before the app ever reads the
+header** — verified 2026-08-01 against the live service.
+
+Until this is resolved every render silently returns `status: 'transient'`, the
+incident publishes with `pixel_art_url` null, and the operator sees no error.
+Two options:
+
+1. **Make the service publicly invokable** and rely on `OPS_TOKEN` as the only
+   gate — one command, but the token becomes the entire perimeter:
+   ```
+   gcloud run services add-iam-policy-binding yishun-agents      --region asia-southeast1 --member="allUsers" --role="roles/run.invoker"
+   ```
+2. **Mint a Google identity token per request** from a service account Vercel
+   holds, and send it as `Authorization: Bearer`. Keeps IAM closed; more work,
+   and `lib/artGenerate.ts` would need to acquire and cache the token.
+
+The agents backend also needs `CF_R2_*`, `IMAGE_MODEL` and
+`ART_GENERATION_ENABLED=true` before it will render anything — see
+`.env.example`. `ART_GENERATION_ENABLED` defaults to `false` precisely so an
+unconfigured deploy behaves exactly as it does today.
 
 ---
 

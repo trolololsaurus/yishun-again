@@ -399,6 +399,20 @@ under-count by the number of unpublished drafts.
 2. Sources with `type = 'signal'` (EDMW/HWZ **and Reddit**) are never included in `source_urls`.
 3. No personal information beyond what appears in public source URLs.
 4. If Stage 2 detects political content → set `confidence = 0`, flag `"[POLITICAL CONTENT DETECTED — REJECT]"`.
+5. Image generation is suppressed when an incident carries a `suicide` or
+   `self-harm` tag. `pixel_art_url` stays null; the frontend placeholder
+   handles it. Deliberately narrow — severity, death count and confidence are
+   not consulted, and all other categories generate normally.
+
+> **Guardrail #5 is enforced by `art/suppression.py`, and it is not the
+> tag-only check the wording above describes.** `tags` is written by the Haiku
+> classifier, so a tag-only gate would make the one check that must not fail
+> depend on a model output — and the classifier does sometimes omit a `suicide`
+> tag on a suicide story. `suppress_image()` therefore ORs the tag check with a
+> deterministic phrase match over the incident's own title and summary, and
+> fails **closed** (an unreadable input suppresses). See
+> `docs/EDGE_CASES_AND_HARDENING.md` §1.2 and `test_image_suppression.py`.
+> Over-suppression costs a placeholder; under-suppression does not.
 
 > ✅ **Enforcement status (verified 2026-07-30 against the code — see
 > `docs/PIPELINE_CHANGES_2026-07-30.md`).** The June-2026 QA sweep found #1, #2
@@ -431,7 +445,14 @@ Map: MapLibre GL JS with OpenFreeMap "Liberty" style (`https://tiles.openfreemap
 
 **Lightning (⚡) = corroboration, not a separate hype field.** As of the June-2026 feed pass, the lightning meter is derived live from `corroboration_count`: `bolts = max(0, corroboration_count − 1)` (2 sources → ⚡, 3 → ⚡⚡, …). It grows as sources merge into one incident. The legacy `hype_meter` column is no longer read by the frontend. The **DEVELOPING** badge/banner was removed (it confused readers); `is_developing` drives the report-count line only — the feed is sorted newest-first (`incident_date DESC`, `id` tiebreaker), not by `is_developing`. The story timeline collapses same-date entries to a single node, and "time to verdict" is computed from the last verdict/sentencing/appeal entry in `source_timeline` (never `incident_date`). See `docs/FRONTEND_SPEC.md` and `lib/utils.ts` (`hypeFromSources`, `lastVerdictEntry`, `collapseTimelineByDate`).
 
-Share cards: rendered via OG meta tags — no separate image generation. The pixel art image (already generated for incident page) doubles as the OG image.
+Share cards: rendered via OG meta tags — no separate image generation. The
+pixel art image doubles as the OG image, which is why generated images must be
+exactly 1200×630 (the dimensions are hardcoded in
+`apps/web/app/incidents/[slug]/page.tsx`).
+
+**Art pipeline:** see `docs/ART_PIPELINE.md`. The SDXL/Modal/LoRA pipeline was
+removed in July 2026 and replaced with `gemini-3.1-flash-lite-image`. TechSpec
+§9 is historical — do not build from it.
 
 ---
 
