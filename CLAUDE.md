@@ -25,7 +25,7 @@ yishun-again/
 │   │   ├── filters/        # Stage 1 (Gemini) + Stage 2 (Claude) filters
 │   │   ├── classifiers/    # Corroboration + severity scoring
 │   │   ├── writers/        # Incident draft generation
-│   │   ├── art/            # Pixel art prompt gen + Modal.run calls
+│   │   ├── art/            # Scene writer + Gemini image gen + R2 upload
 │   │   ├── cards/          # Share card generation
 │   │   ├── orchestrator/   # Herald (milestone) agent
 │   │   └── ops/            # Autonomy layer — see docs/AUTONOMY.md
@@ -110,7 +110,7 @@ Execute strictly in sequence — do not skip ahead:
 9. Next.js frontend — map + Chaos Index (static mock data first)
 10. Wire frontend to Supabase
 11. Share card generation + UTM logging
-12. Art pipeline (Modal.run + LoRA)
+12. Art pipeline (Gemini image API — the original Modal.run + LoRA build was torn down July 2026)
 13. SEO meta tags, sitemap, schema markup
 14. Cloudflare Access for War Room
 15. Historical incident backfill
@@ -132,7 +132,7 @@ Execute strictly in sequence — do not skip ahead:
 | Stage 1 filter | Gemini API | gemini-3.1-flash-lite |
 | Stage 2 writer | Anthropic API | claude-haiku-4-5-20251001 (classify **and** write) |
 | Orchestrator | LangGraph | 0.1.x |
-| Image gen | Modal.run | SDXL + custom LoRA |
+| Image gen | Gemini image API | gemini-3.1-flash-lite-image |
 | Scheduling | APScheduler | 3.x (embedded in FastAPI) |
 | CSS | Tailwind CSS | 3.x |
 
@@ -503,10 +503,15 @@ ANTHROPIC_API_KEY
 GEMINI_API_KEY
 NEXT_PUBLIC_MAPLIBRE_STYLE
 CF_R2_ACCOUNT_ID, CF_R2_ACCESS_KEY_ID, CF_R2_SECRET_ACCESS_KEY, CF_R2_BUCKET_NAME
-MODAL_TOKEN_ID, MODAL_TOKEN_SECRET
+OPS_TOKEN                  # shared secret: War Room -> agents /art/* endpoints
+AGENTS_API_URL             # War Room -> agents base URL
+REVALIDATE_SECRET          # War Room -> web /api/revalidate (must match web's)
 NEXT_PUBLIC_SITE_URL
 WAR_ROOM_URL
 ```
+
+`MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` were removed 2026-08-02 — the SDXL/Modal
+pipeline is gone (`docs/ART_PIPELINE.md` §7.4). Nothing in the codebase reads them.
 
 `SUPABASE_SECRET_KEY` and API keys go in Google Cloud Run env vars — never in `.env` files committed to the repo.
 
