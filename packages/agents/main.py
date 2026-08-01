@@ -343,6 +343,96 @@ async def trigger_geocoding_backfill(_: None = Depends(_require_ops_token)):
     return stats
 
 
+@app.post("/art/generate", tags=["ops"])
+async def generate_incident_art(
+    payload: dict,
+    _: None = Depends(_require_ops_token),
+):
+    """
+    Render one incident's pixel art and return the R2 URL plus its status.
+
+    ## Why this endpoint exists
+
+    Both writers of `pixel_art_url` must be fixed or every auto-published
+    incident stays imageless — and under the autonomy target that is most of
+    them (ART_PIPELINE.md §6.2). But the two live in different runtimes:
+    `ops/auto_publish.py` is Python and imports `art.generate_image` directly,
+    while the operator path is a **Next.js TypeScript route** in the War Room
+    that cannot. This is the bridge. The alternative — reimplementing the
+    softening ladder and the guardrail-#5 suppression gate in TypeScript —
+    would put two copies of the one check that must not fail into two languages.
+
+    The War Room calls this with `X-Ops-Token` before its INSERT, so the URL is
+    in the row from the start and there is no update-after-insert to go stale
+    under ISR (§6.1).
+
+    Body: the finished incident — slug, title, summary, classification,
+    severity, area_name, tags. Never raw source articles.
+
+    Returns the ImageResult contract from IMAGE_RETRY_AND_RECTIFY.md §6:
+    `{url, status, attempts, final_prompt}`. Never 5xx on a generation failure —
+    the caller publishes regardless, and `status` says what happened.
+    """
+    import asyncio
+    from art.generate_image import generate_image
+
+    incident = payload.get("incident") if isinstance(payload.get("incident"), dict) else payload
+    if not isinstance(incident, dict) or not (incident.get("slug") or "").strip():
+        raise HTTPException(status_code=400, detail="incident.slug is required")
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, generate_image, incident)
+    return result.as_dict()
+
+
+@app.post("/art/rectify", tags=["ops"])
+async def rectify_incident_art(
+    payload: dict,
+    _: None = Depends(_require_ops_token),
+):
+    """
+    Re-render one incident from an operator-supplied prompt (Track B, B4b).
+
+    Distinct from `/art/generate` in three ways, all deliberate: no Haiku scene
+    writer (the operator wrote the prompt), no softening ladder (they have
+    already made that judgement — softening behind their back would render
+    something they did not ask for), and no per-pass attempt budget (this is one
+    click, not a loop).
+
+    Guardrail #5 is NOT overridable here, and the check does not rely on the
+    caller being honest. Pass `incident` and `render_prompt` runs the
+    deterministic suppression gate itself before spending anything — the War
+    Room's queue already excludes suppressed rows by construction, but the one
+    check that must not fail cannot depend on a UI filter staying correct
+    through future edits. `suppressed: true` is additionally honoured as an
+    explicit caller-side refusal.
+
+    Body: `{slug, prompt, incident?, suppressed?}`.
+    Returns the ImageResult contract: `{url, status, attempts, final_prompt}`.
+    """
+    import asyncio
+    from art.generate_image import render_prompt
+
+    slug = (payload.get("slug") or "").strip()
+    prompt = payload.get("prompt") or ""
+    if not slug:
+        raise HTTPException(status_code=400, detail="slug is required")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt is required")
+    if payload.get("suppressed"):
+        raise HTTPException(
+            status_code=422,
+            detail="Incident is suppressed under guardrail #5 — not rectifiable.",
+        )
+
+    incident = payload.get("incident") if isinstance(payload.get("incident"), dict) else None
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, lambda: render_prompt(prompt, slug, incident=incident))
+    return result.as_dict()
+
+
 @app.get("/autonomy/status", tags=["ops"])
 async def autonomy_status(_: None = Depends(_require_ops_token)):
     """Per-category autonomy calibration data derived from training_signals."""

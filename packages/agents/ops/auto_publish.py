@@ -76,6 +76,13 @@ def _threshold() -> float:
 # stays pending and a human sees it.
 MAX_AUTO_PUBLISH_PER_RUN = int(os.getenv("AUTO_PUBLISH_MAX_PER_RUN", "25"))
 
+# Art generation is opt-in per environment. It is the only step here that spends
+# money per row and it needs CF_R2_* + GEMINI_API_KEY + IMAGE_MODEL, none of
+# which are set on Cloud Run yet — so it defaults OFF and an unconfigured
+# deployment publishes exactly as it does today rather than logging a failure
+# per incident.
+ART_ENABLED = os.getenv("ART_GENERATION_ENABLED", "false").strip().lower() in ("1", "true", "on", "yes")
+
 _POLITICAL_MARKER = "[POLITICAL CONTENT DETECTED"
 
 
@@ -285,7 +292,43 @@ def check_eligibility(item: dict, threshold: float,
 
 # ── Publish ─────────────────────────────────────────────────────────────────
 
-def _publish(item: dict, client, run: AgentRun) -> str | None:
+def _generate_art(incident: dict, run: AgentRun, budget) -> dict:
+    """
+    Render the incident's image BEFORE the insert (ART_PIPELINE.md §6.1).
+
+    Returns the fields to merge into the insert. Publication is never blocked on
+    the outcome: a failure or a suppression publishes with `pixel_art_url` null,
+    and the frontend already degrades to the placeholder and og-default.jpg.
+    That is deliberate — the failure class disproportionately hits DARK EVENTS,
+    which are the most newsworthy cards, so blocking would silently withhold
+    exactly the stories that matter most (IMAGE_RETRY_AND_RECTIFY.md §4).
+
+    Generating first rather than writing back after the insert avoids the ISR
+    staleness trap: under Next.js caching an update-after-insert leaves the live
+    page serving the placeholder until revalidation fires.
+    """
+    if not ART_ENABLED:
+        return {"pixel_art_url": None, "image_status": "pending"}
+    try:
+        from art.generate_image import generate_image
+        result = generate_image(incident, budget=budget)
+    except Exception as exc:                      # noqa: BLE001 — never block a publish
+        run.warn("image_failed", f"{incident.get('slug')}: {exc}")
+        return {"pixel_art_url": None, "image_status": "transient"}
+
+    if result.status not in ("ok", "suppressed"):
+        run.warn("image_%s" % result.status,
+                 f"{incident.get('slug')}: {result.attempts[-1].get('reason', '')[:200]}"
+                 if result.attempts else incident.get("slug", ""))
+    return {
+        "pixel_art_url":  result.url,
+        "image_status":   result.status,
+        "image_prompt":   result.final_prompt or None,
+        "image_attempts": result.attempts or None,
+    }
+
+
+def _publish(item: dict, client, run: AgentRun, budget=None) -> str | None:
     """
     Port of the War Room approve route. Returns the new incident id, or None.
     Raises nothing — a failed publish leaves the row pending for a human.
@@ -332,7 +375,6 @@ def _publish(item: dict, client, run: AgentRun) -> str | None:
         "corroboration_count": item.get("corroboration_count") or 1,
         "edmw_signal_count": item.get("edmw_signal_count") or 0,
         "hype_meter": rc.get("hype_meter") or 0,
-        "pixel_art_url": None,
         "slug": item.get("proposed_slug") or rc.get("slug"),
         "seo_title": rc.get("seo_title"),
         "seo_description": rc.get("seo_description"),
@@ -352,6 +394,11 @@ def _publish(item: dict, client, run: AgentRun) -> str | None:
         "is_published": True,
         "published_at": datetime.now(timezone.utc).isoformat(),
     }
+
+    # Render before the insert so the URL is in the row from the start. Reads
+    # the finished incident, never the sources (ART_PIPELINE.md §2), which is
+    # why this sits below the dict rather than above it.
+    incident.update(_generate_art(incident, run, budget))
 
     try:
         # No .single() here: postgrest's insert builder has .select() but NOT
@@ -511,6 +558,15 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
                 f"needs >= {OVERSIZED_MIN_SAMPLES} decisions and trust >= {OVERSIZED_TRUST_THRESHOLD:.2f})",
             )
 
+        # ONE attempt budget for the whole pass. The ceiling counts billed image
+        # ATTEMPTS, not incidents: the refusal ladder can spend three per row, so
+        # a per-incident cap of 25 would permit 75 calls (IMAGE_RETRY_AND_RECTIFY
+        # §5). Exhausting it stops generation and never stops publication.
+        art_budget = None
+        if ART_ENABLED:
+            from art.generate_image import AttemptBudget
+            art_budget = AttemptBudget()
+
         published_titles: list[str] = []
         for item in rows:
             if stats["published"] >= MAX_AUTO_PUBLISH_PER_RUN:
@@ -538,7 +594,7 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
                 arun.info("would_publish", f"[dry-run] {(item.get('proposed_title') or '')[:70]}")
                 continue
 
-            incident_id = _publish(item, client, arun)
+            incident_id = _publish(item, client, arun, budget=art_budget)
             if incident_id:
                 stats["published"] += 1
                 published_titles.append((item.get("proposed_title") or "")[:80])
