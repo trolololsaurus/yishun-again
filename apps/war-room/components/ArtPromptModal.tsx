@@ -12,10 +12,11 @@ interface ArtPromptData {
     area_name:      string | null
     block_number:   string | null
     pixel_art_url:  string | null
+    image_status:   string | null
   }
-  prompt:          string
-  negative_prompt: string
-  proposed:        { prompt: string; queue_id: string; created_at: string } | null
+  prompt:   string | null
+  status:   string
+  attempts: Array<{ n: number; prompt: string; outcome: string; reason?: string }>
 }
 
 interface Props {
@@ -141,24 +142,35 @@ export function ArtPromptModal({ incidentId, title, onClose }: Props) {
                 {data.incident.block_number && <span>Blk {data.incident.block_number}</span>}
               </div>
 
-              <PromptBlock
-                label="Prompt"
-                text={data.prompt}
-                note="Built live from classification + area name — this is what the art agent would send to SDXL today. The incident title is not part of it."
-              />
+              <div className="font-body text-text-secondary text-sm">
+                Image status: <span className="text-text-primary uppercase">{data.status}</span>
+                {data.status === 'suppressed' && ' — guardrail #5 (suicide / self-harm). Not retryable.'}
+              </div>
 
-              <PromptBlock label="Negative prompt" text={data.negative_prompt} />
-
-              {data.proposed ? (
+              {data.prompt ? (
                 <PromptBlock
-                  label="Agent-proposed (historic)"
-                  text={data.proposed.prompt}
-                  note={`Written onto the queue row ${new Date(data.proposed.created_at).toLocaleDateString('en-SG')}. Kept for reference — it is not what gets generated.`}
+                  label="Prompt used"
+                  text={data.prompt}
+                  note="The full assembled prompt of the last attempt — style, composition and physical-coherence blocks, the Haiku-written scene, then palette and exclusions."
                 />
               ) : (
                 <div className="font-body text-text-secondary text-sm">
-                  No agent-proposed prompt on the originating queue row — Stage 2 stopped
-                  generating one after the Haiku switch.
+                  No prompt recorded. Either this incident predates image generation, or it
+                  was suppressed before any prompt was written.
+                </div>
+              )}
+
+              {data.attempts.length > 1 && (
+                <div className="space-y-2">
+                  <div className="font-body text-text-secondary text-sm uppercase tracking-widest">
+                    Attempts ({data.attempts.length})
+                  </div>
+                  {data.attempts.map(a => (
+                    <div key={a.n} className="font-body text-sm">
+                      <span className="text-text-primary">#{a.n} {a.outcome.toUpperCase()}</span>
+                      {a.reason && <span className="text-text-secondary"> — {a.reason}</span>}
+                    </div>
+                  ))}
                 </div>
               )}
 

@@ -33,9 +33,6 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
     (item.proposed_classification as Classification) ?? 'dagger'
   )
   const [severity,   setSeverity]   = useState(item.proposed_severity   ?? 3)
-  const [pixelPrompt, setPixelPrompt] = useState(
-    (rc.pixel_art_prompt as string) ?? item.proposed_pixel_prompt ?? ''
-  )
 
   // Auto-expand source view when confidence < 0.85
   const [showSource,       setShowSource]       = useState((item.agent_confidence ?? 1) < 0.85)
@@ -49,8 +46,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
     title      !== (item.proposed_title      ?? '') ||
     summary    !== (item.proposed_summary    ?? '') ||
     classif    !== (item.proposed_classification ?? 'dagger') ||
-    severity   !== (item.proposed_severity   ?? 3)  ||
-    pixelPrompt !== ((rc.pixel_art_prompt as string) ?? item.proposed_pixel_prompt ?? '')
+    severity   !== (item.proposed_severity   ?? 3)
   )
 
   const conf             = item.agent_confidence
@@ -88,7 +84,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
       const res = await fetch(`/api/queue/${item.id}/approve`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ title, summary, classification: classif, severity, pixel_art_prompt: pixelPrompt }),
+        body:    JSON.stringify({ title, summary, classification: classif, severity }),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
@@ -310,18 +306,12 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
             </div>
           </div>
 
-          {/* Pixel art prompt */}
-          <div>
-            <label className="font-body text-text-secondary text-sm uppercase tracking-widest block mb-1">
-              Pixel Art Prompt
-            </label>
-            <textarea
-              value={pixelPrompt}
-              onChange={e => setPixelPrompt(e.target.value)}
-              rows={2}
-              className="w-full px-3 py-2 bg-bg border border-border text-text-primary font-body text-base rounded focus:border-yellow focus:outline-none resize-y"
-            />
-          </div>
+          {/* No art prompt field here by design. Stage 2 stopped writing
+              pixel_art_prompt, and under the current pipeline the prompt does
+              not exist until approve time — Haiku writes it from the FINISHED
+              incident, after clustering and consolidation (ART_PIPELINE.md §2).
+              There is nothing to edit at queue time. Prompt editing lives in
+              the rectification flow, where a prompt actually exists. */}
 
           {/* Possible related banners — pending items only (no confirm-link without a matched incident) */}
           {visibleRelated.length > 0 && (

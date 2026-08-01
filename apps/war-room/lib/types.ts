@@ -85,6 +85,84 @@ export interface IncidentPreview {
   is_developing:  boolean
 }
 
+// ── Image generation state (migration 014) ──────────────────────────────────
+//
+// Single source of truth for the vocabulary. It previously lived in three
+// places that had already drifted — the 014 column comment, the doc, and an
+// inline union in artGenerate.ts that was missing `no_image_final` entirely.
+export type ImageStatus =
+  | 'ok'              // rendered, uploaded, HEAD-verified
+  | 'suppressed'      // guardrail #5 — TERMINAL, never retried, never rectified
+  | 'refused'         // the safety filter refused every rung of the ladder
+  | 'transient'       // network / timeout / 5xx exhausted its attempts
+  | 'invalid'         // unusable bytes or the wrong aspect ratio
+  | 'skipped'         // the pass-level attempt ceiling was reached
+  | 'pending'         // never attempted (backfill, or the backend unconfigured)
+  | 'no_image_final'  // operator published without one — TERMINAL
+
+export interface ImageAttempt {
+  n:       number
+  prompt:  string
+  outcome: string
+  reason?: string
+}
+
+/**
+ * The rectification queue. Mirrors `idx_incidents_image_status` in 014 exactly.
+ *
+ * Deliberately an allowlist rather than "everything except suppressed": a
+ * `.in()` excludes guardrail-#5 rows by construction, where a `!==` filter is
+ * one careless edit away from inverting. Do not widen this to
+ * `.neq('image_status', 'ok')`.
+ *
+ * Excluded on purpose — `ok` needs nothing; `suppressed` and `no_image_final`
+ * are terminal; `pending` was never attempted at all and is a backfill problem,
+ * not a rectification one.
+ */
+export const RECTIFIABLE_STATUSES = ['refused', 'transient', 'invalid', 'skipped'] as const
+export type RectifiableStatus = typeof RECTIFIABLE_STATUSES[number]
+
+/**
+ * Columns the /rectify server component selects.
+ *
+ * Lives here, NOT in RectifyCard.tsx, and that is load-bearing: RectifyCard is
+ * a `'use client'` module, and a server component importing a runtime VALUE
+ * from one receives a client-reference proxy rather than the string. It
+ * typechecks perfectly and then dies inside supabase-js with
+ * "(intermediate value).split is not a function". Types are erased so they
+ * cross the boundary fine; constants do not.
+ */
+export const RECTIFY_COLUMNS =
+  'id, title, slug, classification, custom_label, severity, area_name, block_number, ' +
+  'pixel_art_url, image_status, image_prompt, image_attempts, published_at'
+
+export interface RectifyItem {
+  id:             string
+  title:          string
+  slug:           string
+  classification: Classification
+  custom_label:   string | null
+  severity:       number | null
+  area_name:      string | null
+  block_number:   string | null
+  pixel_art_url:  string | null
+  image_status:   ImageStatus | null
+  image_prompt:   string | null
+  image_attempts: ImageAttempt[] | null
+  published_at:   string | null
+}
+
+const IMAGE_STATUSES: readonly string[] = [
+  'ok', 'suppressed', 'refused', 'transient',
+  'invalid', 'skipped', 'pending', 'no_image_final',
+]
+
+/** Validate a status crossing a process boundary. A bare `as ImageStatus` cast
+ *  would let a backend typo through unchecked and into the database. */
+export function isImageStatus(v: unknown): v is ImageStatus {
+  return typeof v === 'string' && IMAGE_STATUSES.includes(v)
+}
+
 export interface Incident {
   id:                  string
   created_at:          string
@@ -104,6 +182,9 @@ export interface Incident {
   edmw_signal_count:   number
   hype_meter:          number
   pixel_art_url:       string | null
+  image_status:        ImageStatus | null
+  image_prompt:        string | null
+  image_attempts:      ImageAttempt[] | null
   slug:                string
   seo_title:           string | null
   seo_description:     string | null

@@ -1,22 +1,25 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { validateUUID } from '@/lib/utils'
-import { buildArtPrompt, NEGATIVE_PROMPT } from '@/lib/artPrompt'
 
-// Operator-only: shows what the art agent would send to SDXL for a published
-// incident, plus whatever prompt the pipeline proposed at draft time.
+// Operator-only: what was actually sent to the image model for this incident,
+// and what happened.
 //
-// Two different things, deliberately returned separately:
-//  - `prompt` / `negative_prompt` — computed live from the incident's current
-//    classification + area_name. This is what Modal would actually use, and it
-//    tracks operator edits (re-classify an incident and the prompt changes).
-//  - `proposed` — the `pixel_art_prompt` the agent wrote onto the originating
-//    queue row. Stage 2 stopped generating this after the Haiku switch, so it
-//    is null for anything drafted since; older rows still carry it. It is
-//    history, not what would be generated.
+// Rewritten for the Gemini pipeline (Track B, B4). It previously rebuilt an
+// SDXL prompt live from `lib/artPrompt.ts` and returned a `negative_prompt`
+// alongside it. Both are gone:
 //
-// `incidents` has no pixel_art_prompt column, which is why the second one has
-// to be read back off `war_room_queue`.
+//  - The SDXL builder derived its prompt from classification + area_name only,
+//    ignoring the incident entirely, so every dagger on the same street produced
+//    a byte-identical string (ART_PIPELINE.md §7.3). It described a pipeline
+//    that no longer exists.
+//  - Gemini has NO negative prompt parameter. That field had no destination —
+//    exclusions are stated inline in the prose (§3.1).
+//
+// What replaces them is the real thing: `incidents.image_prompt` and
+// `image_attempts`, written at publish time by whichever writer created the row.
+// This is history rather than a live rebuild, which is correct — it is the
+// prompt that produced the picture on screen, not one that might have.
 export async function GET(_request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
   const id = validateUUID(params.id)
@@ -24,7 +27,7 @@ export async function GET(_request: Request, props: { params: Promise<{ id: stri
 
   const { data: incident, error } = await supabase
     .from('incidents')
-    .select('id, title, slug, classification, custom_label, area_name, block_number, pixel_art_url')
+    .select('id, title, slug, classification, custom_label, area_name, block_number, pixel_art_url, image_status, image_prompt, image_attempts')
     .eq('id', id)
     .single()
 
@@ -32,31 +35,10 @@ export async function GET(_request: Request, props: { params: Promise<{ id: stri
     return NextResponse.json({ error: 'Incident not found' }, { status: 404 })
   }
 
-  // Supplementary — a queue lookup failure must not cost the operator the
-  // effective prompt, which is the part they came for.
-  let proposed: { prompt: string; queue_id: string; created_at: string } | null = null
-  const { data: queueRows, error: queueErr } = await supabase
-    .from('war_room_queue')
-    .select('id, created_at, proposed_pixel_prompt, raw_content')
-    .eq('incident_id', id)
-    .order('created_at', { ascending: false })
-    .limit(1)
-
-  if (queueErr) {
-    console.error('GET art-prompt — queue lookup failed (non-fatal):', queueErr)
-  } else if (queueRows?.length) {
-    const row = queueRows[0]
-    const rc  = (row.raw_content ?? {}) as Record<string, unknown>
-    // raw_content is the richer copy; proposed_pixel_prompt is the projection
-    // consolidation/queue_row.py writes alongside it. Prefer whichever is set.
-    const text = ((rc.pixel_art_prompt as string) || row.proposed_pixel_prompt || '').trim()
-    if (text) proposed = { prompt: text, queue_id: row.id, created_at: row.created_at }
-  }
-
   return NextResponse.json({
     incident,
-    prompt:          buildArtPrompt(incident.classification, incident.area_name),
-    negative_prompt: NEGATIVE_PROMPT,
-    proposed,
+    prompt:   incident.image_prompt ?? null,
+    status:   incident.image_status ?? 'pending',
+    attempts: incident.image_attempts ?? [],
   })
 }

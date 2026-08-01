@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { validateUUID, slugify } from '@/lib/utils'
 import { geocodeIncident } from '@/lib/geocode'
+import { generateIncidentArt } from '@/lib/artGenerate'
 import type { ApproveBody, Classification } from '@/lib/types'
 
 export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
@@ -22,7 +23,6 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   const classification  = (['heart', 'clown', 'dagger', 'custom'].includes(body.classification)
     ? body.classification : 'dagger') as Classification
   const severity        = Math.max(1, Math.min(5, Number(body.severity) || 3))
-  const pixel_art_prompt = (body.pixel_art_prompt ?? '').trim()
 
   if (!title || !summary) {
     return NextResponse.json({ error: 'title and summary are required' }, { status: 400 })
@@ -102,7 +102,6 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     corroboration_count: item.corroboration_count ?? 1,
     edmw_signal_count:   item.edmw_signal_count   ?? 0,
     hype_meter:          (rc.hype_meter    as number) ?? 0,
-    pixel_art_url:       null,
     slug,
     seo_title:           (rc.seo_title       as string | null) ?? null,
     seo_description:     (rc.seo_description as string | null) ?? null,
@@ -126,10 +125,30 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     published_at:        new Date().toISOString(),
   }
 
+  // Render BEFORE the insert so pixel_art_url is in the row from the start
+  // (ART_PIPELINE.md §6.1). Costs the operator a few seconds on the click and
+  // removes the write-back, the orphan state and the ISR staleness problem.
+  // Never blocks: a failure or a guardrail-#5 suppression publishes with null.
+  const art = await generateIncidentArt({
+    slug,
+    title,
+    summary,
+    classification,
+    severity,
+    area_name: areaName,
+    tags: (rc.tags as string[]) ?? [],
+  })
+
   // Insert incident
   const { data: newIncident, error: incErr } = await supabase
     .from('incidents')
-    .insert(incident)
+    .insert({
+      ...incident,
+      pixel_art_url:  art.url,
+      image_status:   art.status,
+      image_prompt:   art.final_prompt || null,
+      image_attempts: art.attempts.length ? art.attempts : null,
+    })
     .select('id')
     .single()
 
@@ -147,9 +166,6 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   if (summary     !== item.proposed_summary)         changes.summary        = { from: item.proposed_summary,        to: summary }
   if (classification !== item.proposed_classification) changes.classification = { from: item.proposed_classification, to: classification }
   if (severity    !== item.proposed_severity)        changes.severity       = { from: item.proposed_severity,       to: severity }
-  if (pixel_art_prompt !== (rc.pixel_art_prompt as string ?? '')) {
-    changes.pixel_art_prompt = { from: rc.pixel_art_prompt, to: pixel_art_prompt }
-  }
   const action = Object.keys(changes).length > 0 ? 'edit_approve' : 'approve'
 
   // Create incident_links for any undismissed related incidents now that we
