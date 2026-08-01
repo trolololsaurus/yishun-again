@@ -23,6 +23,7 @@ What is asserted here, in both write modes:
 without them this fix silently loses stories instead of merely wasting money.
 """
 import importlib
+import time
 import os
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
@@ -295,6 +296,25 @@ for mode, grouper in (("off", None), ("on", lambda cands: [[i] for i in range(le
     print(f"\nrun_ingestion_pass, CLUSTER_BEFORE_WRITE={mode}:\n")
     kw = {"mode": mode, "grouper": grouper}
 
+    # ── 0. The pass deadline is a DURATION, not a wall-clock timestamp ───────
+    #
+    # It used to be `now + max_duration_seconds` compared against
+    # `datetime.now()` — two different clocks. Any caller whose `now` is not the
+    # real current time got a deadline already in the past, and the pass aborted
+    # before fetching anything: empty `per_source`, zero Stage 1 calls, no
+    # watermark moved. Indistinguishable from "no news today".
+    #
+    # This whole file pins `now` to the 14:58 SGT slot, so every assertion below
+    # silently depended on the real clock being within max_duration of it — the
+    # suite was only valid for ~20 real minutes a day. Guard it directly.
+    store = FakeStateStore({"CNA": START})
+    src = FakeSource("CNA", [_cand("Yishun void deck fire", 27)])
+    ancient = datetime(2020, 1, 1, 6, 58, tzinfo=timezone.utc)
+    report, calls = _run([src], store, now=ancient, **kw)
+    check("a `now` years in the past does NOT abort the pass on the deadline",
+          len(report.per_source) == 1, f"-> per_source={report.per_source}")
+    check("...and the source was really fetched", calls["stage1"] >= 1, f"-> {calls}")
+
     # ── 1. The reported bug: a consolidation duplicate-skip advances ─────────
     store = FakeStateStore({"CNA": START})
     src = FakeSource("CNA", [_cand("already queued elsewhere", 28)])
@@ -360,9 +380,11 @@ check("budget halt: all three are offered again next pass", calls2["stage1"] == 
       f"-> {calls2}")
 
 # ── 6. An aborted cluster-write phase must not advance what it never wrote ──
-# Driven through _write_clusters directly rather than through a pass: the
-# orchestrator derives `deadline` from its `now` argument but compares it against
-# the real wall clock, so a synthetic pass clock cannot trip it.
+# Driven through _write_clusters directly rather than through a pass, because
+# tripping the deadline mid-pass would need a real elapsed wait. The deadline is
+# a MONOTONIC value (a duration from an arbitrary origin), not a wall-clock
+# timestamp — see the comment on `deadline_monotonic` in orchestrator.py for why
+# it stopped being derived from `now`.
 _cna_c = _cand("Yishun cat rescued from tree", 28)
 _st_c = _cand("Yishun lift breakdown", 26, name="ST")
 _gathered = [{"candidate": c, "item": orch._candidate_to_item(c),
@@ -377,7 +399,7 @@ def _gathered_trackers():
     return trk
 
 
-def _write_clusters(trackers, deadline):
+def _write_clusters(trackers, deadline_monotonic):
     patches = [
         mock.patch.object(orch, "write_stage2", side_effect=lambda s2: {
             "title": s2.get("title", ""), "summary": "s", "classification": "clown",
@@ -395,7 +417,7 @@ def _write_clusters(trackers, deadline):
     try:
         return orch._write_clusters(
             _gathered, client=FakeClient(), dry_run=False, reputation={},
-            signal_summary="", notes=[], activity=None, deadline=deadline,
+            signal_summary="", notes=[], activity=None, deadline_monotonic=deadline_monotonic,
             circuit_breaker_n=5, trackers=trackers)
     finally:
         for p in reversed(patches):
@@ -403,7 +425,7 @@ def _write_clusters(trackers, deadline):
 
 
 trk = _gathered_trackers()
-res = _write_clusters(trk, datetime.now(timezone.utc) - timedelta(seconds=1))
+res = _write_clusters(trk, time.monotonic() - 1)   # already expired
 check("cluster phase hit the deadline before writing anything", res["aborted"] and res["queued"] == 0)
 check("aborted cluster phase advances no watermark",
       (trk["CNA"].value(), trk["ST"].value()) == (START, START),
@@ -412,7 +434,7 @@ check("...and both sources still hold a floor, so both candidates retry",
       trk["CNA"].floor == date(2026, 7, 28) and trk["ST"].floor == date(2026, 7, 26))
 
 trk = _gathered_trackers()
-res = _write_clusters(trk, datetime.now(timezone.utc) + timedelta(hours=1))
+res = _write_clusters(trk, time.monotonic() + 3600)   # plenty of time
 check("a completed cluster phase settles every held candidate", res["queued"] == 2)
 check("...and each source advances to its own member's date",
       (trk["CNA"].value(), trk["ST"].value()) == (date(2026, 7, 28), date(2026, 7, 26)),

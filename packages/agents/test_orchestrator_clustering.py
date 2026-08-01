@@ -8,6 +8,7 @@ off-mode unit), and _write_clusters writes ONE merged row per confirmed cluster
 with all its sources — while a rejected merge stays two separate rows.
 """
 import importlib
+import time
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
@@ -130,7 +131,7 @@ with _patched(), mock.patch.object(orch, "_make_grouper", return_value=grouper_s
     trk = _trackers()
     res = orch._write_clusters(
         gathered, client=client, dry_run=False, reputation={}, signal_summary="",
-        notes=[], activity=None, deadline=datetime.now(timezone.utc) + timedelta(hours=1),
+        notes=[], activity=None, deadline_monotonic=time.monotonic() + 3600,
         circuit_breaker_n=5, trackers=trk,
     )
 
@@ -154,7 +155,7 @@ with _patched(), mock.patch.object(
     trk = _trackers()
     res = orch._write_clusters(
         gathered, client=client, dry_run=False, reputation={}, signal_summary="",
-        notes=[], activity=None, deadline=datetime.now(timezone.utc) + timedelta(hours=1),
+        notes=[], activity=None, deadline_monotonic=time.monotonic() + 3600,
         circuit_breaker_n=5, trackers=trk,
     )
 check("grouper splits everything -> 3 single-source rows", len(client.rows) == 3)
@@ -171,7 +172,7 @@ with _patched(), mock.patch.object(orch, "_make_grouper", return_value=grouper_b
     trk = _trackers()
     res = orch._write_clusters(
         gathered, client=client, dry_run=False, reputation={}, signal_summary="",
-        notes=[], activity=None, deadline=datetime.now(timezone.utc) + timedelta(hours=1),
+        notes=[], activity=None, deadline_monotonic=time.monotonic() + 3600,
         circuit_breaker_n=5, trackers=trk,
     )
 check("malformed grouper response -> 3 single-source rows, pass survives", len(client.rows) == 3)
@@ -185,7 +186,7 @@ with _patched(), mock.patch.object(orch, "_make_grouper", return_value=None):
     trk = _trackers()
     res = orch._write_clusters(
         gathered, client=client, dry_run=False, reputation={}, signal_summary="",
-        notes=[], activity=None, deadline=datetime.now(timezone.utc) + timedelta(hours=1),
+        notes=[], activity=None, deadline_monotonic=time.monotonic() + 3600,
         circuit_breaker_n=5, trackers=trk,
     )
 check("grouper unavailable -> keyword fallback used", res["cstats"] == {"grouper": "unavailable"},
@@ -198,7 +199,7 @@ with _patched(), mock.patch.object(orch, "_make_grouper", return_value=grouper_s
     trk = _trackers()
     res = orch._write_clusters(
         gathered, client=client, dry_run=True, reputation={}, signal_summary="",
-        notes=[], activity=None, deadline=datetime.now(timezone.utc) + timedelta(hours=1),
+        notes=[], activity=None, deadline_monotonic=time.monotonic() + 3600,
         circuit_breaker_n=5, trackers=trk,
     )
 check("dry_run: nothing inserted", len(client.rows) == 0)

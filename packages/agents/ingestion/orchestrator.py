@@ -45,8 +45,9 @@ KNOWN v1 GAPS (flagged, not fixed here — see chat for detail):
 
 import logging
 import os
+import time
 from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from classifiers.corroboration import get_supabase_client
 from classifiers.source_allowlist import is_signal_source
@@ -367,7 +368,7 @@ def _write_group(members, by_id, res, *, client, dry_run, reputation, signal_sum
 
 
 def _write_clusters(gathered, *, client, dry_run, reputation, signal_summary,
-                    notes, activity, deadline, circuit_breaker_n, trackers):
+                    notes, activity, deadline_monotonic, circuit_breaker_n, trackers):
     """
     The 'on' write phase: cluster the gathered Stage-1-passed candidates, confirm
     merges with the Haiku judge, and write ONE row per cluster with all sources.
@@ -398,7 +399,7 @@ def _write_clusters(gathered, *, client, dry_run, reputation, signal_summary,
 
     consecutive: dict[str, int] = {}
     for ci, cluster in enumerate(clusters):
-        if datetime.now(timezone.utc) >= deadline:
+        if time.monotonic() >= deadline_monotonic:
             res["aborted"] = True
             # Hold the unwritten remainder. Per-CANDIDATE, not per-pass: a source
             # whose every candidate was written before the deadline still advances,
@@ -526,7 +527,23 @@ def run_ingestion_pass(
     abort_pass: str | None = None        # set → break out of both loops
     consecutive: dict[str, int] = {}     # circuit breaker: error-class → consecutive count
     total_sleep_seconds: float = 0.0     # throttle visibility
-    deadline = started_at + timedelta(seconds=max_duration_seconds)
+
+    # The pass deadline is a DURATION, measured on the monotonic clock — not a
+    # wall-clock timestamp derived from `now`.
+    #
+    # It used to be `started_at + timedelta(seconds=max_duration_seconds)`, where
+    # `started_at = now` is the caller-supplied time, while every check compared
+    # against `datetime.now(timezone.utc)`. Two different clocks. In production
+    # they are the same instant so the bug is invisible, but any caller passing a
+    # `now` that is not the real current time gets a deadline already in the past
+    # and the pass aborts before fetching a single source — reporting an empty
+    # `per_source` and advancing no watermarks, which reads exactly like "no news
+    # today". `test_watermark_advance.py` pins `now` to the 14:58 SGT slot and so
+    # was only valid during a ~20-minute real-time window each day.
+    #
+    # Monotonic also makes the budget immune to an NTP step or a DST jump
+    # mid-pass, which a wall-clock deadline is not.
+    deadline_monotonic = time.monotonic() + max_duration_seconds
 
     # Gather -> cluster -> write. Staged rollout (owner chose shadow-first):
     #   off    — current per-candidate path, byte-identical (default)
@@ -586,7 +603,7 @@ def run_ingestion_pass(
             # of which can itself sleep for a minute-plus) long after its budget
             # was gone. Remaining sources are recorded as unprocessed rather
             # than silently dropped.
-            if datetime.now(timezone.utc) >= deadline:
+            if time.monotonic() >= deadline_monotonic:
                 abort_pass = (
                     f"aborted before '{source.name}': max_duration_seconds="
                     f"{max_duration_seconds} reached"
@@ -614,7 +631,7 @@ def run_ingestion_pass(
 
             # Don't spend the retry backoff if there isn't time left to use the
             # result anyway.
-            seconds_left = (deadline - datetime.now(timezone.utc)).total_seconds()
+            seconds_left = deadline_monotonic - time.monotonic()
             backoff = fallback.BACKOFF_SECONDS if seconds_left > fallback.BACKOFF_SECONDS * 2 else 0
 
             candidates, result = fallback.run_with_fallback(
@@ -670,7 +687,7 @@ def run_ingestion_pass(
                 # could never abort — it just made DB round-trips until the
                 # source list ran out, which is the exact shape of an
                 # accidentally-unbounded pass.
-                if datetime.now(timezone.utc) >= deadline:
+                if time.monotonic() >= deadline_monotonic:
                     tracker.unresolved_all(todo[idx:])
                     abort_pass = (
                         f"aborted: max_duration_seconds={max_duration_seconds} reached "
@@ -706,7 +723,7 @@ def run_ingestion_pass(
                 novel_count += 1
 
                 # ── Safety: max-duration timeout ─────────────────────────────
-                if datetime.now(timezone.utc) >= deadline:
+                if time.monotonic() >= deadline_monotonic:
                     tracker.unresolved_all(todo[idx:])
                     abort_pass = (
                         f"aborted: max_duration_seconds={max_duration_seconds} reached "
@@ -901,7 +918,7 @@ def run_ingestion_pass(
             cres = _write_clusters(
                 gathered, client=client, dry_run=dry_run, reputation=reputation,
                 signal_summary=signal_summary, notes=notes, activity=activity,
-                deadline=deadline, circuit_breaker_n=circuit_breaker_n,
+                deadline_monotonic=deadline_monotonic, circuit_breaker_n=circuit_breaker_n,
                 trackers=trackers,
             )
             total_queued += cres["queued"]
