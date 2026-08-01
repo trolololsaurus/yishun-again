@@ -25,9 +25,14 @@ QUEUE_FETCH_LIMIT = 50
 # skip the Claude call for that pair to save API cost.
 MIN_KEYWORD_OVERLAP = 1
 
-# Cap on Claude judgement calls per candidate.
+# Cap on Claude judgement calls per candidate. UNUSED since batching landed —
+# check.py sends every eligible record in ONE call and no longer reads this.
+# Kept defined so the env var does not become a silent no-op mid-rollback.
 #
-# This is the pipeline's dominant cost. With MIN_KEYWORD_OVERLAP=1, a single
+# ⚠️ The "dominant cost" note below is HISTORICAL. It described pairwise
+# judging, which is gone.
+#
+# This was the pipeline's dominant cost. With MIN_KEYWORD_OVERLAP=1, a single
 # shared 4-letter word ("road", "fire", "block") makes a pair eligible, so
 # against a 50-published + 50-queued pool a candidate could fan out to ~100
 # Haiku calls — and the count grows with the archive. One live pass spent ~87
@@ -40,6 +45,41 @@ MIN_KEYWORD_OVERLAP = 1
 # pair is a rare miss, and ops/integrity.py is the backstop — it re-scans for
 # duplicate entries every pass and flags them for the operator.
 MAX_JUDGEMENTS_PER_CANDIDATE = int(os.getenv("CONSOLIDATION_MAX_JUDGEMENTS", "12"))
+
+# ── Prompt caching on the consolidation call: DECIDED AGAINST (A2, 2026-08-02) ──
+#
+# The plan was to send the archive pool as a cached prefix so only per-candidate
+# content is billed at full rate. Four measurements killed it, any one of them
+# sufficient:
+#
+# 1. THE PREFIX IS NOT IDENTICAL ACROSS CANDIDATES. check.py scores every record
+#    by keyword overlap against THAT candidate and keeps only those clearing
+#    MIN_KEYWORD_OVERLAP, sorted by overlap descending. Membership AND order
+#    differ per candidate by construction — 39 of 54 records for one measured
+#    candidate. Caching is a byte-exact prefix match, so there is nothing stable
+#    to cache. Sending the full unfiltered pool instead would work, but that
+#    removes the ranking, and A2 required behaviour to be unchanged.
+#
+# 2. THE FILTERED PROMPT IS BELOW THE CACHEABLE MINIMUM. Measured via
+#    /v1/messages/count_tokens against claude-haiku-4-5: filtered pool 3,889
+#    tokens, full pool 5,259. Haiku 4.5's minimum cacheable prefix is 4,096 —
+#    the HIGHEST tier of any current model, above Opus 4.8 (1,024) and Claude
+#    Opus 5 (512). The minimum is not monotonic across generations, so a figure
+#    remembered from another model is not transferable. Below it a cache_control
+#    marker is silently ignored: no error, cache_creation_input_tokens = 0.
+#
+# 3. VOLUME SITS AT BREAK-EVEN. One batched call per candidate, and the pass
+#    averages 3.0 candidates (measured over five passes: 2, 2, 4, 6, 1). A cache
+#    write costs 1.25x base input at the 5-minute TTL and a read 0.1x, so
+#    break-even is ~2 calls sharing one prefix. Three is marginal at best, and
+#    only if 1 and 2 were solved.
+#
+# 4. THE PREMISE EXPIRED. A2 was written against "~87 Haiku calls in 3 minutes",
+#    which was pairwise judging. Batching (A3) already collapsed that to one call
+#    per candidate — the ~30x saving A2 was chasing was banked before it ran.
+#
+# Revisit only if pass volume rises far enough that step 3 stops being marginal,
+# AND the per-candidate ranking is dropped or moved inside the prompt.
 
 # same_incident_confidence >= this → treat as an UPDATE to the matched incident.
 UPDATE_MATCH_THRESHOLD = 0.7

@@ -113,13 +113,25 @@ Reddit URL; taxi-driver-murders and infant-murder wrong incident_dates).
 - **North–South Line** title en-dash was normalised to a hyphen during the audit; revert to the
   en-dash if typographic correctness is preferred (cosmetic).
 
-**Ingestion debt still open** beyond the operator items above: see Track A in the
-current work plan. As of 2026-07-31 the only unimplemented item is **A2 —
-consolidation prompt caching**, which is blocked on a design question rather than
-on effort: the comparison pool is filtered per-candidate by keyword overlap
-(`consolidation/check.py`), so there is no byte-identical prefix to cache without
-changing behaviour. A3 (batched judging), A4 (cluster size-cap decision and the
-numeric locality veto), A5–A9 have all landed.
+**Track A is closed.** A3 (batched judging), A4 (cluster size-cap decision and
+the numeric locality veto) and A5–A9 all landed. **A2 — consolidation prompt
+caching — was measured and deliberately NOT implemented** (2026-08-02); the
+reasoning is recorded in full at `consolidation/rules.py`, next to
+`MAX_JUDGEMENTS_PER_CANDIDATE`. In short, four independent blockers:
+
+1. The comparison pool is filtered and ranked **per candidate** by keyword
+   overlap, so there is no byte-identical prefix. Caching is an exact prefix
+   match. Sending the unfiltered pool would fix that but changes behaviour,
+   which A2 forbade.
+2. The filtered prompt measures **3,889 tokens** against Haiku 4.5's **4,096**
+   minimum cacheable prefix — the highest minimum of any current model. Below
+   it, a `cache_control` marker is silently ignored.
+3. The pass averages **3.0 candidates** (2/2/4/6/1 over five passes) and
+   consolidation now makes one batched call each. Break-even on a 5-minute-TTL
+   cache is ~2 calls, so the saving would be marginal even if 1 and 2 were
+   solved.
+4. A2's premise — "~87 Haiku calls in 3 minutes" — described pairwise judging.
+   A3 already collapsed that to one call per candidate.
 
 ---
 
