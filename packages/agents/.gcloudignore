@@ -1,0 +1,44 @@
+# Upload filter for `gcloud run deploy --source .` (Cloud Build staging tarball).
+#
+# This is NOT redundant with .dockerignore, and the two run at different points:
+#   .gcloudignore  — what gcloud uploads to the Cloud Build staging bucket
+#   .dockerignore  — what `docker build` copies into the image
+#
+# Without this file gcloud looks for a .gitignore IN THIS DIRECTORY to derive an
+# ignore set from. There isn't one — the repo's .gitignore lives at the root, two
+# levels up — so the fallback finds nothing and the upload becomes 222 MB (the
+# 218 MB .venv) instead of 2.1 MB. .dockerignore would still keep .venv out of
+# the image, so the symptom is a slow, fragile upload rather than a broken
+# container, which is exactly the kind of thing that goes unnoticed.
+#
+# Keep the secret patterns first and keep them in sync with .dockerignore: they
+# are the reason a stray local .env can never reach the staging bucket.
+
+# Never upload local secrets
+.env
+.env.*
+*.env
+
+# Python artefacts
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+.pytest_cache/
+
+# Dev / test files — the suite lives at package root as test_*.py, not tests/
+tests/
+test_*.py
+tools/
+fixtures/
+seed_backfill.py
+
+# Runtime state written by a pass; regenerated on the instance, never shipped
+*.log
+stage1_*_usage.json
+calibration_log.json
+
+# OS
+.DS_Store
+Thumbs.db
