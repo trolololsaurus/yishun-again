@@ -39,18 +39,90 @@ def read(*parts) -> str:
     return p.read_text(encoding="utf-8") if p.exists() else ""
 
 
+# Characters that may legitimately precede a comment opener. Used to tell a real
+# `//` from the tail of a regex literal such as /^https?:\/\// , where the last
+# two slashes are an escape and the closing delimiter, not a comment.
+_COMMENT_LEAD = set(" \t\r\n;{}()[],=+-&|!?:*")
+
+
 def code_only(src: str) -> str:
     """
-    Source with comments and JSX comment blocks removed.
+    Source with comments removed, so "X must not appear" guards are not tripped
+    by a comment that DISCUSSES X — the queue page carries one saying "do not
+    widen this to .neq(...)", and matching raw text flags the warning itself.
 
-    Needed because several of these guards are phrased as "X must not appear",
-    and the files deliberately DISCUSS the thing they must not do — the queue
-    page carries a comment saying "do not widen this to .neq(...)". Matching raw
-    text flags the warning as the violation.
+    ## Why this is a scanner and not three regexes
+
+    It used to be: strip /*...*/, then whole-line //, then trailing //. Stripping
+    block comments FIRST is the bug, because a line comment may legally contain
+    `/*`. proxy.ts has one — "rate limit for /api/* (spec: ...)" — and that `/*`
+    was read as a block-comment opener, swallowing everything up to the next
+    `*/` 4,408 characters later, which was most of the file including the
+    Cloudflare Access check.
+
+    A guard that greps eaten source does not fail loudly. `X in code` guards go
+    red (that is how this was found), but every `X not in code` guard passes
+    VACUOUSLY — a safety harness silently stops being one. So the order cannot be
+    a heuristic: comments have to be recognised in the order they actually open.
+
+    Known limit: a regex literal containing `//` after a non-lead character is
+    handled via _COMMENT_LEAD, but this is not a full JS lexer and does not try
+    to be. It only has to be right about comments.
     """
-    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)      # block + JSX comments
-    src = re.sub(r"^\s*//.*$", "", src, flags=re.M)      # whole-line //
-    return re.sub(r"(?<![:'\"])//[^\n'\"`]*$", "", src, flags=re.M)  # trailing //
+    out: list[str] = []
+    i, n = 0, len(src)
+    state: str | None = None      # None | 'line' | 'block' | a quote character
+    prev = "\n"                   # last character considered outside a comment
+
+    while i < n:
+        c = src[i]
+        nxt = src[i + 1] if i + 1 < n else ""
+
+        if state is None:
+            if c == "/" and nxt == "/" and prev in _COMMENT_LEAD:
+                state, i = "line", i + 2
+                continue
+            if c == "/" and nxt == "*" and prev in _COMMENT_LEAD:
+                state, i = "block", i + 2
+                continue
+            if c in "'\"`":
+                state = c
+            out.append(c)
+            prev = c
+            i += 1
+        elif state == "line":
+            if c == "\n":
+                state, prev = None, "\n"
+                out.append(c)
+            i += 1
+        elif state == "block":
+            if c == "*" and nxt == "/":
+                state, prev, i = None, " ", i + 2
+            else:
+                i += 1
+        else:                                   # inside a string / template
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(src[i + 1])
+                i += 2
+                continue
+            if c == state:
+                state, prev = None, c
+            i += 1
+
+    return "".join(out)
+
+
+# Regression test for the helper itself. If this fails, every "must not appear"
+# guard below is untrustworthy, so it runs before any of them.
+_probe = code_only("// a path glob like /api/* in a line comment\n"
+                   "const KEEP_ME = 1\n"
+                   "/* a real block comment */\n"
+                   "const ALSO_KEPT = 2\n")
+assert "KEEP_ME" in _probe and "ALSO_KEPT" in _probe, (
+    f"code_only ate real code: {_probe!r}")
+assert "line comment" not in _probe and "real block" not in _probe, (
+    f"code_only left comments behind: {_probe!r}")
 
 
 types_ts    = read("lib", "types.ts")
@@ -172,6 +244,85 @@ check("every request goes to /api/incidents/<id>/<path> and nowhere else",
       and "/api/incidents/${item.id}/${path}" in _card_code)
 check("'leave pending' issues no request at all",
       "onDismiss(item.id)" in _card_code)
+
+
+# ── Review fixes, 2026-08-02 ────────────────────────────────────────────────
+
+approve_ts    = read("app", "api", "queue", "[id]", "approve", "route.ts")
+# proxy.ts, NOT middleware.ts — Next 16 renamed the convention and refuses to
+# build if both exist. This file carries Cloudflare Access AND the /api rate
+# limit; both are asserted below.
+proxy_ts      = read("proxy.ts")
+
+_artgen_code  = code_only(artgen_ts)
+_rectify_code = code_only(rectify_ts)
+_approve_code = code_only(approve_ts)
+_mw_code      = code_only(proxy_ts)
+
+
+def _num(pattern: str, src: str):
+    m = re.search(pattern, src)
+    return int(m.group(1).replace("_", "")) if m else None
+
+
+# #1 — Vercel terminates a function at the plan default (10-15 s) regardless of
+# any AbortController. Both art routes must declare maxDuration, and the
+# in-handler timeout must stay strictly UNDER it: the in-handler one degrades to
+# a usable status, a platform kill returns nothing. In approve it is worse than
+# a lost image — the art call precedes the INSERT, so a platform kill loses the
+# whole approval.
+check("the rectify route declares maxDuration",
+      "export const maxDuration" in _rectify_code)
+check("the approve route declares maxDuration",
+      "export const maxDuration" in _approve_code)
+
+_md_rect = _num(r"maxDuration\s*=\s*(\d+)", _rectify_code)
+_md_appr = _num(r"maxDuration\s*=\s*(\d+)", _approve_code)
+_t_art   = _num(r"ART_TIMEOUT_MS\s*=\s*Number\([^)]*\?\?\s*([\d_]+)\)", _artgen_code)
+_t_rect  = _num(r"RECTIFY_TIMEOUT_MS\s*=\s*Number\([^)]*\?\?\s*([\d_]+)\)", _artgen_code)
+
+check("ART_TIMEOUT_MS fits inside the approve route's maxDuration",
+      None not in (_md_appr, _t_art) and _t_art / 1000 < _md_appr,
+      f"-> maxDuration={_md_appr}s vs ART_TIMEOUT_MS={_t_art}ms")
+check("RECTIFY_TIMEOUT_MS fits inside the rectify route's maxDuration",
+      None not in (_md_rect, _t_rect) and _t_rect / 1000 < _md_rect,
+      f"-> maxDuration={_md_rect}s vs RECTIFY_TIMEOUT_MS={_t_rect}ms")
+
+# #2 — 422 is FastAPI's generic validation code. A missing X-Ops-Token returns
+# one, as does a non-object body. Mapping it to 'suppressed' wrote a terminal,
+# no-override guardrail-#5 state onto published incidents from a transport
+# fault. Suppression must be read from the response body instead.
+check("a 422 is NOT mapped to 'suppressed'",
+      "422" not in _artgen_code, f"-> {[l for l in _artgen_code.splitlines() if '422' in l]}")
+check("status still crosses the boundary validated, not cast",
+      "isImageStatus(" in _artgen_code)
+
+# #5 — the failure path used to fire and forget, so a rejected write still
+# answered ok:true and the operator read a refusal reason that was never stored.
+check("the rectify failure path checks its write result",
+      "failErr" in _rectify_code and "failRow" in _rectify_code)
+check("a failed CAS on the failure path answers 409, not 200",
+      _rectify_code.count("status: 409") >= 2)
+
+# #8 — unbounded JSONB growth on a published row, loaded 200 at a time.
+check("attempt history is capped", "MAX_ATTEMPTS_KEPT" in _rectify_code)
+
+# #7 — the general 60/min limit already existed in proxy.ts (NOT middleware.ts:
+# Next 16 renamed the convention, and this app has always used proxy). What was
+# missing is that a REQUEST limit is not a COST limit: 60/min against a route
+# that spends $0.0336 per call is ~$2/min per IP.
+check("proxy.ts still rate-limits /api at all",
+      "rateLimited(" in _mw_code and "429" in _mw_code)
+check("the money-spending routes get their own tighter bucket",
+      "RL_ART_PATHS" in _mw_code and "RL_ART_LIMIT" in _mw_code)
+check("the tighter bucket covers BOTH rectify and approve",
+      "rectify" in _mw_code and "approve" in _mw_code)
+check("the art bucket is stricter than the general one",
+      (_num(r"RL_ART_LIMIT\s*=\s*(\d+)", _mw_code) or 10**9)
+      < (_num(r"RL_LIMIT\s*=\s*(\d+)", _mw_code) or 0) or False)
+# Rate limiting must not have displaced the auth gate it shares a file with.
+check("Cloudflare Access verification is still present and fails closed",
+      "jwtVerify(" in _mw_code and "503" in _mw_code)
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

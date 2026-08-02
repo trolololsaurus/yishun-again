@@ -399,19 +399,33 @@ async def rectify_incident_art(
     something they did not ask for), and no per-pass attempt budget (this is one
     click, not a loop).
 
-    Guardrail #5 is NOT overridable here, and the check does not rely on the
-    caller being honest. Pass `incident` and `render_prompt` runs the
-    deterministic suppression gate itself before spending anything — the War
-    Room's queue already excludes suppressed rows by construction, but the one
-    check that must not fail cannot depend on a UI filter staying correct
-    through future edits. `suppressed: true` is additionally honoured as an
-    explicit caller-side refusal.
+    Guardrail #5 is not overridable here. When `incident` is supplied,
+    `render_prompt` runs the deterministic suppression gate itself before
+    spending anything, so the check does not rest on the War Room's queue filter
+    staying correct through future edits.
+
+    Be precise about the limit of that, because an earlier version of this
+    docstring overstated it: the gate is only as good as the caller passing
+    `incident`. Omit it (or send a non-dict) and no suppression check runs at
+    all — see `render_prompt`, where the parameter defaults to None. The live
+    caller, `apps/war-room/.../rectify/route.ts`, always sends it. Any new
+    caller must too.
+
+    ## Suppression is reported in the BODY, never as an HTTP status
+
+    This used to raise 422 for `suppressed: true`, and the War Room mapped 422
+    to `status: 'suppressed'`. But 422 is FastAPI's generic validation code: a
+    missing `X-Ops-Token` header produces one, as does a non-object body. Those
+    were then written to `incidents.image_status` as a terminal, no-override
+    guardrail-#5 state — a transport fault permanently marking a story. So
+    suppression comes back as an ordinary 200 ImageResult with
+    `status='suppressed'`, exactly as the `incident`-derived gate already did.
 
     Body: `{slug, prompt, incident?, suppressed?}`.
     Returns the ImageResult contract: `{url, status, attempts, final_prompt}`.
     """
     import asyncio
-    from art.generate_image import render_prompt
+    from art.generate_image import ImageResult, render_prompt
 
     slug = (payload.get("slug") or "").strip()
     prompt = payload.get("prompt") or ""
@@ -420,10 +434,9 @@ async def rectify_incident_art(
     if not isinstance(prompt, str) or not prompt.strip():
         raise HTTPException(status_code=400, detail="prompt is required")
     if payload.get("suppressed"):
-        raise HTTPException(
-            status_code=422,
-            detail="Incident is suppressed under guardrail #5 — not rectifiable.",
-        )
+        # 200, not 422 — see the docstring. Same contract as every other
+        # outcome, so the client never has to infer state from a status code.
+        return ImageResult(status="suppressed", final_prompt=prompt).as_dict()
 
     incident = payload.get("incident") if isinstance(payload.get("incident"), dict) else None
 

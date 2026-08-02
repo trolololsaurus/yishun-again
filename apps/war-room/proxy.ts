@@ -53,19 +53,27 @@ const RL_LIMIT = 60
 const RL_WINDOW_MS = 60_000
 const RL_MAX_KEYS = 5_000
 
-function rateLimited(ip: string): boolean {
+// The two routes that spend money per call: each triggers a Gemini image
+// generation at ~$0.0336. The general 60/min ceiling is a request limit, not a
+// cost limit — against these it permits about $2 per minute per IP, which a
+// stuck retry loop in one browser tab reaches without anyone noticing. Their own
+// bucket, well above human clicking speed and far below runaway spend.
+const RL_ART_PATHS = /^\/api\/(incidents\/[^/]+\/rectify|queue\/[^/]+\/approve)$/
+const RL_ART_LIMIT = 10
+
+function rateLimited(key: string, limit: number): boolean {
   const now = Date.now()
   const cutoff = now - RL_WINDOW_MS
-  const history = (rlMap.get(ip) ?? []).filter(t => t > cutoff)
-  if (history.length >= RL_LIMIT) return true
-  if (!rlMap.has(ip) && rlMap.size >= RL_MAX_KEYS) {
+  const history = (rlMap.get(key) ?? []).filter(t => t > cutoff)
+  if (history.length >= limit) return true
+  if (!rlMap.has(key) && rlMap.size >= RL_MAX_KEYS) {
     for (const [k, times] of rlMap) {
       if (!times.some(t => t > cutoff)) rlMap.delete(k)
     }
     if (rlMap.size >= RL_MAX_KEYS) rlMap.clear()
   }
   history.push(now)
-  rlMap.set(ip, history)
+  rlMap.set(key, history)
   return false
 }
 
@@ -96,7 +104,13 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     const ip = req.headers.get('x-real-ip')
       ?? req.headers.get('cf-connecting-ip')
       ?? 'unknown'
-    if (rateLimited(ip)) return deny(429, 'Too many requests')
+    // Separate namespaces so ordinary queue browsing cannot exhaust the small
+    // budget protecting image generation, and vice versa.
+    const costly = RL_ART_PATHS.test(req.nextUrl.pathname)
+    const key    = costly ? `art:${ip}` : `api:${ip}`
+    if (rateLimited(key, costly ? RL_ART_LIMIT : RL_LIMIT)) {
+      return deny(429, 'Too many requests')
+    }
   }
 
   const teamDomain = (process.env.CF_ACCESS_TEAM_DOMAIN ?? '')

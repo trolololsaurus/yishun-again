@@ -586,8 +586,20 @@ with mock.patch.dict("os.environ", R2_ENV, clear=False):
 _main_src = open("main.py", encoding="utf-8").read()
 _rectify = _main_src[_main_src.index("async def rectify_incident_art"):
                      _main_src.index("async def autonomy_status")]
-check("/art/rectify refuses a caller-declared suppression",
-      "status_code=422" in _rectify and "guardrail #5" in _rectify)
+# A caller-declared suppression is still honoured — but as a RESULT, not as a
+# status code. 422 is FastAPI's generic request-validation code: a missing
+# X-Ops-Token header returns one, and so does a body that is valid JSON but not
+# an object. The War Room used to map 422 -> status 'suppressed' and write that
+# to incidents.image_status, which is terminal, excluded from
+# RECTIFIABLE_STATUSES and has no operator override — so a transport fault
+# permanently marked a published story as guardrail #5. Both halves are pinned
+# here: suppression must come back in the body, and this handler must not use
+# 422 for anything.
+check("/art/rectify answers a caller-declared suppression with an ImageResult",
+      'ImageResult(status="suppressed"' in _rectify
+      and "guardrail #5" in _rectify.lower())
+check("/art/rectify never signals suppression with HTTP 422",
+      "status_code=422" not in _rectify)
 check("/art/rectify passes the incident through for the real gate",
       "incident=incident" in _rectify)
 check("/art/rectify never builds an AttemptBudget", "AttemptBudget" not in _rectify)

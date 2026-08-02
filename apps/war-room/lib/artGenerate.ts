@@ -35,11 +35,21 @@ export interface ImageResult {
   final_prompt: string
 }
 
-// Generous: the ladder can spend three Gemini calls plus three Haiku rewrites,
-// and this blocks the operator's approve click. Must exceed the backend's own
-// IMAGE_TIMEOUT_S with margin, or the HTTP layer aborts mid-generation and
-// leaves the operator with no feedback and a possible orphan object in R2.
-const ART_TIMEOUT_MS = Number(process.env.ART_TIMEOUT_MS ?? 120_000)
+// The ladder can spend three Gemini calls plus three Haiku rewrites, and this
+// blocks the operator's approve click.
+//
+// This was 120 s, reasoned entirely against the BACKEND's timeout — which
+// ignored the one that actually fires first. Vercel terminates the function at
+// `maxDuration` (60 s, declared in the approve route) no matter what this
+// AbortController says, and a platform kill happens before the insert, losing
+// the whole approval. So the ceiling here is not "how long can generation take"
+// but "how long may it take and still leave room to publish".
+//
+// 50 s keeps a 10 s margin under maxDuration for the insert, the geocode and
+// the response. If the ladder needs longer than that it loses the race and the
+// incident publishes with `status: 'transient'` — recoverable later from
+// /rectify, where the operator is not sitting in front of a spinner.
+const ART_TIMEOUT_MS = Number(process.env.ART_TIMEOUT_MS ?? 50_000)
 
 const DISABLED: ImageResult = {
   url: null, status: 'pending', attempts: [], final_prompt: '',
@@ -105,9 +115,11 @@ function parseResult(body: unknown): ImageResult {
   }
 }
 
-// One attempt, not three, and no Haiku rewrites — so the 120 s sized for the
+// One attempt, not three, and no Haiku rewrites — so the budget sized for the
 // full ladder is far too long to leave an operator staring at a spinner.
-const RECTIFY_TIMEOUT_MS = Number(process.env.RECTIFY_TIMEOUT_MS ?? 45_000)
+// Must stay under the rectify route's maxDuration (60 s) with room for the
+// database write and the revalidation call that follow it.
+const RECTIFY_TIMEOUT_MS = Number(process.env.RECTIFY_TIMEOUT_MS ?? 40_000)
 
 /**
  * Re-render one incident from an operator-edited prompt (B4b).
@@ -136,11 +148,21 @@ export async function rectifyIncidentArt(args: {
       body:    JSON.stringify({ slug: args.slug, prompt: args.prompt, incident: args.incident }),
       signal:  controller.signal,
     })
-    // 422 is the guardrail-#5 refusal. It must NOT collapse into 'transient',
-    // or the card would offer a retry button on a suppression.
-    if (res.status === 422) {
-      return { url: null, status: 'suppressed', attempts: [], final_prompt: args.prompt }
-    }
+    // NOTE: an HTTP status is NOT how suppression is signalled. It used to be —
+    // 422 was mapped straight to `status: 'suppressed'` — and that was wrong in
+    // a way that could not be undone through the UI.
+    //
+    // 422 is FastAPI's generic request-validation code, not a private channel.
+    // `_require_ops_token` declares `Header(...)`, so a MISSING X-Ops-Token
+    // returns 422, as does a body that is valid JSON but not an object. Either
+    // one therefore wrote `image_status = 'suppressed'` onto a published
+    // incident, which is terminal, excluded from RECTIFIABLE_STATUSES, and has
+    // deliberately no operator override — a transport or configuration fault
+    // permanently marked a story as guardrail #5.
+    //
+    // Suppression now arrives the same way every other outcome does: in the
+    // response body, via parseResult + isImageStatus. The backend returns it as
+    // a normal 200 ImageResult. A 422 is just another failure here.
     if (!res.ok) {
       console.error(`art/rectify — HTTP ${res.status}`)
       return { url: null, status: 'transient', attempts: [], final_prompt: args.prompt }

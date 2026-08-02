@@ -5,6 +5,21 @@ import { geocodeIncident } from '@/lib/geocode'
 import { generateIncidentArt } from '@/lib/artGenerate'
 import type { ApproveBody, Classification } from '@/lib/types'
 
+// This route renders the image BEFORE inserting the incident (ART_PIPELINE.md
+// §6.1), so the whole approve click is as slow as image generation.
+//
+// Vercel kills a function at the plan default (10-15 s) unless a route says
+// otherwise, and it ignores any AbortController while doing so. That made this
+// the worst-placed timeout in the app: a platform kill lands BEFORE the insert
+// at the bottom of this handler, so the operator lost the entire approval — not
+// just the picture — while the backend carried on and still uploaded to R2.
+//
+// 60 s is the Hobby ceiling and comfortably inside Pro's. It must stay strictly
+// above ART_TIMEOUT_MS in lib/artGenerate.ts, so that the in-handler timeout is
+// the one that fires: that path degrades to `status: 'transient'` and still
+// publishes the incident, which is the documented behaviour.
+export const maxDuration = 60
+
 export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
   const id = validateUUID(params.id)
