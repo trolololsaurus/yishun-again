@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { classIcon, classLabel, classColor, severityDiamonds, hypeMeter, safeHref } from '@/lib/utils'
+import { classIcon, classLabel, classColor, severityDiamonds, hypeMeter, safeHref, toParagraphs } from '@/lib/utils'
 
 // Operator-only draft/live preview. Uses the secret-key client (bypasses RLS),
 // so unpublished drafts render here — unlike the public site, which 404s them.
@@ -88,7 +88,15 @@ export default async function IncidentPreview({ params }: Props) {
         </div>
       )}
 
-      <p className="text-text-primary leading-relaxed text-base mb-6 whitespace-pre-wrap">{inc.summary}</p>
+      {/* Paragraphed exactly as apps/web renders it, so what the operator
+          reviews here is what ships. `whitespace-pre-wrap` on the raw string
+          showed an updated summary as one wall of text while the public page
+          split it — the review surface disagreed with production. */}
+      <div className="mb-6 space-y-4">
+        {toParagraphs(inc.summary).map((para, i) => (
+          <p key={i} className="text-text-primary leading-relaxed text-base">{para}</p>
+        ))}
+      </div>
 
       {((inc.deaths ?? 0) > 0 || (inc.injuries ?? 0) > 0) && (
         <div className="flex gap-6 text-text-secondary text-sm mb-6">

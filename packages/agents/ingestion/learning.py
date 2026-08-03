@@ -40,6 +40,27 @@ MAX_EXAMPLES = 8
 EXAMPLE_TITLE_CHARS = 110
 MAX_EXAMPLES_CHARS = 1400        # hard ceiling on the rendered block
 
+# Reject reasons that must NOT become Stage 2 prompt examples.
+#
+# The example block teaches Stage 2 where the operator draws the line, so a
+# reason only earns a slot if Stage 2 could plausibly ACT on it. Stage 2 sees
+# one story's source text and nothing else — it has no visibility into
+# war_room_queue or incidents.
+#
+#   duplicate — the single most common reason (10 of 30 live rejections at the
+#               time of writing). Stage 2 cannot know another row already
+#               covers the story, so "operator REJECTED as 'duplicate'" teaches
+#               it nothing it can use. It was consuming a third of a
+#               deliberately small budget to say so. Duplicates are a dedup /
+#               consolidation concern, and that is where the fix belongs.
+#
+# Excluding it does not discard the signal: the row is still in
+# training_signals, still counted by the reputation and recalibration paths.
+# It just stops crowding the few-shot block.
+#
+# Add a reason here when it is a ROUTING signal rather than a drafting lesson.
+NON_TEACHABLE_REJECT_REASONS = frozenset({"duplicate"})
+
 
 def load_source_reputation(client=None) -> dict[str, float]:
     """
@@ -159,7 +180,10 @@ def load_recent_signal_patterns(client=None, limit: int = MAX_SIGNAL_ROWS) -> st
     by_reason: dict[str, list[str]] = {}
     for r in rows:
         title = titles.get(r["id"])
-        if r.get("decision") == "reject" and r.get("reject_reason") and title:
+        reason = r.get("reject_reason")
+        if reason in NON_TEACHABLE_REJECT_REASONS:
+            continue
+        if r.get("decision") == "reject" and reason and title:
             by_reason.setdefault(r["reject_reason"], []).append(
                 f'- "{title[:EXAMPLE_TITLE_CHARS]}"\n'
                 f"  operator REJECTED as '{r['reject_reason']}'"

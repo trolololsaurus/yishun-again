@@ -85,14 +85,39 @@ check("reclassifications are listed before rejections",
       out.index("clown") < out.index("noise"), f"-> {out!r}")
 
 # ── Round-robin so one reason cannot crowd out the rest ─────────────────────
-sigs = ([_sig(i, decision="reject", reject_reason="duplicate") for i in range(10)]
+sigs = ([_sig(i, decision="reject", reject_reason="unverified") for i in range(10)]
         + [_sig(10 + i, decision="reject", reject_reason="too_thin") for i in range(3)]
         + [_sig(20 + i, decision="reject", reject_reason="noise") for i in range(3)])
 out = learning.load_recent_signal_patterns(_Client(sigs, QUEUE))
 check("all three reject reasons are represented, not just the commonest",
-      all(r in out for r in ("duplicate", "too_thin", "noise")), f"-> {out!r}")
-check("'duplicate' (10 of 16 rows) does not fill every slot",
-      out.count("duplicate") < learning.MAX_EXAMPLES, f"-> {out.count('duplicate')}")
+      all(r in out for r in ("unverified", "too_thin", "noise")), f"-> {out!r}")
+check("'unverified' (10 of 16 rows) does not fill every slot",
+      out.count("unverified") < learning.MAX_EXAMPLES, f"-> {out.count('unverified')}")
+
+# ── Non-teachable reasons never reach the prompt ────────────────────────────
+# Stage 2 sees one story and nothing else, so it cannot act on "this duplicates
+# another queue row". Before this exclusion 'duplicate' was the single most
+# common reason (10 of 30 live rejections) and spent a third of a deliberately
+# small budget teaching a lesson the model structurally cannot use.
+sigs = ([_sig(i, decision="reject", reject_reason="duplicate") for i in range(10)]
+        + [_sig(10 + i, decision="reject", reject_reason="not_yishun") for i in range(2)])
+out = learning.load_recent_signal_patterns(_Client(sigs, QUEUE))
+check("'duplicate' is excluded from the prompt examples",
+      "duplicate" not in out, f"-> {out!r}")
+check("...and the teachable reason still gets its slots",
+      "not_yishun" in out, f"-> {out!r}")
+
+# The exclusion must not empty the block when duplicates are ALL there is —
+# it should degrade to no reject examples rather than to junk.
+out = learning.load_recent_signal_patterns(
+    _Client([_sig(i, decision="reject", reject_reason="duplicate") for i in range(6)], QUEUE))
+check("a duplicate-only history yields no reject examples (not garbage)",
+      "duplicate" not in out and "REJECTED" not in out, f"-> {out!r}")
+
+check("'duplicate' is the declared non-teachable reason",
+      "duplicate" in learning.NON_TEACHABLE_REJECT_REASONS)
+check("'not_yishun' IS teachable (a source/scope lesson Stage 1-2 can act on)",
+      "not_yishun" not in learning.NON_TEACHABLE_REJECT_REASONS)
 
 # ── Bounds: this block goes into BOTH prompts ───────────────────────────────
 sigs = [_sig(i, decision="reject", reject_reason=f"r{i % 4}") for i in range(30)]

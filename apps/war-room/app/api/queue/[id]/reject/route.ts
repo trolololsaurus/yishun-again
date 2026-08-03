@@ -3,9 +3,17 @@ import { supabase } from '@/lib/supabase'
 import { validateUUID } from '@/lib/utils'
 import type { RejectBody, RejectReason } from '@/lib/types'
 
+// Must match the RejectReason union in lib/types.ts AND the CHECK constraint in
+// packages/db/migrations/017. A value missing from the CHECK is accepted here
+// and then silently dropped by Postgres — the exact failure migration 009 fixed.
 const VALID_REASONS: RejectReason[] = [
-  'noise', 'duplicate', 'unverified', 'too_thin', 'legal_risk',
+  'noise', 'duplicate', 'unverified', 'too_thin', 'legal_risk', 'not_yishun',
 ]
+
+// Operator free text is capped rather than rejected: a truncated note is still
+// useful, whereas failing the whole rejection over a long note would lose the
+// operator's actual decision.
+const MAX_NOTE_CHARS = 500
 
 export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
@@ -23,6 +31,9 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   if (!VALID_REASONS.includes(reason)) {
     return NextResponse.json({ error: 'Invalid reject reason' }, { status: 400 })
   }
+
+  const rawNote = typeof body.note === 'string' ? body.note.trim() : ''
+  const note = rawNote ? rawNote.slice(0, MAX_NOTE_CHARS) : null
 
   // Verify item exists and is pending
   const { data: item, error: fetchErr } = await supabase
@@ -69,6 +80,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     proposed_classification: item.proposed_classification,
     proposed_severity:       item.proposed_severity,
     reject_reason:           reason,
+    reject_note:             note,
     original_draft:          item.proposed_summary,
     original_classification: item.proposed_classification,
     original_severity:       item.proposed_severity,

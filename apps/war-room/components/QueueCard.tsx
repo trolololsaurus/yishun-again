@@ -9,7 +9,15 @@ import {
   severityDiamonds, hypeMeter, safeHref,
 } from '@/lib/utils'
 
+// Keep in lockstep with lib/types.ts, the route allowlists, and the CHECK in
+// packages/db/migrations/017.
+//
+// 'not_yishun' is deliberately separate from 'noise'. The keyword filter matches
+// a substring anywhere in the body, so a perfectly good story can arrive because
+// it mentions Yishun once. That is a SOURCE problem (an adapter's query is too
+// loose) and is fixed nowhere near where 'noise' is fixed.
 const REJECT_REASONS: { value: RejectReason; label: string }[] = [
+  { value: 'not_yishun',  label: 'Not Yishun — wrong town / passing mention' },
   { value: 'noise',       label: 'Noise — not a real incident' },
   { value: 'duplicate',   label: 'Duplicate — already archived' },
   { value: 'unverified',  label: 'Unverified — source too thin' },
@@ -38,6 +46,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
   const [showSource,       setShowSource]       = useState((item.agent_confidence ?? 1) < 0.85)
   const [showSourceLinks,  setShowSourceLinks]  = useState(false)
   const [showRejectMenu,   setShowRejectMenu]   = useState(false)
+  const [rejectNote,       setRejectNote]       = useState('')
   const [loading,          setLoading]          = useState(false)
   const [error,            setError]            = useState<string | null>(null)
 
@@ -105,7 +114,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
       const res = await fetch(`/api/queue/${item.id}/reject`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ reason }),
+        body:    JSON.stringify({ reason, note: rejectNote.trim() || undefined }),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
@@ -497,7 +506,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
               Reject ▾
             </button>
             {showRejectMenu && (
-              <div className="absolute bottom-full right-0 mb-1 bg-surface border border-border min-w-48 z-10">
+              <div className="absolute bottom-full right-0 mb-1 bg-surface border border-border min-w-64 z-10">
                 {REJECT_REASONS.map(r => (
                   <button
                     key={r.value}
@@ -507,6 +516,20 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
                     {r.label}
                   </button>
                 ))}
+                {/* Optional free text. Stored in training_signals.reject_note and
+                    deliberately NOT fed to the Stage 2 prompt — reject_reason
+                    above is the machine-readable signal (see migration 017). */}
+                <div className="border-t border-border p-2">
+                  <input
+                    type="text"
+                    value={rejectNote}
+                    maxLength={500}
+                    onChange={e => setRejectNote(e.target.value)}
+                    onKeyDown={e => e.stopPropagation()}
+                    placeholder="Optional note (for your review, not the model)"
+                    className="w-full bg-bg border border-border px-2 py-1 font-body text-xs text-text-secondary placeholder:text-text-secondary/50 focus:outline-none focus:border-red"
+                  />
+                </div>
               </div>
             )}
           </div>

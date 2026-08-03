@@ -1,8 +1,18 @@
 'use client'
 
 import { useState } from 'react'
-import type { QueueItem, IncidentPreview, AgentRelatedIncident } from '@/lib/types'
+import type { QueueItem, IncidentPreview, AgentRelatedIncident, RejectReason } from '@/lib/types'
 import { CLASS_ICON, CLASS_COLOR, CLASS_LABEL, severityDiamonds, confidenceColor, confidenceLabel, safeHref } from '@/lib/utils'
+
+// Reasons that actually apply to an UPDATE proposal — "this source does not
+// belong on that incident". The full queue taxonomy is in QueueCard; offering
+// all of it here would mostly be noise.
+const UPDATE_REJECT_REASONS: { value: RejectReason; label: string }[] = [
+  { value: 'duplicate',  label: 'Duplicate — already have this source' },
+  { value: 'not_yishun', label: 'Not Yishun — wrong town / passing mention' },
+  { value: 'unverified', label: 'Unverified — source too thin' },
+  { value: 'legal_risk', label: 'Legal risk — do not publish' },
+]
 
 interface Props {
   item:             QueueItem
@@ -17,8 +27,10 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
 
   const [summary,       setSummary]       = useState(item.proposed_summary ?? '')
   const [relatedState,  setRelatedState]  = useState<AgentRelatedIncident[]>(agentRelated)
-  const [loading,       setLoading]       = useState(false)
-  const [error,         setError]         = useState<string | null>(null)
+  const [loading,        setLoading]        = useState(false)
+  const [error,          setError]          = useState<string | null>(null)
+  const [showRejectMenu, setShowRejectMenu] = useState(false)
+  const [rejectNote,     setRejectNote]     = useState('')
 
   const conf     = item.agent_confidence
   const newUrl   = item.source_url
@@ -45,10 +57,14 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
     } catch (e) { setError(e instanceof Error ? e.message : 'Unknown error'); setLoading(false) }
   }
 
-  async function handleRejectUpdate() {
-    setLoading(true); setError(null)
+  // The reason is now sent explicitly. This route used to hardcode
+  // reject_reason: 'duplicate' server-side for EVERY update rejection, so a
+  // wrongly-attached update looked identical to a genuine duplicate in the
+  // training data — and updates are most of the queue.
+  async function handleRejectUpdate(reason: RejectReason) {
+    setLoading(true); setError(null); setShowRejectMenu(false)
     try {
-      await post('reject-update')
+      await post('reject-update', { reason, note: rejectNote.trim() || undefined })
       onProcessed(item.id)
     } catch (e) { setError(e instanceof Error ? e.message : 'Unknown error'); setLoading(false) }
   }
@@ -218,13 +234,38 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
       <div className="flex items-center gap-3 px-4 py-3 border-t border-cyan-500/40">
         {error && <span className="font-body text-red text-sm">{error}</span>}
         <div className="ml-auto flex items-center gap-2">
+          <div className="relative">
           <button
-            onClick={handleRejectUpdate}
+            onClick={() => setShowRejectMenu(r => !r)}
             disabled={loading}
             className="px-3 py-2 border border-red text-red font-body text-sm hover:bg-red hover:text-bg transition-colors disabled:opacity-50"
           >
-            Reject Update
+            Reject Update ▾
           </button>
+          {showRejectMenu && (
+            <div className="absolute bottom-full left-0 mb-1 bg-surface border border-border min-w-64 z-10">
+              {UPDATE_REJECT_REASONS.map(r => (
+                <button
+                  key={r.value}
+                  onClick={() => handleRejectUpdate(r.value)}
+                  className="block w-full text-left px-3 py-2 font-body text-sm text-text-secondary hover:bg-bg hover:text-red"
+                >
+                  {r.label}
+                </button>
+              ))}
+              <div className="border-t border-border p-2">
+                <input
+                  type="text"
+                  value={rejectNote}
+                  maxLength={500}
+                  onChange={e => setRejectNote(e.target.value)}
+                  placeholder="Optional note (for your review, not the model)"
+                  className="w-full bg-bg border border-border px-2 py-1 font-body text-xs text-text-secondary placeholder:text-text-secondary/50 focus:outline-none focus:border-red"
+                />
+              </div>
+            </div>
+          )}
+          </div>
           <button
             onClick={handleSplit}
             disabled={loading}

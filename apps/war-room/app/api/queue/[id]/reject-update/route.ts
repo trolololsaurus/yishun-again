@@ -1,11 +1,43 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { validateUUID } from '@/lib/utils'
+import type { RejectReason } from '@/lib/types'
 
-export async function POST(_request: Request, props: { params: Promise<{ id: string }> }) {
+// Same set the plain reject route accepts — see migration 017.
+const VALID_REASONS: RejectReason[] = [
+  'noise', 'duplicate', 'unverified', 'too_thin', 'legal_risk', 'not_yishun',
+]
+
+// An update rejection whose reason the operator did not specify. Kept as the
+// fallback for older clients only; the UI always sends one now.
+const DEFAULT_REASON: RejectReason = 'duplicate'
+
+const MAX_NOTE_CHARS = 500
+
+export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
   const id = validateUUID(params.id)
   if (!id) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
+
+  // This route used to hardcode reject_reason: 'duplicate' on EVERY update
+  // rejection. Updates are the majority of the queue (10 of 14 rows on the
+  // 2026-08-03 pass), so a wrongly-attached update and a genuine duplicate were
+  // indistinguishable in the training data — and it inflated the 'duplicate'
+  // bucket, which `ingestion/learning.py` round-robins on when picking Stage 2
+  // prompt examples. The operator's actual reason is now recorded.
+  let reason: RejectReason = DEFAULT_REASON
+  let note: string | null = null
+  try {
+    const body = await request.json()
+    if (typeof body?.reason === 'string' && VALID_REASONS.includes(body.reason as RejectReason)) {
+      reason = body.reason as RejectReason
+    }
+    const rawNote = typeof body?.note === 'string' ? body.note.trim() : ''
+    note = rawNote ? rawNote.slice(0, MAX_NOTE_CHARS) : null
+  } catch {
+    // No body / unparseable — fall back to DEFAULT_REASON rather than 400ing,
+    // so a rejection is never lost over a malformed payload.
+  }
 
   const { data: item, error: fetchErr } = await supabase
     .from('war_room_queue')
@@ -44,7 +76,8 @@ export async function POST(_request: Request, props: { params: Promise<{ id: str
     queue_id:                id,
     action:                  'reject',
     decision:                'reject',
-    reject_reason:           'duplicate',
+    reject_reason:           reason,
+    reject_note:             note,
     source_url:              item.source_url,
     source_name:             rc.source_name as string | undefined,
     source_type:             item.source_type,

@@ -4,7 +4,11 @@ export type Classification = 'heart' | 'clown' | 'dagger' | 'custom'
 export type QueueStatus    = 'pending' | 'approved' | 'rejected' | 'escalated' | 'update' | 'update_approved' | 'update_rejected'
 export type SourceType     = 'msm' | 'reddit' | 'signal' | 'reference'
 export type TrainingAction = 'approve' | 'edit_approve' | 'reject' | 'pattern_confirmed' | 'pattern_dismissed'
-export type RejectReason   = 'noise' | 'duplicate' | 'unverified' | 'too_thin' | 'legal_risk'
+// Kept in lockstep with the CHECK in packages/db/migrations/017 and with
+// VALID_REASONS in app/api/queue/[id]/reject/route.ts. Adding a value needs all
+// three, or the insert is silently rejected by Postgres (the failure mode
+// migration 009 was written to fix).
+export type RejectReason   = 'noise' | 'duplicate' | 'unverified' | 'too_thin' | 'legal_risk' | 'not_yishun'
 
 export interface QueueItem {
   id:                      string
@@ -376,6 +380,10 @@ export interface ApproveBody {
 // Reject request body
 export interface RejectBody {
   reason: RejectReason
+  // Optional operator free text. Stored in training_signals.reject_note and
+  // deliberately NOT read by the learning loop — see migration 017 for why
+  // free text must never reach reject_reason.
+  note?: string
 }
 
 export const DISMISS_CATEGORIES = {

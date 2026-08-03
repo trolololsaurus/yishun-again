@@ -66,7 +66,16 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
       operator_changes: {
         dismiss_reason_category: category,
         dismiss_reason_detail:   (body.reason_detail as string) || null,
-        autonomy_signal:         DISMISS_CATEGORIES[category].autonomy_signal,
+        // The GRADUATION metric, and it must be the same signal confirm-link
+        // writes or the error rate has no denominator. This used to be the
+        // per-category signal below, which meant only failures were ever
+        // counted and error_rate was pinned at 1.00 — see confirm-link.
+        autonomy_signal:         'confidence_threshold',
+        // The per-category signal is preserved as a DIAGNOSTIC breakdown of
+        // why the link was wrong. It is not a graduation metric: states like
+        // "coincidental location overlap" are only observable on a failure, so
+        // they can never have a success denominator.
+        diagnostic_signal:       DISMISS_CATEGORIES[category].autonomy_signal,
         link_confidence:         linkConfidence,
         agent_reason:            agentReason,
       },

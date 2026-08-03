@@ -114,3 +114,86 @@ export function safeHref(url: string | null | undefined): string {
   } catch { /* not a parseable absolute URL */ }
   return '#'
 }
+
+// ── Paragraph rendering ──────────────────────────────────────────────────────
+//
+// PORTED VERBATIM from apps/web/lib/utils.ts. Keep the two byte-identical.
+//
+// Why the duplication: there is no packages/shared wired into either app, and
+// the War Room MUST paragraph a summary exactly the way the public site will.
+// Before this, the War Room rendered incidents.summary raw with
+// `whitespace-pre-wrap` while the public page ran it through toParagraphs() —
+// so an operator editing a summary reviewed a wall of text and shipped
+// something that looked different in production. Review surfaces that disagree
+// with the thing they gate are worse than no preview.
+//
+// Guard: apps/war-room/lib/utils.paragraphs.test.ts asserts this
+// implementation stays identical to the web copy. If you change one, change
+// both — the test fails otherwise.
+
+// Trailing abbreviations that end in '.' without ending a sentence.
+const _ABBREV = /(?:^|[\s(])(?:mr|mrs|ms|dr|prof|st|jr|sr|sgt|insp|supt|capt|lt|col|no|vs|approx|etc|e\.g|i\.e|a\.m|p\.m)\.$/i
+
+export function splitSentences(text: string): string[] {
+  const out: string[] = []
+  const re = /[.!?]["'’)\]]?\s+/g
+  let start = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    const end = m.index + m[0].length
+    // "Mr. Tan" / "e.g. the lift" — the period belongs to an abbreviation.
+    if (_ABBREV.test(text.slice(start, m.index + 1))) continue
+    // A real sentence starts with a capital, a digit or an opening quote.
+    if (!/^["'“(\[]?[A-Z0-9]/.test(text.slice(end))) continue
+    out.push(text.slice(start, end).trim())
+    start = end
+  }
+  const tail = text.slice(start).trim()
+  if (tail) out.push(tail)
+  return out.filter(Boolean)
+}
+
+/** Soft target paragraph length in characters. */
+export const PARAGRAPH_TARGET = 320
+
+export function toParagraphs(
+  raw: string | null | undefined,
+  target: number = PARAGRAPH_TARGET
+): string[] {
+  const text = (raw ?? '').replace(/\r\n?/g, '\n').trim()
+  if (!text) return []
+
+  // 1. Author-supplied breaks always win — blank lines first, then single ones.
+  if (/\n[ \t]*\n/.test(text)) {
+    const paras = text.split(/\n[ \t]*\n+/).map(p => p.replace(/\s*\n\s*/g, ' ').trim()).filter(Boolean)
+    if (paras.length) return paras
+  }
+  if (text.includes('\n')) {
+    const paras = text.split(/\n+/).map(p => p.trim()).filter(Boolean)
+    if (paras.length > 1) return paras
+  }
+
+  // 2. No breaks at all — group sentences.
+  const sentences = splitSentences(text)
+  if (sentences.length <= 2) return [text]
+
+  const paras: string[] = []
+  let buf: string[] = []
+  let len = 0
+  for (const s of sentences) {
+    buf.push(s)
+    len += s.length + 1
+    if (len >= target && buf.length >= 2) {
+      paras.push(buf.join(' '))
+      buf = []
+      len = 0
+    }
+  }
+  if (buf.length) {
+    const tail = buf.join(' ')
+    // Don't strand a short final sentence as its own paragraph.
+    if (paras.length > 0 && tail.length < 120) paras[paras.length - 1] += ' ' + tail
+    else paras.push(tail)
+  }
+  return paras.length ? paras : [text]
+}
