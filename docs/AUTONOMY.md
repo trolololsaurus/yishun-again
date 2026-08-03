@@ -94,16 +94,33 @@ already enforces with a 422. A row failing any of these is **not rejected**; it
 stays `pending` for the operator. The failure mode is always "a human looks at
 it", never "it disappears".
 
+The full set, in the order `check_eligibility` applies them:
+
 | Gate | Skip reason logged | Why |
 |---|---|---|
-| ≥ 1 source URL | `no_source_url` | Guardrail #1, also a DB CHECK |
-| No `type='signal'` URL | `no_approved_source_after_filter` | Guardrail #2 — EDMW is never a quoted source |
-| Not political | `political_marker` | Guardrail #4. Stage 2 forces confidence 0, so this is unreachable; asserted as defence in depth |
-| No `suicide` / `self-harm` tag | `image_suppressed` | Guardrail #5. Blocks image generation only — the incident still publishes, with `pixel_art_url` null |
-| Real `incident_date` | `no_real_date`, `date_fallback` | QA H3 — never stamp "today" |
-| Operator-approved domain | `unapproved_source_domain` | A URL from an unknown domain is not a *verifiable* source, which is guardrail #1's actual point |
-| Not a sentinel row | `notification_row` | Pattern alerts and lifecycle notices are operator prompts, not incidents |
 | `status = 'pending'` | `not_pending` | `update` rows merge into a live incident — a different write path whose failure mode is corrupting an existing story. Auto-merge is a separate decision, not yet taken |
+| Not a sentinel row | `notification_row` | Pattern alerts and lifecycle notices are operator prompts, not incidents |
+| A confidence, at or above the bar | `no_confidence`, `below_threshold` | The threshold itself |
+| Title and summary present | `missing_title`, `missing_summary` | The human approve route's own 422 preconditions |
+| Not political | `political_marker` | Guardrail #4. Stage 2 forces confidence 0, so this is unreachable; asserted as defence in depth |
+| ≥ 1 source URL | `no_source_url` | Guardrail #1, also a DB CHECK (migration 010) |
+| Something survives the allowlist | `no_approved_source_after_filter` | Guardrail #2 — a `type='signal'` URL (EDMW/HWZ, Reddit) is stripped unconditionally, and so is a redirect wrapper (`source_allowlist.REDIRECT_DOMAINS`). If that empties the list there is no verifiable source left |
+| Operator-approved domain | `unapproved_source_domain` | A URL from an unknown domain is not a *verifiable* source, which is guardrail #1's actual point |
+| The allowlist was readable at all | `allowlist_check_failed` | Cannot verify ⇒ cannot claim verifiable |
+| Real `incident_date` | `no_real_date`, `date_fallback` | QA H3 — never stamp "today" |
+| No ungrounded specifics | `ungrounded_specifics` | Stage 2's deterministic groundedness post-check found a number or proper noun that appears in no source, and one regeneration did not clear it. A factual defect in *this* row, so there is no trust curve — it never clears automatically |
+| Casualty figures match the source | `casualty_mismatch` | `filters/casualty_check` — a wrong death count is the most damaging factual error this archive can publish |
+| Cluster not oversized, or the grouper has earned it | `oversized_cluster_unproven` | §5b — the one hold that lifts itself |
+
+> **Guardrail #5 is deliberately not in that table.** Image suppression is not an
+> eligibility gate: it happens inside `_generate_art`, which returns
+> `pixel_art_url: null` and `image_status='suppressed'` for a `suicide` /
+> `self-harm` incident (`art/suppression.py`, which fails closed). The card still
+> publishes and the frontend placeholder handles the missing image — a gate here
+> would withhold the story, which is not what the guardrail asks for. Note that in
+> *this* path art generation is itself opt-in: `ART_GENERATION_ENABLED` defaults
+> to false, and an unconfigured deployment publishes with `pixel_art_url` null and
+> `image_status='pending'` rather than logging a failure per incident.
 
 Two more safety properties:
 
@@ -117,10 +134,28 @@ Two more safety properties:
 `confidence = 0.0`, which on its own meant the incident silently never published
 and no notification was raised — under unattended operation the story was lost
 without trace, and a zeroed row was indistinguishable from any other
-low-confidence one. Stage 2 now also routes it to a distinct flagged state,
-emits an operator notification via `ops/notify.py` subject to the dedup ledger,
-and writes an `agent_events` row at level `warning`. The guardrail was not
-weakened — it was made audible. Guard: `test_political_alert.py`.
+low-confidence one. Stage 2 now also prepends the operator-visible
+`[POLITICAL CONTENT DETECTED — REJECT]` marker to the summary and sets a distinct
+`_political_flagged` state — a state, not just a number, is what lets the caller
+tell the two apart. The orchestrator's `_alert_political` then emits an operator
+notification via `ops/notify.py` subject to the dedup ledger (kind `anomaly`,
+deduped on the article URL) and writes an `agent_events` row at level `warning`;
+it fires *before* the consolidation skip-check, so a political item that also
+duplicates an existing row is still reported rather than being the quietest case.
+The guardrail was not weakened — it was made audible. Guard:
+`test_political_alert.py`.
+
+**And it was still unreachable for some political stories until 2026-08-02.**
+The `political` read sat *below* the classify response's field validation, and
+`result["classification"].lower()` throws `AttributeError` on
+`"classification": null` — which is exactly what the model returns on a political
+story, because it is being told to reject rather than categorise. The candidate
+died on an exception: no forced confidence 0, no reject marker, no email, no
+`agent_events` row. Observed live on an MP-resignation article surfaced by the
+WordPress search source. Guardrail #4 is now evaluated **first** in `_classify`,
+before any field coercion can raise, and a political row with an unusable
+category is given a placeholder so the reject path can finish and alert. Guard:
+`test_stage2_guardrails.py`.
 
 > Worth knowing when reading those alerts: this classifier over-triggers on
 > ordinary news that merely mentions an MP or the People's Association. The
@@ -139,16 +174,27 @@ Alerting nobody reads is worse than none, because the one message that mattered
 gets filtered with the rest. Every alert is therefore deduped and throttled, and
 **silence means healthy**.
 
-| Kind | Sent when | Throttle |
-|---|---|---|
-| `review_queue` | Cards below the threshold are waiting (req #4) | Once per day |
-| `anomaly` | Supervisor finds a *serious* fleet problem (req #9); integrity finds something needing a human (req #10) | 60 min |
-| `maintenance` | Something broke, with a plain-English suggested fix (req #11) | Once per day |
-| `health` | A backend component is down, or the cost guard tripped (req #12) | 60 min |
-| `monthly_report` | 1st of the month (req #13) | Never throttled |
+Two mechanisms do the work, and they are not the same thing. The **window** is
+per kind (`notify.DEFAULT_THROTTLE_MINUTES`, overridable per call); the **dedup
+key** is what the window is measured against, and most callers put the calendar
+date in it, which is what actually makes an alert once-a-day rather than
+once-a-pass.
+
+| Kind | Sent when | Window | Dedup key |
+|---|---|---|---|
+| `review_queue` | Cards below the threshold are waiting (req #4) | 180 min | `review_queue:<date>` — one email a day at one pass a day |
+| `anomaly` | Supervisor finds a *serious* fleet problem (req #9); integrity finds something needing a human (req #10); guardrail #4 flags political content | 60 min default — supervisor overrides to 1440 | `supervisor:<date>:<broken sources>`, `integrity:<date>`, `political:<url>` |
+| `maintenance` | Something broke, with a plain-English suggested fix (req #11) | 1440 min | `maintenance:<date>` |
+| `health` | A backend component is down, or the cost guard tripped (req #12) | 60 min | `health:<components down>` |
+| `monthly_report` | 1st of the month (req #13) | Never throttled | one a month by construction |
 
 A single flaky source is **logged, not emailed**. "Serious" is defined in
-`ops/supervisor.py` and requires breadth or persistence, not a one-off.
+`ops/supervisor.py` and is exactly four shapes, all of which mean the archive has
+stopped updating and will not fix itself: ≥ 3 sources anomalous in one pass;
+*every* registered source failing (only counted with ≥ 3 sources registered, or
+"every" means nothing); one source anomalous 3 days running; an `agent_runs` row
+stuck in `running` for 90 minutes. Everything else is a warning in the activity
+log.
 
 > **One of those four triggers was dead until 2026-07-30.** The supervisor's
 > "source fetched 0 items N passes running" check read
@@ -190,10 +236,10 @@ as agreement — an edit is a correction.
 
 | Verdict | Meaning |
 |---|---|
-| `learning` | Operator agreement rose ≥ 2 points vs the previous window |
-| `stagnant` | Movement inside the ±2-point noise floor |
-| `regressing` | Agreement fell ≥ 5 points, **or** confidence rose > 3 points while agreement fell — the over-confidence signature |
-| `insufficient_data` | Fewer than 20 operator decisions in either window |
+| `learning` | Operator agreement rose ≥ 2 points vs the previous window (`LEARNING_DELTA`) |
+| `stagnant` | Movement between −5 and +2 points — past the noise floor in neither direction |
+| `regressing` | Agreement fell ≥ 5 points (`REGRESSION_DELTA`), **or** confidence rose > 3 points while agreement fell — the over-confidence signature, checked first because a flat rate hides it entirely |
+| `insufficient_data` | Fewer than 20 operator decisions (`LEARNING_MIN_SAMPLES`) in either window, or the unmarked-bulk case below |
 
 `auto_publish_reverted` (auto-published incidents a human later unpublished) is
 the sharpest calibration signal available: it is the operator saying "0.95 was
@@ -252,12 +298,24 @@ recomputing per-domain trust from operator verdicts each day:
 trust = (approvals + 1) / (approvals + rejections + 2)
 ```
 
-Laplace-smoothed, so one rejection cannot send a new domain to zero and the
-thresholds have to be *earned* — roughly 5 clean approvals to clear 0.700. Full
-recompute rather than incremental counters: idempotent, self-healing after a
+Laplace-smoothed, so one rejection cannot send a new domain to zero. Smoothing
+alone is **not** the safety here, though: it reads 0.750 after two clean
+approvals, which already clears the 0.700 boost threshold on almost no evidence —
+and a +0.10 nudge can push a 0.86 draft over a 0.95 autonomy gate. So a domain is
+pinned to the neutral 0.500 default until it has ≥ 10 verdicts on record
+(`REPUTATION_MIN_OBSERVATIONS`, default 10). Rejections are structurally scarcer
+than approvals right now (a rejected draft has no `incident_id` to trace a domain
+through), so early data skews positive by construction and neutral-until-proven
+is the conservative direction.
+
+Full recompute rather than incremental counters: idempotent, self-healing after a
 missed run, and immune to the double-count-on-retry bug incremental counters
-invite. Agent auto-approvals are excluded, or a domain could bootstrap its own
-reputation and then use it to clear the bar.
+invite. Agent auto-approvals (`decided_by='agent'`) are excluded, or a domain
+could bootstrap its own reputation and then use it to clear the bar. Note this
+tally is *not* the agreement metric: for reputation, `approve_with_edits` counts
+as an approval — the operator kept the source, they only changed the prose — and
+an `operator_added_source` counts as an approval for the domain the human went
+and found, which is that domain's strongest possible endorsement.
 
 ---
 
@@ -267,14 +325,14 @@ No scraping path can run unbounded. Every limit below is enforced in code:
 
 | Limit | Value | Where |
 |---|---|---|
-| Whole-pass deadline | 1500 s | `orchestrator.py` — checked **before each source's fetch**, and **before dedup** in the candidate loop |
-| Circuit breaker | 5 consecutive same-class API failures | `orchestrator.py` |
+| Whole-pass deadline | 1500 s (`INGESTION_MAX_SECONDS`, passed in by `ops/daily.py`; `run_ingestion_pass`'s own default is 1200) | `orchestrator.py` — checked **before each source's fetch**, and **before dedup** in the candidate loop |
+| Circuit breaker | 5 consecutive same-class API failures (`circuit_breaker_n`) | `orchestrator.py` |
 | Blocked source | **Zero** retries | `fallback.py` — never retry into a ban |
 | Unavailable source | Exactly 1 retry, 30 s backoff, **skipped** when the deadline is near | `fallback.py` |
-| Stage 1 RPM wait | 90 s cap per call | `stage1_quota.py` |
-| Stage 1 daily budget | RPD ceiling; halts the pass | `budget.py` |
-| Google News resolutions | 120 per fetch | `google_news_rss.py` |
-| Auto-publish per run | 25 | `auto_publish.py` |
+| Stage 1 RPM wait | 90 s cap per call (`MAX_WAIT_SECONDS`) | `stage1_quota.py` |
+| Stage 1 daily budget | RPD ceiling (`STAGE1_RPD`, 1500); halts the pass | `budget.py`, `stage1_quota.py` |
+| Article fetches per news sitemap | 15 (`MAX_ARTICLE_FETCHES`) | `sources/news_sitemap.py` |
+| Auto-publish per run | 25 (`AUTO_PUBLISH_MAX_PER_RUN`) | `auto_publish.py` |
 
 Three of these were fixed while wiring up autonomy, and each was a real hang or
 overrun, not a hypothetical:
@@ -289,9 +347,29 @@ overrun, not a hypothetical:
 - **Google News burned the entire pass budget.** `_resolve_redirect` (one HTTP
   round-trip each) ran on all ~650 feed entries before the recency filter
   discarded ~600 of them. Filtering on the RSS entry's own date *before*
-  resolving cut that fetch from **909 s to 59 s**; the remainder is the mandatory
-  politeness delay between keyword queries. Before this fix a daily pass hit its
-  deadline inside Google News and `reddit` and `edmw` never ran at all.
+  resolving cut that fetch from **909 s to 59 s**. Before that fix a daily pass
+  hit its deadline inside Google News and `reddit` and `edmw` never ran at all.
+  That source was **removed entirely on 2026-08-02** for an unrelated reason (its
+  wrapper URLs were unresolvable and were being stored as citations — see
+  `ingestion/sources/news_sitemap.py`), but the lesson outlived it and is now
+  carried by its replacements: `news_sitemap` applies recency to a sitemap entry
+  *before* fetching the article body, and `wp_search` needs no fetch at all.
+  **Filter on the cheap field first; never spend a round-trip to learn something
+  you already have.**
+
+**The pass deadline is shared across the whole fleet, and the fleet got bigger on
+2026-08-02.** `get_enabled_sources()` now returns **25** sources — 12 MSM
+scrapers, 9 news-sitemap adapters, 2 WordPress-search adapters and 2 signal
+sources — where it returned 15 before. The 1500 s budget did not change, so each
+source's share of it did: roughly 60 s each rather than 100 s. That matters
+because the deadline check `break`s out of the source loop, and **`get_enabled_sources()`
+order decides who is starved** — the two signal sources are last in the list, so
+they are the first to be skipped. A starved source is not lost (its watermark is
+left untouched and it is retried in full next pass, and nothing writes a
+`scraper_health` row for a source that was never fetched, so it cannot walk toward
+a false zero-streak) but it does not contribute that day. If `pass_deadline`
+anomalies start appearing, raise `INGESTION_MAX_SECONDS` — the Cloud Run request
+timeout is 3600 s, so there is real headroom — before assuming a source is broken.
 
 **Every block is logged**, never silent: an `agent_events` row (`source_blocked`
 / `source_unavailable`), plus `pipeline_state.last_reason` and
@@ -302,7 +380,7 @@ overrun, not a hypothetical:
 items found, items past Stage 1, duration, zero-streak, status. Both War Room
 health views and `ops/maintenance.py`'s digest read it. The supervisor's
 zero-streak **alert** does not — that derives from `pipeline_run_history`; see
-the note under §4's alert table.
+the note under §3's alert table.
 
 > **The failure this replaced is the one to watch for.** The table's writer used
 > to be `scrapers.log_scraper_run`, reachable only through `scrapers.scrape_all`
@@ -312,11 +390,27 @@ the note under §4's alert table.
 > dot with full confidence. An observability table with no live writer is worse
 > than none: it answers, and the answer is a fossil.
 >
-> Two guards now: rows are written from the path that actually runs, and
-> `supervisor.HEALTH_ROW_MAX_AGE_HOURS` (48 h) makes the agent say *"every health
-> row is stale, I have no opinion"* rather than confidently repeating old ones.
+> Two guards now. Rows are written from the path that actually runs — and the
+> supervisor no longer depends on that being true, because its zero-streak alert
+> derives from `pipeline_run_history` instead. Replacing a missing writer does not
+> remove the coupling that caused the outage; removing the coupling does.
+>
 > If you ever move the writer again, keep the key `source.name` — the stable id,
-> the one `pipeline_state` uses.
+> the one `pipeline_state` uses. The old writer used display names (`Stomp`, `The
+> Straits Times`) while the supervisor cross-references the two tables by this
+> key, so two spellings of one source count it **twice** toward the "≥ 3 sources
+> anomalous" email threshold: one broken source could mail as if it were three.
+
+**`ZERO_STREAK_WARNING` in `ingestion/health.py` was raised 3 → 30 on
+2026-08-02.** `items_found` counts candidates that survived the Yishun keyword
+filter, not articles the source served, so zero is the *normal* reading — one
+outlet publishing nothing about one town for three days is unremarkable, and
+Tamil Murasu or Berita Harian can go a month. At 3 nearly the whole fleet sat at
+`warning` permanently (9 of 15 sources on 2026-08-02, every one of them reading
+"0 items for 3 consecutive runs"), and a dashboard whose warning state is its
+resting state was read — reasonably — as a mass scraper failure when nothing had
+failed. This is a **display** threshold only: real failures surface as
+`status='error'`, and outage alerting comes from `pipeline_run_history` as above.
 
 ### 5b. Exit conditions that open, not just close: oversized merges
 
@@ -328,7 +422,7 @@ one queue row per member. That made sense when grouping was pairwise judgements
 fused by union-find: a group of 8 could be a transitive blob no single decision
 ever saw whole (A~B and B~C merged A, B **and** C with nothing comparing A to C).
 Batched grouping removed union-find, so a group of 8 is now one call that saw all
-8 at once — and the shred had become a net negative, burning N Sonnet drafts to
+8 at once — and the shred had become a net negative, burning N Stage 2 drafts to
 produce either one single-source row or several near-duplicates. The live archive
 holds 7-, 9-, 10- and 12-source incidents; a cap of 6 shredded every one.
 
@@ -383,6 +477,10 @@ close to its cap today; the guard is for when the inputs grow:
 | `consolidation._judge_batch` | 1024 | 128 | 88% | `CONSOLIDATION_BATCH_MAX_TOKENS` |
 | `clustering._make_grouper` | 1024 | 132 | 87% | `CLUSTER_GROUPER_MAX_TOKENS` |
 | `consolidation._judge_pair` | 400 | — | — | `CONSOLIDATION_PAIR_MAX_TOKENS` |
+
+`_judge_pair` is no longer on the ingestion path — consolidation batches (§6) —
+but it is not dead: `ops/integrity.py` still calls it one pair at a time for the
+duplicate re-scan, so its cap and its guard both still matter.
 
 **Recovery, in order:**
 
@@ -456,37 +554,77 @@ per-source "health check" jobs that used to re-scrape each site just to log a
 count are gone — they duplicated the ingestion pass and each one needed that
 scheduler running.
 
-Expected steady state: Cloud Run a few cents/month, Cloud Scheduler free,
-Gemini Stage 1 within the free tier (~50–100 calls/day against 1,500 RPD),
-Anthropic the only real cost.
+Expected steady state: Cloud Run a few cents/month, Cloud Scheduler free, Gemini
+Stage 1 on the free tier and therefore priced at **$0** in the estimate
+(`STAGE1_USD_PER_CALL`, overridable if a billing key is ever attached) while
+still being the thing that caps throughput at `STAGE1_RPD`=1500 — Anthropic is
+the only real cost.
 
-### Consolidation was the cost driver — now bounded
+**Every figure `ops/backend_health.py` produces is an estimate, not billing
+data.** It prices a queued draft as one classify call plus one write call
+(`STAGE2_USD_PER_DRAFT`, ~$0.031 at the list prices in `_USD_PER_MTOK`) against
+deliberately generous assumed token shapes — a cost guard that under-estimates is
+a cost guard that never fires. In the same spirit the write call is still priced
+at **Sonnet** rates while `STAGE2_WRITE_MODEL` defaults to Haiku, so the estimate
+runs high on purpose. Dry runs are counted, because `dry_run` suppresses database
+writes, not model calls: a dry run costs exactly as much as a real one.
+
+**The 2026-08-02 fleet expansion (15 → 25 sources) does not move spend the way it
+looks like it should.** Neither term in the estimate is per-source: Stage 1 calls
+come from each pass's `novel` count (candidates that survived the keyword filter,
+recency and dedup) and Stage 2 drafts from `total_queued`. Ten more sources over
+the same town on the same day mostly produce *more copies of the same stories*,
+which recency and dedup drop before Stage 1 ever sees them. What does grow is
+per-pass wall-clock — see the deadline note in §5 — and the discovery adapters'
+own HTTP cost, which is free. Watch the `passes`/`stage2_drafts` numbers in
+`agent_runs.stats` after a fleet change rather than assuming a multiplier.
+
+### Consolidation was the cost driver — now one call per candidate
 
 The largest single line item was **not** Stage 2 writing but consolidation
 dedup. For each candidate, `consolidation/check.py` ran one Haiku judgement per
 existing record sharing ≥1 keyword — and with `MIN_KEYWORD_OVERLAP=1` a single
-common 4-letter word qualifies. Against a 50-published + 50-queued pool that
-fanned out to as many as ~100 calls per candidate, and it grew with the archive:
-one live pass spent ~87 Haiku calls in 3 minutes, more than Stage 1 and Stage 2
-combined.
+common 4-letter word ("road", "fire", "block") qualifies. Against a 50-published
++ 50-queued pool (`CANDIDATE_FETCH_LIMIT` + `QUEUE_FETCH_LIMIT`) that fanned out
+to as many as ~100 calls per candidate, and it grew with the archive: one live
+pass spent ~87 Haiku calls in 3 minutes, more than Stage 1 and Stage 2 combined.
 
-It now **ranks** eligible pairs by keyword overlap and judges only the top
-`MAX_JUDGEMENTS_PER_CANDIDATE` (12), with an **early exit** once a ≥0.9
-same-incident match settles the action. Cost is `O(candidates)` instead of
-`O(candidates × archive size)`. Measured on the live archive: a candidate with
-60 eligible pairs made **1** call (early exit on its true match); a genuinely
-new candidate is capped at 12. A dropped low-overlap pair is a rare miss, and
-`ops/integrity.py` re-scans for duplicates every pass as the backstop.
+It is now **one batched judgement** (`_judge_batch`): every eligible record goes
+into a single call, and the model returns a `match_index` into that list. Cost
+is `O(candidates)` — flat in archive size, one Haiku call per candidate that
+reaches consolidation, regardless of whether the pool holds 5 records or 55.
+
+Two consequences worth holding onto:
+
+- **The keyword ranking survives, but it no longer gates anything.** Records are
+  still sorted by overlap so the likeliest match sits first in the prompt; the
+  long tail that the old per-candidate cap discarded is now judged too rather
+  than silently dropped.
+- **`MAX_JUDGEMENTS_PER_CANDIDATE` and `EARLY_EXIT_CONFIDENCE` are dead.**
+  `check.py` deliberately no longer imports them — both existed only to bound a
+  call count that no longer exists. They stay *defined* in
+  `consolidation/rules.py` so an existing env override does not become an error
+  mid-rollback. Do not reintroduce them as if they were live knobs.
+
+The failure mode changed shape with the cost: a failed batch loses the whole
+comparison for that candidate where a failed pair used to lose one. It fails in
+the same direction — treated as `new`, so the worst case is a duplicate row an
+operator can merge, never a silently dropped story — and `ops/integrity.py`
+re-scans for duplicates every pass as the backstop.
 
 `ops/backend_health.py` estimates each day's spend from actual usage and alerts
-above `COST_ALERT_USD_PER_DAY` (default $2.00). It also flags the structural
-risk: **more than ~2 passes in 24 h**, which is how a runaway scheduler would
-announce itself.
+above `COST_ALERT_USD_PER_DAY` (default $2.00). It also flags two structural
+risks, which are `degraded` rather than `down` because they predict a bill rather
+than being one: **more than 2 passes in 24 h** (`RUNAWAY_PASSES`), which is how a
+runaway scheduler would announce itself, and **`min-instances` > 0**, read from
+`CLOUD_RUN_MIN_INSTANCES` because Cloud Run does not expose its own setting to
+the container — so the deploy has to mirror it there, and an unset value
+under-reports rather than inventing a risk.
 
 ### The recency watermark was the other recurring cost
 
-Bounding consolidation per candidate does nothing if the *same candidates* come
-back every day, and they did. `pipeline_state.watermark` only advanced for a
+Making consolidation flat in archive size does nothing if the *same candidates*
+come back every day, and they did. `pipeline_state.watermark` only advanced for a
 candidate that got WRITTEN, so a Stage 1 rejection or a consolidation
 duplicate-skip — neither of which writes a row, and neither of which
 `dedup.is_duplicate` can see, because it reads only
@@ -504,12 +642,14 @@ would drop the rest of the day unseen). Each pass now reports how many candidate
 consolidation dropped as duplicates of rows already awaiting review; under the
 bug that number was recurring spend.
 
-> **Known gap — consolidation calls are not yet in the cost estimate (A12).**
-> The guard counts Stage 1 calls and Stage 2 drafts but not consolidation
-> judgements, which even bounded are ~$0.05/candidate at Haiku rates — on the
-> order of a Stage 2 draft. The estimate therefore under-counts, though the cap
-> now makes that under-count bounded and small. Fixing it properly means
-> threading a judgement counter through `IngestionReport`; tracked, not yet done.
+> **Known gap — consolidation calls are not in the cost estimate (A12).**
+> `estimate_daily_cost` derives Stage 1 calls from each pass's per-source `novel`
+> count and Stage 2 drafts from `total_queued`; consolidation judgements are
+> counted nowhere. The estimate therefore under-counts by one Haiku call per
+> candidate that reached consolidation — bounded and predictable now that the
+> fan-out is gone, but real, and it is the one direction a cost guard should not
+> be wrong in. Fixing it properly means threading a judgement counter through
+> `IngestionReport`; tracked, not yet done.
 
 > **Known gap — ephemeral filesystem.** `ingestion/stage1_daily_usage.json` and
 > `classifiers/calibration_log.json` live on Cloud Run's ephemeral disk and reset
@@ -528,9 +668,8 @@ pool, capped at `PATTERN_MAX_EXTRACTIONS` (100). Its `_entity_cache` is a
 module-level dict, so on paper each incident is extracted once — but **with
 min-instances=0 the process lifetime is one pass**, so the cache is cold every
 day and the same incidents are re-extracted every day. Budget it as a standing
-~100 Haiku calls/day (order of $0.03/day at current rates), not as a one-off
-that amortises away. Like consolidation above, these calls are **not** in
-`backend_health`'s estimate.
+~100 Haiku calls/day, not as a one-off that amortises away. Like consolidation
+above, these calls are **not** in `backend_health`'s estimate.
 
 The sharper consequence is coverage, not cost. The incident pool is ordered
 newest-first, so once it exceeds the cap the *same* newest 100 are examined
@@ -555,13 +694,27 @@ gcloud run deploy yishun-agents \
   --min-instances=0 --max-instances=2
 ```
 
-`--timeout=3600` matters: a pass runs 5–20 minutes, far past the 300 s default.
-`--min-instances=0` is the cost control. `--no-allow-unauthenticated` keeps the
-ops endpoints off the public internet; the scheduler authenticates with OIDC.
+`--timeout=3600` matters: the ingestion step **alone** is bounded at
+`INGESTION_MAX_SECONDS` = 1500 s, with eleven more steps queued behind it, so the
+300 s default cannot hold a pass. `--min-instances=0` is the cost control.
+`--no-allow-unauthenticated` keeps the ops endpoints off the public internet; the
+scheduler authenticates with OIDC.
+
+Cloud Scheduler stops waiting at its 1800 s attempt deadline while the Cloud Run
+request runs on to 3600 s, so a retry — or an impatient manual trigger — would
+start a *second* pass over the same queue rows: double the model spend, and two
+workers racing to publish the same draft. `daily._already_running` is what makes
+overlap impossible in code, and it covers the manual trigger too, which no
+scheduler setting can. It queries `agent_runs` for a `daily_orchestrator` row
+still `running`, bounded to a 60-minute look-back so an orphaned row cannot wedge
+the pass permanently, and fails **open** so an unreadable `agent_runs` table
+cannot turn a logging outage into an ingestion outage.
 
 ### Turn email on
 
-The pipeline runs without it — alerts are recorded and visible in War Room. To
+The pipeline runs without it — alerts are recorded and visible in War Room. Both
+`RESEND_API_KEY` *and* `OPERATOR_EMAIL` are required for a real send; with either
+missing, `notify()` records the alert with status `disabled` and returns. To
 start sending:
 
 ```bash
@@ -569,9 +722,17 @@ printf '%s' 'YOUR_RESEND_KEY' | gcloud secrets create resend-api-key \
   --data-file=- --replication-policy=automatic --project=yishun-again
 gcloud run services update yishun-agents --region asia-southeast1 \
   --update-secrets RESEND_API_KEY=resend-api-key:latest
+# OPERATOR_EMAIL (and NOTIFY_FROM) contain '@', which collides with
+# --set-env-vars / --update-env-vars parsing even in the ^@^ alternate-delimiter
+# form. Use a YAML file — there is no delimiter to collide with.
+gcloud run services update yishun-agents --region asia-southeast1 \
+  --env-vars-file ops-env.yaml
 curl -X POST -H "X-Ops-Token: $OPS_TOKEN" \
   https://<service-url>/notify/test          # prove delivery works
 ```
+
+`NOTIFY_ENABLED=false` mutes sending without removing the key — alerts are still
+recorded.
 
 ### Operate
 
@@ -607,6 +768,7 @@ routes to the War Room, and nothing else about the pass changes.
 |---|---|
 | What did the fleet do last night? | `GET /agents/status`, or `agent_runs` |
 | Why did nothing publish? | `agent_runs.stats.skip_reasons` for `auto_publish` |
+| …and `skip_reasons` is empty? | `stats.skipped_all` — auto-publish refuses to run at all if `training_signals.decided_by` is missing (migration 011). It will not take an action it cannot log, so it publishes nothing and mails `maintenance` instead |
 | Which source is broken? | `pipeline_state.last_reason`, War Room → HEALTH |
 | Why didn't lifecycle / discovery run? | `agent_runs.stats.cadence` on the newest `daily_orchestrator` row |
 | Is the model improving? | `learning_snapshots`, newest row |

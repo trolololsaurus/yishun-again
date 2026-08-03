@@ -1,7 +1,21 @@
 # Art Pipeline
 
-**Status:** Rebuilt July 2026. Replaces the SDXL/Modal/LoRA pipeline entirely.
+**Status: LIVE on the operator approve path** (verified against the working tree
+2026-08-02). Rebuilt July 2026; replaces the SDXL/Modal/LoRA pipeline entirely.
 This document supersedes TechSpec §9 in full — treat §9 as historical.
+
+⚠️ **Anything that still calls art generation dormant, or `pixel_art_url`
+"hardcoded null", is stale.** `apps/war-room/app/api/queue/[id]/approve/route.ts`
+imports `generateIncidentArt` from `lib/artGenerate.ts`, calls it **before** the
+incident INSERT, and writes `pixel_art_url`, `image_status`, `image_prompt` and
+`image_attempts` onto the row (§6.2). The agent-side copy of the same call in
+`ops/auto_publish.py` is written and wired but sits behind
+`ART_GENERATION_ENABLED` (default `false`) — the two paths are gated
+differently, and §6.2 says why.
+
+The one Stage-2-era claim that is still true: **Stage 2 no longer emits
+`pixel_art_prompt`**, and nothing in this pipeline wants it. The prompt does not
+exist until approve time, and it is written from the finished incident (§2).
 
 ---
 
@@ -11,7 +25,7 @@ This document supersedes TechSpec §9 in full — treat §9 as historical.
 |---|---|
 | Model string | `gemini-3.1-flash-lite-image` ("Nano Banana 2 Lite") |
 | Env var | `IMAGE_MODEL` — **never hardcode**, see §1.1 |
-| Cost | $0.0336 / 1K image standard, **$0.0168 batch** (batch is backfill-only — §6) |
+| Cost | $0.0336 / 1K image standard, **$0.0168 batch** (batch is unimplemented — §6) |
 | Free tier | None. No Gemini image model has one. Paid tier only. |
 | SDK | `google-genai` — already a dependency for Stage 1, no new packages |
 
@@ -37,28 +51,43 @@ Stage 1 runs `gemini-3.1-flash-lite` — shutdown 7 May 2027. No action needed.
 ## 2. Position in the pipeline
 
 ```
-ingest → cluster → consolidate → L2 write (title / summary)
+ingest → cluster → consolidate → Stage 2 write (title / summary)
+                                        │
+                                        ▼
+                              war_room_queue row
+                    nothing art-related is stored here —
+                    no prompt, no image, no placeholder
+                                        │
+              approve (operator)  ──────┴──────  auto-publish (agent)
                                         │
                                         ▼
                           suppression gate  (§4)
                                         │
                                         ▼
-                       Haiku writes image prompt  (§3)
+                    Haiku writes the scene paragraph  (§3)
                           reads the WRITTEN INCIDENT,
                           never the raw source articles
                                         │
                                         ▼
-                     queue row — operator may edit prompt
+               template wrap → Gemini → centre-crop → R2  (§3.8, §5, §6)
                                         │
                                         ▼
-                  approve ──► render ──► R2 ──► INSERT incident
-                                                with pixel_art_url  (§6)
+                 INSERT incident with pixel_art_url AND
+              image_status / image_prompt / image_attempts  (§6.2)
 ```
 
-**The prompt is generated after clustering and consolidation, not before.**
-Candidates that get merged into an existing cluster, or skipped as duplicates,
-never reach this step — so no tokens are spent on images that would be thrown
-away. This is the single largest saving in the redesign.
+**The prompt is generated at approve time, after clustering and consolidation —
+never before.** Candidates that get merged into an existing cluster, or skipped
+as duplicates, never reach this step, and neither does a row the operator
+rejects: generation happens only for rows that are actually publishing. No
+tokens are spent on images that would be thrown away, which is the single
+largest saving in the redesign.
+
+A corollary worth stating, because the War Room used to imply otherwise: **there
+is nothing to edit at queue time.** `components/QueueCard.tsx` carries no art
+field by design — the prompt does not exist yet. Prompt editing lives in the
+post-publish rectification flow (`/rectify`, B4b), where `incidents.image_prompt`
+holds the string that actually produced the picture on screen.
 
 **The prompt-writer reads the finished incident, not the sources.** Input is
 `title` + `summary` + `classification` + `severity` + `area_name`. The image
@@ -66,8 +95,8 @@ therefore reflects what the card actually says.
 
 > **Known trade-off.** A thinly-sourced incident produces a compressed summary,
 > so the prompt-writer sees less than the source article contained and will
-> infer more of the scene. Whether inference beyond the summary is permitted is
-> an open decision — see §8.
+> infer more of the scene. How much inference is permitted was settled as
+> *bounded* inference — see §8.4.
 
 ---
 
@@ -75,6 +104,8 @@ therefore reflects what the card actually says.
 
 **Model:** Haiku only. Never Sonnet. The task is constrained rewriting, not
 composition, and the input is at most ~1600 characters of summary.
+`IMAGE_SCENE_MODEL`, default `claude-haiku-4-5-20251001` — the same
+env-var-not-hardcoded rule as §1.1.
 
 ### 3.1 Output must be Nano Banana compliant
 
@@ -323,7 +354,18 @@ resolves that, and inverting it will reintroduce whichever failure sat below.
 Runs **before** the Haiku call — no point paying for a prompt on an incident
 that will not render.
 
-Implemented in `art/suppression.py`. Guard: `test_image_suppression.py`.
+Implemented in `art/suppression.py`. Guard: `test_image_suppression.py`. This is
+legal guardrail #5 (CLAUDE.md), and it is enforced in the generator, not in the
+UI:
+
+| Call site | When it runs |
+|---|---|
+| `generate_image()` | first statement — before the slug check, before any Haiku or Gemini call |
+| `render_prompt()` (operator rectify, B4b) | when the caller passes `incident`; `apps/war-room/.../rectify/route.ts` always does |
+
+`render_prompt`'s parameter defaults to `None`, so a caller that omits `incident`
+gets **no** suppression check. That is the one seam in the gate, and any new
+caller of `/art/rectify` must send the incident.
 
 ```python
 SUPPRESS_TAGS = frozenset({"suicide", "self-harm"})
@@ -353,15 +395,22 @@ Deliberately narrow. Severity, death count, and classifier confidence are **not*
 consulted. Fatalities, violence, fires, crime scenes and severity-5 incidents
 all generate normally.
 
-On suppression: `pixel_art_url` stays `null`. The frontend already degrades
-gracefully to the `PIXEL ART · COMING SOON` placeholder and `og-default.jpg`.
-No error, no retry.
+On suppression: `pixel_art_url` stays `null` and `image_status` is written as
+`suppressed`. The frontend already degrades gracefully to the
+`PIXEL ART · COMING SOON` placeholder and `og-default.jpg`. No error, no retry.
+
+`suppressed` is **terminal**. It is absent from `RECTIFIABLE_STATUSES`
+(`apps/war-room/lib/types.ts`), so a suppressed row never appears in the
+rectification queue, the rectify route rejects it explicitly, and there is
+deliberately no operator override. That allowlist is a `.in()` rather than a
+`.neq('image_status','ok')` for exactly this reason — an exclusion filter is one
+careless edit away from inverting.
 
 ---
 
 ## 5. Output size
 
-**1200 × 630.** Non-negotiable — `apps/web/app/incidents/[slug]/page.tsx:29`
+**1200 × 630.** Non-negotiable — `apps/web/app/incidents/[slug]/page.tsx:29-31`
 declares those exact dimensions in the OpenGraph metadata. A mismatch means the
 OG tags misreport the image to every crawler and share preview.
 
@@ -374,10 +423,18 @@ intact.
 > which produced unevenly sized pixels and horizontal stretch. For pixel art
 > that defeats the entire aesthetic.
 
-**Open blocker:** confirm `gemini-3.1-flash-lite-image` exposes `image_config`
-aspect-ratio control. Google's pricing page lists a single 1K row for Lite where
-the non-Lite model lists four resolution tiers. If Lite is square-only, step up
-to `gemini-3.1-flash-image`. **Test this before writing code.**
+~~**Open blocker:** confirm Lite exposes `image_config` aspect-ratio
+control.~~ ✅ **Closed 2026-07-31** — see §8.1. `_call_image_model` sends
+`types.GenerateContentConfig(response_modalities=["IMAGE"],
+image_config=types.ImageConfig(aspect_ratio="16:9"))` and Lite honours it.
+
+The blocker left a permanent tripwire behind it. `crop_to_target` measures what
+came back and raises `_Invalid` when the aspect is more than `ASPECT_TOLERANCE`
+(0.06) off 16:9 — tight enough that a square return can never pass — and the
+observed dimensions are logged on **every** call. So a model that quietly stops
+honouring the request surfaces as `image_status = 'invalid'` and a log line,
+never as a squashed image on the front page. The fix in that case is one env
+var: `IMAGE_MODEL=gemini-3.1-flash-image`.
 
 ---
 
@@ -393,8 +450,14 @@ renders as a broken image on the live site, which is worse than no image.
 
 Batch tier (§1) is **not** used on this path — see
 `docs/EDGE_CASES_AND_HARDENING.md` §1.1. Batch turnaround is up to 24 hours and
-cannot back an approve click. `IMAGE_USE_BATCH` defaults to `false` and is
-scoped to bulk archive backfill only.
+cannot back an approve click.
+
+`IMAGE_USE_BATCH=false` is declared in `.env.example` and read by **nothing**:
+`art/generate_image.py` has no batch branch, so today every call is standard
+tier by construction. That is the correct behaviour for this path; it is
+recorded here so nobody assumes a switch exists that would need flipping, or
+that setting it to `true` would do anything. Batch remains a bulk-archive-only
+idea, unimplemented.
 
 ### 6.1 Generate before insert — not fire-and-forget
 
@@ -408,35 +471,109 @@ update-after-insert. Under Next.js caching the live page then keeps serving the
 placeholder until revalidation fires — the image silently never appears despite
 a correct database row.
 
-Generating first costs 5–10 seconds on the approve click (irrelevant for
+Generating first costs the operator seconds on the approve click (irrelevant for
 auto-publish, which is already a background job) and eliminates the write-back,
 the orphan state, and the staleness problem entirely.
 
-On generation failure: insert `null` and publish anyway. The page already
-handles it.
+On generation failure: insert `null` with the failure status and publish anyway.
+The page already handles it.
 
-### 6.2 Two writers, both currently hardcoded null
+**The cost of that is a timeout race, and the ordering of the two timeouts is
+load-bearing.** Vercel kills a route at `maxDuration` regardless of any
+`AbortController`, and that kill lands *before* the INSERT at the bottom of the
+approve handler — so it costs the whole approval, not just the picture, while
+the backend carries on and still uploads to R2. Hence: approve route
+`maxDuration = 60`, strictly above `ART_TIMEOUT_MS` (code default 50 s, in
+`lib/artGenerate.ts`), so the in-handler abort is the one that fires. That path
+degrades to `status: 'transient'` and still publishes — recoverable later from
+`/rectify`, where nobody is sitting in front of a spinner. The rectify route
+holds the same relationship at `maxDuration = 60` over `RECTIFY_TIMEOUT_MS`
+(code default 40 s), lower because it is one attempt with no ladder.
+
+⚠️ Both budgets are env-overridable, and setting either **above** 60 s silently
+restores the failure they were sized to avoid: the platform kill wins, and a
+platform kill returns nothing at all — no status, no attempt recorded, and on
+the approve path no incident.
+
+### 6.2 Two writers, both wired (one behind a switch)
+
+Fixing only the operator path would have left every auto-published incident
+imageless — which under the autonomy target is most of them. Both are done:
+
+| Writer | Calls | Gate |
+|---|---|---|
+| `apps/war-room/app/api/queue/[id]/approve/route.ts` | `generateIncidentArt()` (`lib/artGenerate.ts`) → HTTP `POST /art/generate` | `AGENTS_API_URL` + `OPS_TOKEN` must both be set, else `status: 'pending'` |
+| `packages/agents/ops/auto_publish.py::_generate_art` | `art.generate_image.generate_image()` in-process | `ART_GENERATION_ENABLED` (default **`false`**) → `status: 'pending'` |
+
+Each writes four columns onto the incident row:
 
 ```
-apps/war-room/app/api/queue/[id]/approve/route.ts:102    pixel_art_url: null
-packages/agents/ops/auto_publish.py:235                  "pixel_art_url": None
+pixel_art_url    the ?v=-suffixed R2 URL, or null
+image_status     ok | suppressed | refused | transient | invalid | skipped
+                 | pending | no_image_final
+image_prompt     the full assembled prompt of the last attempt
+image_attempts   [{n, prompt, outcome, reason}] — what was tried, what was refused
 ```
 
-**Both must be fixed.** Fixing only the operator path leaves every
-auto-published incident imageless — which under the autonomy target is most of
-them.
+**Why the War Room goes over HTTP rather than reimplementing.** The generator is
+Python and owns the guardrail-#5 gate, the softening ladder, the 16:9
+centre-crop and the HEAD-verified upload. A TypeScript copy would put the one
+check that must not fail into two languages, in two repos, drifting
+independently. `/art/generate` and `/art/rectify` (`main.py`) are that bridge,
+authenticated with `X-Ops-Token`.
+
+**Why the gates differ.** The unattended path defaults off so an unconfigured
+deploy publishes exactly as it did before rather than logging a failure per
+incident; turning it on needs `CF_R2_*` + `GEMINI_API_KEY` + `IMAGE_MODEL`
+first. The operator path has no such switch — an operator watching an approve
+click is present to see what happened, and an unreachable backend already
+degrades to `pending`.
+
+Neither path can block a publish. Every failure returns a status; the row is
+inserted regardless and the frontend degrades to the placeholder.
+
+#### Persistence — migrations 014 and 015
+
+Both hand-applied in the Supabase SQL Editor (there is no migration runner, QA
+M15). Apply in order, after 013.
+
+- **`014_image_status.sql`** adds `incidents.image_status` / `image_prompt` /
+  `image_attempts`, backfills existing rows (`pixel_art_url IS NULL → 'pending'`,
+  else `'ok'`), and creates the partial index the `/rectify` view filters on. A
+  null URL previously meant four different things — never attempted,
+  deliberately suppressed, refused by the safety filter, or transiently failed —
+  and the rectification queue must show the refusals, hide the suppressions, and
+  never re-attempt a suppressed suicide story on every backfill forever. 014
+  also purges the dead SDXL-era prompts from `war_room_queue`
+  (`proposed_pixel_prompt` **and** the `raw_content.pixel_art_prompt` key —
+  nulling only the column leaves the panel rendering stale content), with a
+  `COPY` snapshot to take first.
+- **`015_image_status_check.sql`** adds the CHECK 014 deliberately deferred until
+  every writer set the column. Three layers already agreed on the vocabulary and
+  the only one that outlives a deploy — the database — was the only one not
+  enforcing it. It matters because `suppressed` and `no_image_final` are
+  terminal: a bad value that merely *looks* terminal is unreachable by every code
+  path that would fix it. Applied as `NOT VALID` then `VALIDATE`, after the
+  step-1 SELECT returns zero rows.
+
+⚠️ Without 014 the `/rectify` page errors outright (it says so on screen, naming
+the migration) and every insert above fails on unknown columns.
 
 ### 6.3 Frontend — already complete, nothing to build
 
 `apps/web/app/incidents/[slug]/page.tsx` already:
 
-- selects `pixel_art_url` (line 20)
-- uses it as the OG image at 1200×630, falling back to `og-default.jpg` (28–30)
-- populates the JSON-LD `image` field (113)
-- renders the `<img>` on the card (176–179)
+- selects `pixel_art_url` (line 21)
+- uses it as the OG image at 1200×630, falling back to `og-default.jpg` (29–31)
+- populates the JSON-LD `image` field (119)
+- renders the `<img>` on the card, with the `PIXEL ART · COMING SOON`
+  placeholder as the else branch (185–197)
 
-`apps/war-room/app/incidents/[slug]/page.tsx:82-84` renders it too.
-`lib/types.ts` declares it in both apps.
+`apps/war-room/app/incidents/[slug]/page.tsx:82-88` renders it too (its
+placeholder reads `NO PIXEL ART`). `lib/types.ts` declares it in both apps; the
+War Room's also carries the `ImageStatus` union, `RECTIFIABLE_STATUSES` and the
+`isImageStatus()` guard that validates a status crossing the process boundary
+from the agents backend.
 
 ---
 
@@ -529,6 +666,11 @@ removed regardless of prefix.
 Modal has no "delete app", only `stop`; the stopped app ages out on its own. The
 Modal **token** is revoked from the Modal dashboard, not the CLI — still to do.
 
+**Env vars — removed 2026-08-02.** `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` are
+gone from `.env.example`; nothing under `packages/` or `apps/` reads them, and
+`modal` is not in `requirements.txt`. Deleting the stub is housekeeping, not
+revocation — see the line above.
+
 > ⚠️ **Do not grep-and-delete on "LoRA".** `docs/LEARNING_LOOP.md` Phase 3
 > concerns *text-model* fine-tuning on `training_signals` — an entirely separate
 > roadmap item with no relationship to image generation.
@@ -540,12 +682,18 @@ Modal **token** is revoked from the Modal dashboard, not the CLI — still to do
 1. ~~**Aspect-ratio control on Lite** (§5)~~ ✅ **CLOSED 2026-07-31.**
    `gemini-3.1-flash-lite-image` accepts `image_config.aspect_ratio="16:9"` and
    returned 1376×768. Verified by live call. Stay on Lite at $0.0336/image.
-2. **When the Haiku call fires** — lazily on queue-card open (nothing spent on
-   items nobody reviews, small delay on open) versus eagerly for all surviving
-   rows (simpler, slightly more spend). Still open.
+2. ~~**When the Haiku call fires**~~ ✅ **CLOSED — neither option shipped.** The
+   choice was framed as lazily on queue-card open versus eagerly for every
+   surviving row. What shipped is later than both: the call fires at
+   approve/auto-publish time, inside `generate_image`, so it is spent on exactly
+   the rows that become incidents — nothing on rows nobody reviews, and nothing
+   on rows the operator rejects. The cost lands on the approve click, bounded by
+   the timeout ordering in §6.1.
 3. ~~**Prompt scope**~~ ✅ **CLOSED.** Haiku writes the scene paragraph ONLY.
-   The template supplies §3.3 style, §3.3a composition, §3.4 palette and §3.5
-   exclusions. Implemented in `art/prompt_template.py`.
+   The template supplies §3.3 style, §3.3a composition, §3.3b physical
+   coherence, §3.4 palette and §3.5 exclusions — five constants around one
+   model-written middle. Implemented in `art/prompt_template.py::assemble_prompt`,
+   order asserted in `test_image_generation.py`.
 4. ~~**Inference beyond the summary** (§2)~~ ✅ **CLOSED — bounded inference.**
    The scene writer may add generic setting and atmosphere consistent with the
    incident (time of day, weather, architecture, ambient props, passers-by). It

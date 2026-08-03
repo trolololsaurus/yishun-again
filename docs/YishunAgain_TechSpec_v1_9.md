@@ -1,7 +1,7 @@
 # YISHUN AGAIN — TECHNICAL SPECIFICATION
 ## For Coding Agents / Developers
 **Version:** 1.9 | **Phase:** 1 — Foundation Build
-**Last Updated:** June 2026
+**Last Updated:** August 2026
 
 ### Changelog
 | Version | Date | Changes |
@@ -14,7 +14,8 @@
 | 1.8 | June 2026 | Backfill scope expanded 1980–2025, Wikipedia promoted to primary discovery source, phased Google News batches, EDMW signal in backfill from 2015+, Reddit explicitly out of backfill scope, groq_budget.py added, wikipedia_discovery.py added, scrapers inventory table, pre-backfill checklist, backfill_agent.py year-range refactor documented |
 | 1.9.1 | July 2026 | **Stage 1 migrated Groq → Gemini** (`gemini-3.1-flash-lite`); Groq removed entirely, `groq_budget.py` deleted for `filters/stage1_quota.py` (RPM/RPD, not TPM) — §4.2, §4.8. **Adapter port complete:** `get_enabled_sources()` went from 2 → **14** live sources (all 13 non-signal scrapers + Google News RSS); gated on `published_at`, so 9 scrapers gained date extraction (`scrapers.resolve_published_at` for the HTML ones). **Scrapers now raise** `ScraperError`/`ScraperBlocked` instead of returning `[]` — a dead source no longer looks like "no news" (Stomp had been silently dead: its search endpoint moved to `www.stomp.sg`). **Source allowlist** (`classifiers/source_allowlist.py`) checks every `source_url` against the `sources` table: signal removed (guardrail #2), unapproved kept-and-flagged; table grew 17 → 43 with citation-only domains. **Multi-source fixes:** backfills no longer collapse to one `source_url`, and Stage 2 now writes from *every* source report, not just the primary. Stage 2 slug year is stamped from `incident_date` instead of guessed. Feed sorts newest-first (`is_developing` no longer floats stale stories). |
 | 1.9 | June 2026 | **Forward-looking ingestion architecture (Option B):** new §4.9 ingestion layer (trigger-agnostic `run_ingestion_pass()` entrypoint, pluggable Source interface, **SG MSM primary + Google News corroboration**, RecencyFilter, FallbackLadder, IngestionReport) — detailed design in `docs/INGESTION_DESIGN.md`. **Learning Loop** (`docs/LEARNING_LOOP.md`): Phase-1 contextual learning in scope (Futurist agent reads `source_reputation`+`training_signals`, steers frozen models; agent accumulates DATA never weights); Phase-2 graduated autonomy + Phase-3 LoRA roadmapped not built; permanent human-in-the-loop, crime/named-individual content never auto-publishes. Three-phase scope: Cold Start (1980–2023, Historical agent enriches the hand-built archive), Warm Start (2024–Jun 2026 litmus test), Forward (daily live). New §3.7 `pipeline_state`+`pipeline_run_history` tables (watermark store). Corrected §11.2 trigger model (Cloud Scheduler→HTTP replaces broken in-process APScheduler under min-instances 0). §4.0b reconciliation note (spec-vs-filesystem drift documented). Manual historical backfill 2008–2025 completed; `docs/CONSOLIDATION_RULES.md` governs it. Data-quality audit pass; 3 wrong dates corrected. CULTURE content type (`custom`/`CULTURE`/🌐) added. |
-| 1.10 | July 2026 | **Art pipeline rebuilt.** SDXL/Modal/LoRA removed entirely — the custom `yishunagain_v1` LoRA was never loaded by the deployed code, and the CivitAI SD1.5 replacement was never wired (base model stayed SDXL). Replaced with `gemini-3.1-flash-lite-image` at $0.0336/image, no GPU, no weights, no Modal. Prompt now written by Haiku from the **finished incident** after clustering and consolidation, not from raw sources and not per-candidate. Operator-editable in War Room. Output 1200×630 to match hardcoded OG dimensions; generated before insert to avoid ISR staleness. Guardrail #5 added (suicide/self-harm tag suppression). §9 superseded by `docs/ART_PIPELINE.md`. |
+| 1.10 | July 2026 | **Art pipeline rebuilt.** SDXL/Modal/LoRA removed entirely — the custom `yishunagain_v1` LoRA was never loaded by the deployed code, and the CivitAI SD1.5 replacement was never wired (base model stayed SDXL). Replaced with `gemini-3.1-flash-lite-image` at $0.0336/image, no GPU, no weights, no Modal. Prompt now written by Haiku from the **finished incident** after clustering and consolidation, not from raw sources and not per-candidate. Operator-editable in War Room. Output 1200×630 to match hardcoded OG dimensions; generated before insert to avoid ISR staleness. Guardrail #5 added (suicide/self-harm suppression). §9 superseded by `docs/ART_PIPELINE.md`. |
+| 1.11 | Aug 2026 | **Google News RSS removed** (`ingestion/sources/google_news_rss.py` deleted): its `news.google.com/rss/articles/<blob>` wrappers do not HTTP-redirect, and when resolution failed the WRAPPER was stored as the candidate URL — breaking dedupe, putting a redirect where a citation belongs, and tripping `unapproved_source_domain`. Replaced by two adapter families that emit **publishers' own canonical URLs**: `news_sitemap.py` (9 outlets' Google-News sitemaps) and `wp_search.py` (2 WordPress `?s=yishun&feed=rss2` feeds). `get_enabled_sources()` → **25**. **Allowlist gained a third rule:** `REDIRECT_DOMAINS` / `is_redirect_domain()`, checked before the `sources` table so it cannot be defeated by adding the host. **`YISHUN_KEYWORDS` corrected** — `sembawang` actually removed (every spec since v1.5 claimed it already was), `khatib` + `chong pang` added, `nee soon` deliberately dropped from the English list. **Guardrail #4 moved ahead of field validation** in `_classify` — `"classification": null` used to raise before the political check ran. `ZERO_STREAK_WARNING` 3 → 30. This pass also corrected long-standing drift in §2 (framework versions), §7 (`chaos_index_snapshots` is never written), §9/§6.4/§10 (Modal is gone) and §14/§14d (stale build status). |
 
 ---
 
@@ -22,7 +23,7 @@
 
 You are building a satirical, semi-autonomous incident archive for Yishun, Singapore. The operator reviews and approves all content before publish. Your job is to build the infrastructure that makes this possible. Follow this spec exactly. When in doubt, ask the operator. Do not invent features not listed here.
 
-**Core constraint:** Every published incident must link to a verifiable source. No private individuals unless named in MSM or Reddit. No political content. Ever.
+**Core constraint:** Every published incident must link to a verifiable source, and that link must point at the **publisher** — never an aggregator or a redirect wrapper. No private individuals unless named in MSM. No political content. Ever.
 
 ---
 
@@ -48,43 +49,53 @@ yishun-again/
 │   └── war-room/               # Next.js admin CMS (private, operator only)
 ├── packages/
 │   ├── agents/                 # Python agent pipeline (FastAPI)
-│   │   ├── scrapers/           # Per-source scraping agents
-│   │   ├── filters/            # Stage 1 (Gemini) + Stage 2 (Claude) filters
-│   │   ├── classifiers/        # Classification + severity scoring
-│   │   ├── writers/            # Incident draft generation
-│   │   ├── art/                # Image prompt (Haiku) + Gemini image API calls
-│   │   ├── cards/              # Share card generation (UTM-tagged)
-│   │   └── orchestrator/       # LangGraph orchestrator
-│   ├── db/                     # Supabase schema, migrations, types
-│   └── shared/                 # Shared types, constants, utils
+│   │   ├── scrapers/           # Per-source scraping agents + backfill
+│   │   ├── ingestion/          # The live pass: sources/, dedup, recency,
+│   │   │                       #   watermark, clustering, health, orchestrator
+│   │   ├── filters/            # Stage 1 (Gemini) + Stage 2 (Claude) + quota
+│   │   ├── classifiers/        # Classification, corroboration, allowlist,
+│   │   │                       #   lifecycle, patterns, geocoding
+│   │   ├── consolidation/      # new / update / phenomenon routing + queue row
+│   │   ├── art/                # Image prompt (Haiku) + Gemini image + guardrail #5
+│   │   ├── cards/              # EMPTY — share cards are OG meta tags (§6.5),
+│   │   │                       #   no image is generated for them
+│   │   ├── ops/                # Autonomy layer — see docs/AUTONOMY.md
+│   │   └── orchestrator/       # Milestone herald agent
+│   └── db/                     # Supabase schema, migrations, types
 ├── infra/
-│   ├── cloudbuild.yaml         # Google Cloud Run config for agents backend
-│   └── cloudflare/             # Cloudflare R2 + Stream config
-└── docs/
-    ├── PRD.docx
-    └── ARCHITECTURE.drawio
+│   ├── cloudbuild.yaml         # Google Cloud Build → Cloud Run, agents backend
+│   └── cloudflare/             # Cloudflare R2 config
+└── docs/                       # Markdown specs (see the pointers throughout)
 ```
+
+> The `packages/shared/` and `packages/agents/writers/` directories in earlier
+> versions of this tree were never built. Draft writing lives in
+> `filters/stage2_writer.py`; there is no shared TypeScript/Python package —
+> the two Next.js apps each carry their own `lib/`.
 
 ---
 
 ## 2. TECH STACK — EXACT VERSIONS
 
+> Versions below are read from `apps/*/package.json` and
+> `packages/agents/requirements.txt`. When they disagree, those files win.
+
 | Layer | Tool | Version | Notes |
 |-------|------|---------|-------|
-| Frontend | Next.js | 14.x (App Router) | Vercel deploy |
-| Map | MapLibre GL JS | 3.x | Custom pixel art marker icons |
+| Frontend | Next.js | **16.2.x** (App Router) | React 19.2.x, in BOTH `apps/web` and `apps/war-room`. Upgraded from 14 — see `docs/` deploy notes for the dependency constraints (next 16 needs a `postcss` override; `eslint-config-next@16` breaks on eslint 10). |
+| Map | MapLibre GL JS | 3.x | Custom pixel art marker icons. `transpilePackages: ['maplibre-gl']` — ESM. |
 | Database | Supabase | Latest | Postgres + REST API |
 | Image storage | Cloudflare R2 | — | Via S3-compatible API |
-| Video storage | Cloudflare Stream | — | Phase 2 only |
+| Video storage | Cloudflare Stream | — | Phase 2 only — nothing wired |
 | CDN + DDoS | Cloudflare | Free tier | All traffic routed through CF |
 | Admin auth | Cloudflare Access | Free tier | Zero-trust, service token |
-| Backend | FastAPI | 0.110.x | Python 3.11+ |
-| Agent hosting | Google Cloud Run | — | Single shared-cpu-1x machine to start |
+| Backend | FastAPI | **0.115.14** | Python 3.11+. Pinned at 0.115 for the starlette 0.40 fix (CVE-2024-47874), not 0.110. |
+| Agent hosting | Google Cloud Run | — | `asia-southeast1`, `--min-instances=0` |
 | Stage 1 filter | Gemini API | — | `gemini-3.1-flash-lite` (migrated from Groq, July 2026 — see §4.2) |
-| Stage 2 writer | Anthropic API | — | claude-haiku-4-5-20251001 default, claude-sonnet-4-6 for quality tasks |
-| Orchestrator | LangGraph | 0.4.0 | Python |
-| Image gen | Gemini API | `gemini-3.1-flash-lite-image` | Nano Banana 2 Lite, $0.0336/img. No GPU, no weights. See `docs/ART_PIPELINE.md` |
-| Scheduling | APScheduler | 3.x | Embedded in FastAPI |
+| Stage 2 writer | Anthropic API | — | `claude-haiku-4-5-20251001` for **both** calls (classify and write). `STAGE2_WRITE_MODEL` rolls the write call back to Sonnet — see §4.3. |
+| Orchestrator | *(none — hand-rolled)* | — | ⚠️ `langgraph==0.4.0` is still pinned in `requirements.txt` but **nothing imports it**. There is no `StateGraph` anywhere in the repo: the daily chain is `ops/daily.py` and the pass is `ingestion/orchestrator.py`, both plain Python. Treat LangGraph as an unused dependency, not as the orchestrator. |
+| Image gen | Gemini API | `gemini-3.1-flash-lite-image` | Nano Banana 2 Lite, $0.0336/img. No GPU, no weights. Model id is read from `IMAGE_MODEL`, never hardcoded. See `docs/ART_PIPELINE.md` |
+| Scheduling | Cloud Scheduler → HTTP | — | One job POSTs `/orchestrator/daily` at 14:58 SGT. APScheduler 3.x is still a dependency and `main.py` still builds a single-job scheduler, but it is **off in production** (`ENABLE_INPROCESS_SCHEDULER=false`) because Cloud Run scales to zero and in-process timers never fire — see §11.2. |
 | CSS | Tailwind CSS | 3.x | Pixel art + retro tabloid theme |
 
 ---
@@ -136,6 +147,24 @@ CREATE INDEX idx_incidents_location ON incidents(latitude, longitude) WHERE lati
 CREATE INDEX idx_incidents_date ON incidents(incident_date DESC);
 ```
 
+**Migrations have moved this table on since the original DDL — read them, not
+just the block above:**
+
+- **010** replaced the `source_urls` constraint. The shipped version was
+  `array_length(source_urls, 1) >= 1`, and `array_length('{}', 1)` returns
+  **NULL**, so an empty array passed and guardrail #1 was unenforced (QA C4).
+  It is now `CHECK (cardinality(source_urls) >= 1)`.
+- **014** adds `image_status`, `image_prompt`, `image_attempts`; **015** adds
+  the `image_status` CHECK. A null `pixel_art_url` used to mean four different
+  things (never attempted / suppressed under guardrail #5 / refused by the
+  safety filter / failed transiently), and the operator rectification queue and
+  any future retry pass have to tell them apart — `suppressed` and
+  `no_image_final` are terminal and must never be retried.
+- `hype_meter` is **legacy**. It is still written on approve, but the public
+  frontend no longer reads it: the lightning meter is derived live from
+  `corroboration_count` (`hypeFromSources` in `apps/web/lib/utils.ts`), so it
+  grows as sources merge into one card instead of being frozen at draft time.
+
 ### 3.2 `sources` table
 
 ```sql
@@ -145,8 +174,11 @@ CREATE TABLE sources (
   url             TEXT NOT NULL,
   type            TEXT NOT NULL CHECK (type IN ('msm', 'reddit', 'signal', 'reference')),
   -- msm = CNA/ST/Mothership/Stomp etc (quotable, attributable)
-  -- reddit = r/singapore, r/singaporeraw (quotable)
-  -- signal = EDMW (can now surface as low-confidence incident with 👎 label)
+  -- signal = EDMW/HWZ AND Reddit — corroboration count only, NEVER a quoted
+  --          source (guardrail #2) and never the event date
+  -- reddit = LEGACY value, no rows carry it. Migration 012 flipped both reddit
+  --          rows to 'signal'; the value stays in the CHECK only so 012 is
+  --          replayable. Do not use it for new rows.
   -- reference = Wikipedia (one-off backfill enrichment only, never scheduled)
   is_active       BOOLEAN DEFAULT TRUE,
   scrape_interval_minutes INTEGER DEFAULT 60,
@@ -174,16 +206,30 @@ INSERT INTO sources (name, url, type, scrape_interval_minutes, approved_by_opera
   ('Shin Min Daily News', 'https://www.shinmin.sg', 'msm', 180, true),
   ('Berita Harian', 'https://www.beritaharian.sg', 'msm', 180, true),
   ('Tamil Murasu', 'https://tamilmurasu.com.sg', 'msm', 180, true),
--- Reddit
-  ('Reddit Singapore', 'https://www.reddit.com/r/singapore', 'reddit', 30, true),
-  ('Reddit SingaporeRaw', 'https://www.reddit.com/r/singaporeraw', 'reddit', 30, true),
--- Signal only
+-- Signal — never a quoted source, never the event date (guardrail #2).
+-- ⚠️ These two reddit rows were seeded 'reddit' and flipped to 'signal' by
+--    migration 012. A fresh environment should seed them as 'signal' directly.
+  ('Reddit Singapore', 'https://www.reddit.com/r/singapore', 'signal', 30, true),
+  ('Reddit SingaporeRaw', 'https://www.reddit.com/r/singaporeraw', 'signal', 30, true),
   ('HWZ EDMW', 'https://forums.hardwarezone.com.sg/eat-drink-man-woman-16', 'signal', 60, true),
 -- Reference source — one-off backfill enrichment only, not scheduled scraping
   ('Wikipedia', 'https://en.wikipedia.org', 'reference', 0, true);
 -- Note: Wikipedia type='reference' is never scraped on schedule.
 -- Queried only during backfill runs to enrich hero incidents with authoritative facts.
 ```
+
+**The live table is bigger than this seed.** The July-2026 allowlist audit added
+citation-only domains — government and court records, other SG media, foreign
+outlets — so that `classifiers/source_allowlist.py` recognises them when they
+appear as a `source_url`. Those rows are `is_active = false` with
+`scrape_interval_minutes = 0`: quotable, never scraped. They are typed `'msm'`
+rather than `'reference'` deliberately, because `backfill_agent.py` excludes
+`reference` URLs from `source_urls` and that would silently drop court
+judgments and police releases as citations.
+
+⚠️ **Scraping is NOT driven by this table.** The live pass runs exactly what
+`ingestion/sources/get_enabled_sources()` returns (§4.0b). `sources` decides how
+a URL is *classified* and how the row renders in the War Room sources admin.
 
 ### 3.3 `utm_events` table
 
@@ -230,6 +276,24 @@ CREATE TABLE training_signals (
 CREATE INDEX idx_training_action ON training_signals(action);
 CREATE INDEX idx_training_timestamp ON training_signals(timestamp DESC);
 ```
+
+**The `action` CHECK above is out of date — it has been widened twice, and both
+times because a too-narrow CHECK was silently swallowing writes:**
+
+- **009** added `'unpublish'`. The War Room unpublish route was writing it, and
+  Postgres was rejecting every one of those inserts — the unpublish succeeded,
+  its training signal was lost.
+- **011** added `'auto_approve'` and `'auto_publish_reverted'`, plus a
+  `decided_by` column (`operator` | `agent`). Without `decided_by` the agreement
+  rate in `learning_snapshots` counts the agent's own auto-approvals as operator
+  agreement and reads 100% forever.
+
+Current: `CHECK (action IN ('approve', 'edit_approve', 'reject',
+'pattern_confirmed', 'pattern_dismissed', 'unpublish', 'auto_approve',
+'auto_publish_reverted'))`. There is a separate `decision` CHECK (007, 011).
+This failure mode is quiet in both directions — a missing CHECK value rejects
+valid writes, a missing CHECK entirely accepts invalid ones (see 015) — so widen
+it in a migration whenever a new writer appears.
 
 ### 3.5 `war_room_queue` table
 
@@ -289,7 +353,7 @@ CREATE TABLE chaos_index_snapshots (
 ```sql
 -- One row per ingestion Source (Source.name is the key).
 CREATE TABLE pipeline_state (
-  source_name          TEXT PRIMARY KEY,          -- matches Source.name, e.g. 'google_news_rss'
+  source_name          TEXT PRIMARY KEY,          -- matches Source.name, e.g. 'straits_times_sitemap'
   last_run_at          TIMESTAMPTZ,               -- when this source last completed successfully
   watermark            DATE,                      -- max published_at successfully ingested
   last_status          TEXT NOT NULL DEFAULT 'never_run'
@@ -316,34 +380,84 @@ items published-but-not-yet-indexed). A source that was blocked or unavailable k
 watermark so the next run re-attempts the same window; **no window is ever skipped because of a
 block.** See `docs/INGESTION_DESIGN.md` §6, §8.
 
+> **Refined 2026-07-30: the watermark advances on DECISIONS, not on writes.**
+> A Stage 1 rejection and a consolidation duplicate-skip are both verdicts, and
+> neither writes a row — so `dedup.is_duplicate` (which reads only
+> `war_room_queue.source_url` and `incidents.source_urls`) can never see those
+> candidates again. The watermark is the only thing that can. Each source gets a
+> `WatermarkTracker` (`ingestion/watermark.py`), and **every `continue`/`break`
+> in the candidate loop must mark it exactly once** — `decided()` for a verdict,
+> `unresolved()` for an interruption (error, deadline, budget halt, a gathered
+> candidate the cluster phase never reached). Marking neither either loses the
+> story or re-buys its Gemini + Haiku calls every single day.
+>
+> Two rules keep advancing safe and must not be removed: the **retry floor**
+> (only decided dates strictly below the earliest unresolved date advance) and
+> the **same-day grace** (never advance onto the pass's own date — the source is
+> still publishing, and `RecencyFilter` drops `published_at <= watermark`).
+> See `docs/PIPELINE_CHANGES_2026-07-30.md` §9. Guard: `test_watermark_advance.py`.
+
 ---
 
 ## 4. AGENT PIPELINE
 
 ### 4.1 Scrape Agent
 
-**File:** `packages/agents/scrapers/scrape_agent.py`
+**Files:** `packages/agents/scrapers/` (the per-source `scrape_<source>.py`
+modules and the shared constants in `scrapers/__init__.py`), driven by the
+`ingestion/sources/` adapters. There is no `scrape_agent.py` — that filename
+appeared in v1.0 and was never built.
 
 ```python
 # Responsibilities:
-# - Poll each source on its configured interval
+# - One pass fetches every registered source (§4.0b), not one job per source
 # - Extract article URLs and content for Yishun-tagged content
+# - Resolve published_at (RSS feed, else scrapers.resolve_published_at)
 # - Pass raw content to Stage 1 filter
-# - Log all scrape activity
+# - Log one scraper_health row per fetched source (ingestion/health.py)
 
-# Yishun keyword list (expand as needed):
+# ── The real list, scrapers/__init__.py (verified 2026-08-02) ───────────────
 YISHUN_KEYWORDS = [
-    "yishun", "yishun ring road", "yishun ave", "yishun street",
-    "yishun mrt", "northpoint", "khoo teck puat", "yishun park",
-    "yishun dam", "yishun pond",
-    "nee soon",     # Malay name for Yishun — same place, same town
-    # NOTE: "sembawang" removed — separate town, not Yishun
+    "yishun",
+    "khatib",           # Khatib subzone / Khatib MRT (NS14)
+    "chong pang",       # Chong Pang subzone, north-west Yishun
+    "northpoint",       # Northpoint City, the town mall
+    "khoo teck puat",   # KTP Hospital, Yishun Central
 ]
-
-# Scrape interval is per source, set in sources table
-# APScheduler job per source
-# Output: raw_content dict → Stage 1 queue
 ```
+
+**SCOPE RULE: a keyword qualifies only if it names the Yishun planning area or
+something inside it. Adjacent towns do not qualify, however close they are.**
+
+Three things about this list are easy to get wrong, and two of them were wrong
+in production:
+
+- **`"sembawang"` is gone — actually gone, as of 2026-08-02.** Every TechSpec
+  from v1.5 onward carried the line `# NOTE: "sembawang" removed`, but the code
+  was never changed, so the spec and the filter disagreed for months. Sembawang
+  is its own URA planning area with its own town centre. The cost was real: it
+  pulled a story about knife-attack plots on *Sembawang Air Base* into the
+  queue for the operator to reject by hand. Do not re-add it, and do not add
+  Woodlands, Admiralty, Canberra or Sembawang Hills for the same reason.
+- **`"nee soon"` is deliberately NOT in the English list**, even though the
+  subzone is Yishun. In English news copy it is overwhelmingly the
+  *constituency* (Nee Soon GRC), not the place — measured against The
+  Independent's search feed on 2026-08-02, its only hit was an article about an
+  MP, which guardrail #4 has to reject as political content anyway. Every
+  genuine Yishun story in that sample already matched on `"yishun"`, so it
+  bought nothing and cost a banned-category candidate. It **stays in the Malay
+  list**, where it is a place-name.
+- **Matching is plain case-insensitive substring.** The bare `"yishun"` entry
+  already covers "Yishun Ring Road", "Yishun Ave 6", "Yishun MRT", "Yishun
+  Park", "Yishun Dam" and "Yishun Pond" — only names that do *not* contain
+  "yishun" need their own entry. The long enumerated list in earlier specs was
+  redundant, not additive.
+
+Guard: `test_yishun_geography.py`.
+
+Source-language keyword lists (`_YISHUN_RAW`, zh/ms/ta) live beside it and
+follow the same scope rule. Translation happens **only** after a keyword match,
+never pre-emptively.
 
 **RSS-first approach:** CNA, Mothership have RSS feeds. Use them. Fall back to HTML scraping only if RSS unavailable.
 
@@ -372,30 +486,81 @@ https://www.reddit.com/r/singapore/search.json?q=yishun&sort=new&limit=25
 > ⚠️ This table reflects the actual files in `packages/agents/scrapers/` as of June 2026.
 > The spec is authoritative — if a file is listed here, it exists. If not listed, build it.
 
-> 🔧 **v1.9 RECONCILIATION NOTE — this table has drifted from the filesystem. Verify against
-> real files before trusting it.** Confirmed deltas as of v1.9:
+> 🔧 **RECONCILIATION NOTE — this table drifts from the filesystem. Verify against
+> real files before trusting it.** Confirmed deltas as of 2026-08-02:
 > - `groq_budget.py` was marked "NOT YET BUILT" below, was then built at
 >   `scrapers/groq_budget.py`, and has since been **deleted** by the July-2026 Gemini
 >   migration. Its replacement is `filters/stage1_quota.py` — the binding limit moved
 >   from Groq's TPM to Gemini's RPM/RPD, so it counts **requests**, not tokens.
 > - **"Live pipeline" in the table below means "a scraper exists", NOT "the orchestrator
 >   calls it".** `run_ingestion_pass()` only runs what `ingestion/sources/get_enabled_sources()`
->   registers. As of July 2026 that is all 13 non-signal scrapers **plus Google News RSS**
->   (which has no row in this table and no `sources` seed row, yet supplied 656 of 657
->   candidates in a measured backfill). EDMW is the only scraper still unregistered.
+>   registers. **All 14 scrapers are now registered**, signal included — nothing in
+>   `scrapers/` is orphaned any more.
 > - MustShareNews, The Independent and Yahoo are listed below as "HTML scraper" but have
 >   always used **feedparser** — they are RSS-backed.
-> - `wikipedia_discovery.py` is marked "NOT YET BUILT" but was **never built as a standalone
->   file**; Wikipedia discovery logic lives **inline** in `backfill_agent.py` (`_scrape_wikipedia`).
+> - `wikipedia_discovery.py` is marked "NOT YET BUILT" and still does not exist as a
+>   standalone file; Wikipedia discovery logic lives **inline** in `backfill_agent.py`.
 > - `scrape_agent.py` (named in §4.1) **does not exist**; the per-source `scrape_<source>.py`
 >   files below are the real implementation.
-> - The "Live pipeline" scrapers in this table poll feeds via **in-process APScheduler, which
->   does not fire under `--min-instances 0`** (see corrected §11.2). The forward-looking live
->   pipeline is superseded by the **§4.9 ingestion architecture**; treat these per-source
->   scrapers as available source adapters to be wired behind the new `Source` interface, not as
->   an independently-working live pipeline.
+> - These scrapers no longer poll on their own. There is **one pass**, and Cloud Scheduler
+>   triggers it (§11.2). Each is wired behind the §4.9 `Source` interface as an adapter;
+>   `scrape_interval_minutes` in `sources` is not read by the live pipeline.
 > When this table and the filesystem disagree, **the filesystem wins** — update the table, don't
 > trust it blindly.
+
+#### Registered live sources — `get_enabled_sources()` returns 25 (2026-08-02)
+
+| Tier | Count | Members |
+|---|---|---|
+| **Primary — MSM scrapers** | 12 | RSS-dated: CNA, Mothership, Straits Times, MustShareNews, The Independent, Yahoo. HTML-dated (`scrapers.resolve_published_at` reads the date off the article — URL path, else meta tags): AsiaOne, Stomp, Zaobao, Shin Min, Berita Harian, Tamil Murasu. |
+| **Discovery — news sitemaps** | 9 | `ingestion/sources/news_sitemap.py`: `cna_sitemap`, `straits_times_sitemap`, `yahoo_sitemap`, `asiaone_sitemap`, `stomp_sitemap`, `zaobao_sitemap`, `berita_harian_sitemap`, `tamil_murasu_sitemap`, `the_independent_sitemap`. Each reads the publisher's own Google-News sitemap. **Mothership has no news sitemap; Shin Min serves no robots.txt or sitemap at all.** |
+| **Discovery — WordPress search** | 2 | `ingestion/sources/wp_search.py`: `mustsharenews_search`, `the_independent_search`, over `?s=yishun&feed=rss2`. **Mothership ignores `?s=`, so it is not covered by this either.** |
+| **Signal** | 2 | `reddit` (r/singapore + r/singaporeraw), `edmw` (HWZ). Corroboration count only — never a quoted source, never the event date. |
+
+> ⚠️ **`GoogleNewsRSSSource` was DELETED on 2026-08-02. Do not add an aggregator
+> back.** Its feed entries link to `news.google.com/rss/articles/CBMi<blob>`,
+> which does **not** HTTP-redirect — the blob is an opaque signed token, and
+> decoding it needs a reverse-engineered `batchexecute` RPC that Google rotates.
+> When resolution failed, the adapter fell back to storing the **wrapper** as
+> `Candidate.url`, and that one fallback broke three things at once: dedupe
+> matches on URL so the same story re-entered every pass; the wrapper landed in
+> `war_room_queue.source_url` and in `source_urls`, putting a redirect where a
+> citation belongs; and it tripped `unapproved_source_domain`, holding the row
+> back from auto-publish. Two live rows on 2026-08-01 exhibited all three.
+>
+> The replacements read the **publisher's own** canonical URL, which is the
+> whole point — their output dedupes cleanly against the primary scrapers
+> instead of manufacturing "update" proposals for stories already held. They are
+> also a far wider net than the front-page feeds: the Straits Times sitemap
+> served **462 entries against 44 in its RSS**.
+>
+> The net under all of this is `classifiers/source_allowlist.REDIRECT_DOMAINS`
+> (§ below) — enforced at the point where a URL becomes a citation, because the
+> historical backfill and source-discovery paths still touch Google News.
+
+#### Redirector rule (`classifiers/source_allowlist.py`, added 2026-08-02)
+
+The allowlist now has **three** rules, deliberately different in severity:
+
+| Verdict | Behaviour | Why |
+|---|---|---|
+| `signal` | **Removed** unconditionally | Guardrail #2. No operator discretion. |
+| `redirect` | **Removed** unconditionally | A citation must point at the outlet that did the reporting, not at a wrapper standing in front of it. |
+| `unapproved` | **Kept and flagged** in `raw_content._source_allowlist` | Stripping it could take an incident's only source and break guardrail #1. |
+
+`classify()` returns `'redirect' | 'signal' | 'approved' | 'unapproved'` and
+checks **redirect first, without consulting the `sources` table** — so the rule
+cannot be defeated by someone adding `news.google.com` as a source row.
+`check_source_urls()` returns a `dropped_redirect` key alongside
+`dropped_signal`. `consolidation/queue_row.py` additionally substitutes a real
+publisher URL for a redirector `source_url` when one is available in `kept`.
+
+Dropping can empty `kept`. That is intentional and is not special-cased: a
+candidate whose only citation was a wrapper has no verifiable source, which is
+exactly what guardrail #1 exists to catch. It lands in the queue as unverified
+and waits for an operator to attach a real one.
+
+Guard: `test_source_allowlist.py`.
 
 | File | Purpose | Pipeline role | Notes |
 |---|---|---|---|
@@ -412,22 +577,48 @@ https://www.reddit.com/r/singapore/search.json?q=yishun&sort=new&limit=25
 | `scrape_beritaharian.py` | Berita Harian HTML scraper | Live pipeline | `/singapura` — Malay, keyword pre-filter |
 | `scrape_shinmin.py` | Shin Min Daily News HTML scraper | Live pipeline | Multilingual |
 | `scrape_tamilmurasu.py` | Tamil Murasu HTML scraper | Live pipeline | Multilingual |
-| `scrape_reddit.py` | Reddit JSON API scraper | Live pipeline | r/singapore + r/singaporeraw |
-| `scrape_edmw.py` | HWZ EDMW HTML scraper | Live pipeline + backfill signal (2015+) | Thread titles only. Signal, never source. |
-| `scrape_discovery.py` | Source discovery agent | Live pipeline (monthly) | Runs first Monday of month. Finds new source candidates. |
-| `wikipedia_discovery.py` | Wikipedia discovery agent | Backfill only | **NOT YET BUILT.** See §4.7. Bypasses Stage 1. |
+| `scrape_reddit.py` | Reddit JSON API scraper | Live + registered | r/singapore + r/singaporeraw. Emits `source_type='signal'` since July 2026. |
+| `scrape_edmw.py` | HWZ EDMW HTML scraper | Live + registered; backfill signal (2015+) | Thread titles only. Signal, never source. Date comes from the thread's start time in the LISTING markup — the thread page is never fetched. |
+| `scrape_discovery.py` | Source discovery agent | Cadence-gated (first Monday) | Driven by `ops/daily.py`, not by an in-process timer. Finds new source candidates. |
+| `historical_search_agent.py` | Historical backfill search | Backfill only | Replacement for the broken Google News RSS date-range backfill (RSS ignores `after:`/`before:` and indexes only a ~1–2 year rolling window). Uses Google News **web** search (`tbm=nws`) + CNA `site:` search, CAPTCHA-aware. GDELT (429 on every call) and Yahoo SG search (404) were tried and removed. |
+| `_gnews_helpers.py` | Google News URL resolution helpers | Backfill only | The `batchexecute` resolver. Every step is exception-guarded and degrades to returning the raw URL — which is precisely why the ingestion adapter that depended on it was deleted (see the box above). |
+| `fetch_strategy.py` | Shared fetch/retry strategy | Shared | Guard: `test_fetch_strategy.py` |
+| `smoke_test.py` | Manual scraper smoke test | Dev tool | Not part of any pass |
+| `wikipedia_discovery.py` | Wikipedia discovery agent | Backfill only | **STILL NOT BUILT** as a standalone file. See §4.7. The logic lives inline in `backfill_agent.py` (`--wikipedia-only`), which bypasses Stage 1. |
 | ~~`groq_budget.py`~~ | Groq TPD token counter | **DELETED** | Removed by the July-2026 Gemini migration. Replaced by `filters/stage1_quota.py`, which counts requests (RPM/RPD), not tokens. |
+| ~~`ingestion/sources/google_news_rss.py`~~ | Google News RSS adapter | **DELETED 2026-08-02** | Replaced by `news_sitemap.py` + `wp_search.py`. See the box above for why, and do not reintroduce it. |
 
 **Confirmed absent (correctly):** `scrape_jom.py` — dropped in v1.4 (SSL issues + low Yishun relevance). `.pyc` in `__pycache__` is a harmless artifact from before removal.
 
 **Live pipeline scrapers are NOT used for historical backfill.** They poll current feeds and have no historical search capability. Google News (via `backfill_agent.py`) covers historical MSM content across all these sources. Do not attempt to use individual MSM scrapers for backfill.
 
-EDMW revised treatment (three tiers):
-- **EDMW only, no MSM corroboration** → publishable but flagged with 👎 "EDMW only — unverified" badge. Hype meter = 0. Lower priority in feed. Operator decides in War Room.
-- **EDMW + MSM corroboration** → full incident, EDMW signal count shown as "Forum buzz". Standard hype meter applies.
-- **MSM only (no EDMW)** → standard incident, no EDMW reference.
+Signal treatment — **EDMW/HWZ *and* Reddit** (three tiers):
+- **Signal only, no MSM corroboration** → stays in the War Room queue as
+  unverified until an operator attaches an MSM source. It can **never**
+  auto-publish: the signal URL is never in `source_urls` (guardrail #2), so
+  guardrail #1's "≥ 1 source" requirement is unmet by construction. Operator
+  decides in War Room.
+- **Signal + MSM corroboration** → standard incident, signal count shown as
+  "Forum buzz".
+- **MSM only** → standard incident, no signal reference.
 
-EDMW content is never quoted or attributed directly. The 👎 badge signals to readers that corroboration is thin.
+Signal content is never quoted or attributed directly, and **a signal's post
+date is never the event date**. MSM is the sole authority for both the citation
+and the date.
+
+> **Reddit joined this tier in July 2026** (it was `type='reddit'`, "quotable").
+> It is user-generated discussion, not verifiable journalism, and its post date
+> is not an event date — a thread reviving an old case carries a recent post
+> date, which manufactured duplicate cards for old events. Migration 012 flips
+> the `sources` rows; the code change (`scrape_reddit` emits `'signal'`) is what
+> actually enforces it in the pipeline.
+>
+> Enforcement is via `source_allowlist.is_signal_source()`, **never** a bare
+> `== 'edmw'`. That exact vocabulary mismatch was live once — `scrape_edmw`
+> emitted `'signal'` while the orchestrator tested `'edmw'`, so an EDMW URL
+> would have been written into `source_urls` (`92d6305`). `'signal'` is
+> canonical; `'edmw'` survives only as a tolerated alias so no single component
+> can reintroduce the breach by comparing the wrong string.
 
 ### 4.2 Stage 1 Filter — Gemini
 
@@ -484,10 +675,37 @@ REJECT if content is:
 
 **File:** `packages/agents/filters/stage2_writer.py`
 
+> **Three deltas since this prompt was first written. All three are in the code
+> now; the block below has been corrected to match.**
+>
+> 1. **Both calls are Haiku.** `MODEL_WRITE` defaults to
+>    `claude-haiku-4-5-20251001`, not Sonnet. Justified by an eval over 30 real
+>    inputs: Haiku matched Sonnet on ungrounded specifics on the multi-source
+>    half and on format compliance, and ran ~24% shorter.
+>    `STAGE2_WRITE_MODEL` rolls it back to Sonnet if that ever regresses.
+> 2. **`pixel_art_prompt` is no longer requested.** It was written on every
+>    draft and read by nothing — the War Room approve route hardcoded
+>    `pixel_art_url: null` at the time. Art prompts are now written by a
+>    separate Haiku call from the **finished** incident (`docs/ART_PIPELINE.md`),
+>    which is a different and better input than raw sources. The
+>    `proposed_pixel_prompt` column and the `raw_content` key are nulled by
+>    migration 014.
+> 3. **Summary length is arithmetic, not an instruction.** The prose "500–800
+>    chars" (and later "~1600") ceiling was measurably ignored — Sonnet exceeded
+>    1600 on 10 of 29 eval drafts, worst 2765. The budget is now computed as
+>    `min(1600, STAGE2_SUMMARY_RATIO × non-signal source chars)`, floored at
+>    `SUMMARY_FLOOR`, and interpolated into the prompt as a hard number. Length
+>    follows the sources, so a thinly-sourced story gets a short summary instead
+>    of being padded with invented specifics.
+
 ```python
-# Model: claude-haiku-4-5-20251001 for classification
-#        claude-sonnet-4-6 for final draft writing
+# Model: claude-haiku-4-5-20251001 for classification (MODEL_CLASSIFY)
+#        claude-haiku-4-5-20251001 for draft writing   (MODEL_WRITE,
+#          env-overridable via STAGE2_WRITE_MODEL)
 # Only Stage 1 approved content reaches here
+# Two calls, not one: _classify() extracts structured metadata, write_stage2()
+# writes the prose. Both go through filters/model_call.py, which owns the
+# max_tokens truncation guard (AUTONOMY.md §5c).
 
 STAGE2_SYSTEM_PROMPT = """
 You are an editorial agent for Yishun Again, a satirical incident archive for Yishun, Singapore.
@@ -503,23 +721,28 @@ TITLE RULES (critical):
 - Good: "Block 651 resident hurls furniture from 12th floor in Yishun" (location leads — specific dread)
 - Bad: "Man arrested in Yishun" (generic, no tension)
 - Bad: "Stabbing incident reported at Yishun Ave 4" (sterile, bureaucratic)
-- Always vivid. Always specific. Never passive voice. Max 90 chars.
+- Always vivid. Always specific. Never passive voice. Max 120 chars.
 
-SUMMARY RULES (SEO-optimised, 500-800 chars):
-- Write 3-5 sentences of rich, keyword-dense prose
+SUMMARY RULES (SEO-optimised — length follows the sources, not a quota):
+- Write rich, keyword-dense prose — as long as the sources genuinely support
+  (a well-covered story can run to ~1600 chars / 5-9 sentences; a thinly-sourced
+  one should be shorter). Never pad to length with unverified detail — a shorter,
+  fully-grounded summary beats a longer one padded with invented specifics.
 - Sentence 1: The hook — what happened, who, where (block-level if known)
 - Sentence 2: Context and detail — how it unfolded, what led to it
 - Sentence 3: Outcome — arrest, injury, outcome, community reaction
-- Sentence 4-5 (if sources allow): Corroborating detail, quotes if available, wider significance
+- Sentences 4-9 (as sources allow): Corroborating detail, quotes, timeline of developments, wider significance
 - Naturally include: "Yishun", block number or street name, incident type keywords
 - Written for Google — targets long-tail queries like "yishun stabbing 2024", "yishun cat killing"
 - Do NOT use bullet points. Flowing prose only.
 - Do NOT editorialize beyond dry wit. Facts first.
+# The concrete per-draft ceiling is interpolated in as a hard number by
+# summary_char_budget(): min(1600, STAGE2_SUMMARY_RATIO x source chars).
 
 Given source content, return JSON only:
 {
-  "title": string (max 90 chars, clickbait-native, Yishun must appear, not always first),
-  "summary": string (500-800 chars, SEO prose, 3-5 sentences),
+  "title": string (max 120 chars, clickbait-native, Yishun must appear, not always first),
+  "summary": string (SEO prose; up to ~1600 chars, only as far as the sources support — never pad to length),
   "classification": "heart" | "clown" | "dagger",
   "severity": integer 1-5,
   "block_number": string | null,
@@ -532,15 +755,22 @@ Given source content, return JSON only:
   // Example: "yishun-cat-found-injured-park-aug-2023"
   "seo_title": string (max 60 chars),
   "seo_description": string (max 155 chars),
-  "pixel_art_prompt": string (detailed prompt for SDXL pixel art generation),
   "tags": string[],
   "confidence": float (0.0-1.0),
   "chaos_contribution": float (1-5 scale, Daggers weighted 3x, Clowns 1.5x, Hearts -1x),
   "hype_meter": integer 0-5
-  // 0 = EDMW/Reddit signal only, no MSM
+  // 0 = signal only, no MSM
   // 1 = 1 MSM source confirmed
   // 2-5 = count of independent MSM sources corroborating
+  // Legacy: still stored, but the public frontend derives the lightning meter
+  // from corroboration_count instead (§3.1).
 }
+
+// The _classify() call returns a separate, smaller object:
+// { classification, severity, block_number, area_name, latitude, longitude,
+//   tags, confidence, deaths, injuries, political }
+// latitude/longitude are ALWAYS null from the model — coordinates are resolved
+// downstream by a deterministic geocoder, never estimated by an LLM.
 
 Classification guide:
 - heart: Good news, community wins, positive stories
@@ -553,13 +783,34 @@ Severity guide (dagger):
 3 = Assault, significant incident
 4 = Serious crime, major incident  
 5 = Homicide, major catastrophe
-
-Pixel art prompt guide: see `docs/ART_PIPELINE.md` §3. Summary — prose not tag
-soup, exclusions inline (no negative prompt parameter exists), characters
-described positively as JRPG sprites with readable faces, art style stated
-positively rather than as negated render settings.
 """
 ```
+
+**Legal guardrail #4 is enforced in `_classify`, and its ORDER matters.**
+`"political": true` forces `confidence = 0.0` before the merge, and
+`write_stage2` prepends the operator-visible
+`[POLITICAL CONTENT DETECTED — REJECT]` marker. Since 2026-07-30 it also
+**alerts** — operator email plus a `warning` row in `agent_events` — because a
+silently-zeroed row was indistinguishable from any other low-confidence row.
+
+⚠️ As of 2026-08-02 the guardrail is read **first, before any field
+validation**. It used to sit *below* the classification/severity/confidence
+coercion, and `result["classification"].lower()` threw `AttributeError` whenever
+the model returned `"classification": null` — which is exactly what it tends to
+do on a political story, because it is being told to reject rather than
+categorise. The candidate died on an exception, so confidence was never zeroed,
+the marker was never prepended, and neither the email nor the `agent_events` row
+ever fired. The guardrail was unreachable for a subset of the very content it
+exists to catch. Observed live on an MP-resignation article surfaced by the
+WordPress search source. A political row whose category is unusable is now
+given a placeholder `'dagger'` purely so the reject path can complete and alert
+— it is rejected on confidence, never on category.
+
+Guards: `test_stage2_guardrails.py`, `test_political_alert.py`. Strengthen them
+freely; never weaken them.
+
+**Art prompts are not produced here.** See `docs/ART_PIPELINE.md` §3 — the
+scene prompt is a separate Haiku call over the finished incident.
 
 ### 4.4 Corroboration Agent
 
@@ -572,16 +823,46 @@ positively rather than as negated render settings.
 # 3. Log EDMW thread count as edmw_signal_count (never as a source)
 # 4. If corroboration_count == 0 after search: still queue, but flag as unverified
 #    Operator can approve or reject as 'unverified'
-# Minimum to auto-publish: 1 MSM or Reddit source
+# Minimum to auto-publish: 1 MSM source. NOT Reddit — Reddit is a signal since
+#   July 2026 and its URL never reaches source_urls (guardrail #2).
 ```
+
+**Auto-publish is decided in `ops/ auto_publish.py`, not here.** The confidence
+bar is `AUTO_PUBLISH_CONFIDENCE`, default **0.95**, and four further checks hold
+a row back independently of it. All leave the row `pending` for the operator;
+none rejects anything:
+
+| `check_eligibility` reason | Set by | Clears |
+|---|---|---|
+| `ungrounded_specifics` | Stage 2 groundedness post-check (regenerates once first) | Never automatically — a factual defect in that row |
+| `casualty_mismatch` | `filters/casualty_check` — source language vs the model's deaths/injuries | Never automatically — same |
+| `oversized_cluster_unproven` | a grouping call merged more than `CLUSTER_MAX_SIZE` articles | **Automatically**, once the grouper earns it (`AUTONOMY.md` §5b) |
+| `unapproved_source_domain` | `classifiers/source_allowlist` | Operator approves the domain |
+
+`AUTO_PUBLISH_CONFIDENCE=2.0` is the documented panic switch — see
+`docs/AUTONOMY.md`. Note this 0.95 gate is the **live** pipeline's; the backfill
+agent has its own, looser tier ladder (§14c).
 
 ### 4.5 Incident Consolidation Agent
 
-**File:** `packages/agents/classifiers/consolidation.py`
+**Files:** `packages/agents/consolidation/` — `check.py` (new / update /
+phenomenon routing), `queue_row.py` (the `war_room_queue` row builder),
+`rules.py` (the executable form of `docs/CONSOLIDATION_RULES.md`). The older
+`classifiers/consolidation.py` still exists and holds the related-incident
+matching. Both `backfill_agent.py` and `ingestion/orchestrator.py` route through
+the shared package — one implementation, no duplicated path.
 
 #### Overview
 
 Multiple news articles about the same real-world event must not create multiple separate incident cards. The consolidation agent identifies duplicates and related incidents before any item reaches the War Room queue.
+
+> **Clustering runs BEFORE Stage 2** (`ingestion/clustering.py`,
+> `CLUSTER_BEFORE_WRITE=on`), which is why drafts are written once per **story**
+> rather than once per URL. One batched Haiku call partitions the pass's
+> Stage-1-passed candidates. **Do not reintroduce pairwise judging + union-find**
+> — it merged transitively (A~B and B~C merged A, B *and* C with nothing ever
+> comparing A to C), and that is what produced the blob the shadow run caught.
+> See `docs/PIPELINE_CHANGES_2026-07-30.md` §1.
 
 #### Grouping Rules
 
@@ -679,11 +960,21 @@ CREATE INDEX idx_links_pending ON incident_links(confirmed_by_operator, rejected
 
 When `is_developing = TRUE`:
 
-**Public feed:**
-- Card floats to top of incident list regardless of `incident_date`
-- **DEVELOPING** badge shown (amber, pixel art style)
+**Public feed** (corrected June 2026 — the two rules below were built and then
+deliberately removed):
+- ~~Card floats to top of incident list regardless of `incident_date`~~ — the
+  feed is sorted **newest-first** (`incident_date DESC`, `id` as a stable
+  tiebreaker for pagination). Floating meant stale stories sat above genuinely
+  new ones.
+- ~~**DEVELOPING** badge/banner~~ — removed; readers consistently misread it as
+  "happening right now".
 - Card date shows latest report date
-- Source timeline visible as expandable log: "N reports · First reported [date]"
+- `is_developing` now drives the **report-count line only**: source timeline as
+  an expandable log, "N reports · First reported [date]". The timeline collapses
+  same-date entries to a single node, and "time to verdict" is computed from the
+  last verdict/sentencing/appeal entry in `source_timeline` — never from
+  `incident_date`. See `docs/FRONTEND_SPEC.md` and `apps/web/lib/utils.ts`
+  (`lastVerdictEntry`, `collapseTimelineByDate`).
 
 **Map:**
 - Pin reappears in the month/year of latest update
@@ -693,7 +984,9 @@ When `is_developing = TRUE`:
 **Narrative:**
 - Stage 2 agent regenerates summary chronologically on each update
 - New narrative reads as a developing story: "Initially reported as X, later confirmed Y, final outcome Z"
-- Pixel art image regenerates only if classification or severity changes — not on every update
+- Images are generated once, at approval (§9 / `docs/ART_PIPELINE.md`). The R2
+  key is stable (`pixel-art/{slug}.png`) so a deliberate regeneration
+  overwrites in place; there is no automatic per-update regeneration rule.
 
 **Chaos Crystal:**
 - Incident counted once regardless of update count
@@ -746,7 +1039,10 @@ On incident detail page `/incidents/[slug]`:
 **File:** `packages/agents/scrapers/scrape_discovery.py`
 
 ```python
-# Runs: First Monday of every month via APScheduler
+# Runs: First Monday of every month, as a CADENCE-GATED step inside the daily
+#       chain (ops/daily.py, cadence_plan()). NOT an APScheduler job — the
+#       in-process scheduler is off in production and would never fire (§11.2).
+#       Note: dry_run skips every cadence-gated step; none has a read-only mode.
 # Method: Web search for Yishun news coverage from unknown sources
 # Output: Candidate sources logged to sources table with approved_by_operator = FALSE
 # Operator sees candidates in War Room under "New Sources" tab
@@ -861,14 +1157,14 @@ built, never had a working trigger — see §11.2).
 
 **Package:** `packages/agents/ingestion/` (new). Layout in `INGESTION_DESIGN.md` §10.
 
-**Supersedes the existing live pipeline (Path A).** `run_ingestion_pass()` replaces the current
-live LangGraph forward pipeline (`orchestrator/orchestrator.py::run_graph()`, wired into main.py).
-On cutover, main.py is repointed to the new entrypoint and the LangGraph graph is **deleted**. The
-orphaned `pipeline.py` (dead code that nonetheless held the only correct consolidation-routing
-logic) is **mined then deleted**. End state: ONE forward pipeline — no LangGraph graph, no
-`pipeline.py`. (Note: the live LangGraph `queue_insert` node currently does NO consolidation
-routing — every candidate becomes a fresh `pending` card — so this cutover is also what first
-brings duplicate-reinforcement, timeline-enrichment, and phenomenon-linking to the live pipeline.)
+**Superseded the existing live pipeline (Path A) — ✅ DONE.** `run_ingestion_pass()`
+replaced the LangGraph forward pipeline. `main.py` is repointed, the LangGraph graph
+(`orchestrator/orchestrator.py::run_graph()`) and the orphaned `pipeline.py` are both
+**deleted** — `orchestrator/` now contains only `herald_agent.py`, and nothing in the
+repo imports `langgraph` or constructs a `StateGraph`. End state reached: ONE forward
+pipeline. (The old LangGraph `queue_insert` node did NO consolidation routing — every
+candidate became a fresh `pending` card — so this cutover is also what brought
+duplicate-reinforcement, timeline-enrichment and phenomenon-linking to the live pipeline.)
 
 **The single entrypoint (drift-resistant seam):**
 ```python
@@ -882,12 +1178,18 @@ nothing when `dry_run=True`.
 **Flow per source (see INGESTION_DESIGN.md §2, §4, §5.4):**
 1. read watermark from `pipeline_state` (§3.7)
 2. `source.fetch(since=watermark)` → `list[Candidate]`
-3. **RecencyFilter** — keep only items strictly newer than watermark (the source's date hints
-   are advisory; the orchestrator re-filters regardless, because Google News RSS was proven to
-   ignore date operators and return a relevance-ranked multi-year grab-bag)
-4. **Deduplicator** — reuse existing `check_duplicate(url)` (corroboration.py) against
-   `war_room_queue` + `incidents` by canonical URL; abort pass as DEGRADED on infra failure
-5. **Stage 1 (Gemini, quota-guarded via `filters/stage1_quota.py`) → Stage 2 (Claude)** → draft
+3. **RecencyFilter** (`ingestion/recency.py`) — keep only items strictly newer than the
+   watermark. The source's date hints are advisory; the orchestrator re-filters regardless,
+   because feeds and sitemaps routinely serve items outside the window they claim.
+4. **Deduplicator** (`ingestion/dedup.py`) — the same canonical-URL checks as
+   `corroboration.check_duplicate`, against `war_room_queue.source_url` + `incidents.source_urls`,
+   plus in-pass dedup against candidates already seen this run. ⚠️ It raises `InfraError`
+   instead of failing open: `check_duplicate` returns `False` on a Supabase error, which is a
+   fine default for a single lookup but catastrophic at pass scale — during an outage EVERY
+   candidate would look novel. The orchestrator must catch `InfraError` and abort the whole
+   pass as DEGRADED.
+5. **Clustering by story (one batched Haiku call) → Stage 1 (Gemini, quota-guarded via
+   `filters/stage1_quota.py`) → Stage 2 (Claude)** → draft, written once per story
 6. **Consolidation routing (shared module)** — `consolidation.check()` decides **new** vs.
    **update** (enrich an existing card's `source_timeline`, not just tag a link) vs.
    **phenomenon_member** (umbrella hub + sourced member, per CONSOLIDATION_RULES.md); duplicate
@@ -1029,7 +1331,7 @@ Shows all sources with `approved_by_operator = FALSE`. Operator can approve (add
 ## 6. FRONTEND — PUBLIC SITE
 
 **Path:** `apps/web/`
-**Framework:** Next.js 14 App Router
+**Framework:** Next.js 16 App Router (React 19) — `"next": "^16.2.12"` in `apps/web/package.json`
 **Styling:** Tailwind CSS + custom pixel art theme
 
 ### 6.0 Layout — One Page, No Scroll (v1.7)
@@ -1293,7 +1595,7 @@ When a year is selected in the Chaos Panel:
 
 **Page structure (top to bottom):**
 1. **Title** — SEO-optimised, includes "Yishun" and incident descriptor
-2. **AI-generated pixel art image** — below title as supporting visual. Agent reads all sources, generates prompt, LoRA renders image via Modal.run
+2. **AI-generated pixel art image** — below title as supporting visual. The scene writer composes a prompt from the incident and `gemini-3.1-flash-lite-image` renders it, uploaded to R2. (This step used to read "LoRA renders image via Modal.run"; the SDXL/Modal/LoRA build was torn down in July 2026 — see `docs/ART_PIPELINE.md`.) Generation is suppressed entirely for `suicide` / `self-harm` incidents under guardrail #5.
 3. **Merged SEO summary** — all sources consolidated into one keyword-dense prose narrative. Written for Google ranking on long-tail incident queries. No bullet points — structured prose only.
 4. **Source links** — all clickable, labelled by outlet name (CNA, Mothership, etc.)
 5. **Classification + severity + hype meter** — displayed as visual indicators
@@ -1338,7 +1640,7 @@ OG meta tags on incident page render the preview:
 ```
 
 When pasted in Telegram/WhatsApp → platform fetches OG tags → renders card preview automatically.
-No Modal.run call needed for share card. Pixel art image (already generated for the incident page) doubles as the share card visual.
+No separate image generation is needed for the share card: the pixel art already generated for the incident page doubles as the OG image. That is why generated images must be exactly 1200×630 — the dimensions are hardcoded in `apps/web/app/incidents/[slug]/page.tsx`.
 
 UTM tracking still applied via URL params when share icon is tapped:
 ```
@@ -1848,9 +2150,15 @@ CF_R2_BUCKET_NAME=yishun-assets
 # Cloudflare Stream (Phase 2)
 CF_STREAM_TOKEN=
 
-# Modal.run
-MODAL_TOKEN_ID=
-MODAL_TOKEN_SECRET=
+# Modal.run — REMOVED 2026-08-02. The SDXL/Modal/LoRA art pipeline was torn down
+# in July 2026 and nothing in the codebase reads these. Do not re-add them.
+#   MODAL_TOKEN_ID=
+#   MODAL_TOKEN_SECRET=
+
+# War Room -> agents backend (art generation runs on the operator approve path)
+OPS_TOKEN=
+AGENTS_API_URL=
+REVALIDATE_SECRET=
 
 # Reddit (optional, rate limit bypass)
 REDDIT_CLIENT_ID=
@@ -1885,7 +2193,7 @@ Only `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` and `NEXT_PUBLIC_MAPLIBRE_STYLE` are
 
 ### 10b.2 Security Headers — `next.config.js`
 
-Add this exact block to `apps/web/next.config.js`. It is pre-configured for the Yishun Again stack — Supabase, MapLibre, OpenFreeMap, Cloudflare, Modal.run.
+Add this exact block to `apps/web/next.config.js`. It is pre-configured for the Yishun Again stack — Supabase, MapLibre, OpenFreeMap and Cloudflare R2. (It used to also name Modal.run; that origin is no longer used — the SDXL/Modal art pipeline was torn down in July 2026, so no Modal host needs to be allowed.)
 
 ```javascript
 // apps/web/next.config.js
@@ -2264,7 +2572,9 @@ Step 8:  ✅ Pipeline dry run confirmed
 Step 8a: ✅ Scraper health Phase A
 Step 8b: ✅ Schema additions (deaths, injuries, milestones)
 Step 8c: ✅ Milestone Herald Agent
-Step 9:  ✅ LangGraph orchestrator — 6-node graph
+Step 9:  ✅ Orchestrator — hand-rolled, NOT LangGraph (see §Tech Stack).
+         The 6-node LangGraph graph named here was removed; `langgraph==0.4.0`
+         is still pinned in requirements.txt but nothing imports it.
 Step 10: ✅ Next.js frontend — map, Chaos Panel, feed, detail pages
 Step 11: ✅ Frontend wired to Supabase — live data confirmed
 Step 12: ✅ Share card + UTM logging
@@ -2406,10 +2716,13 @@ python -m scrapers.backfill_agent --year-from 2015 --year-to 2015 --dry-run --li
 # --dry-run           → No DB writes. Print pipeline output only.
 ```
 
-**Refactor required (v1.8):**
+**Refactor required (v1.8) — DONE, and one item is obsolete:**
 - Replace `--year YYYY` (single year) with `--year-from` / `--year-to` (range)
 - Add `--bypass-stage1` flag
-- Wire in `groq_budget.py` — all Stage 1 calls must go through budget wrapper
+- ~~Wire in `groq_budget.py`~~ — obsolete. Stage 1 migrated Groq → Gemini in
+  July 2026 and `scrapers/groq_budget.py` was deleted with it. The equivalent
+  guard is now `filters/stage1_quota.py` (`Stage1DailyQuota`, `Stage1HaltError`),
+  which bounds *requests* (`STAGE1_RPM`, `STAGE1_RPD`) rather than tokens.
 - Keep `--year wiki` and `--dry-run` unchanged
 
 ---
@@ -2437,16 +2750,27 @@ Stage 2 (Claude Haiku/Sonnet) runs on Anthropic API — separate budget, not Gro
 
 ---
 
-### Google News Search URL
+### Historical search URL (BACKFILL ONLY — not the live pipeline)
+
+> ⚠️ **This is `scrapers/historical_search_agent.py`, and it is not part of the
+> daily pass.** The live pipeline's Google News RSS source was deleted on
+> 2026-08-02; discovery now runs off publishers' own news sitemaps and search
+> feeds. This agent scrapes Google *web* news results for a year range during
+> one-off historical backfill, and the links it yields are publisher URLs, not
+> `news.google.com` wrappers — which is why it survived the removal.
+>
+> The block below previously read `https://news.google.com/search` with
+> `&hl=en-SG&gl=SG&ceid=SG:en`. Neither matched the code. Corrected to what
+> `_search_google_web()` actually sends:
 
 ```python
-# Base URL (unchanged from v1.7):
-BASE_URL = (
-    "https://news.google.com/search"
-    "?q=yishun+{keyword}"
-    "&hl=en-SG&gl=SG&ceid=SG:en"
-    "&tbm=nws"
-    "&tbs=cdr:1,cd_min:{year_from}-01-01,cd_max:{year_to}-12-31"
+# scrapers/historical_search_agent.py::_search_google_web
+url = (
+    "https://www.google.com/search"
+    f"?q={urllib.parse.quote(query)}"        # query = f"yishun {keyword}"
+    f"&tbm=nws"
+    f"&tbs=cdr:1,cd_min:{year}-01-01,cd_max:{year}-12-31"
+    f"&hl=en&gl=SG&num=20"
 )
 
 # Loop: year range × YISHUN_KEYWORDS

@@ -524,19 +524,45 @@ def _classify(client: anthropic.Anthropic, content: dict) -> dict:
         if key not in result:
             raise ValueError(f"Classify response missing '{key}': {result}")
 
-    result["classification"] = result["classification"].lower()
-    if result["classification"] not in ("heart", "clown", "dagger"):
-        raise ValueError(f"Invalid classification: {result['classification']!r}")
-
-    result["severity"]   = max(1, min(5, int(result["severity"])))
-    result["confidence"] = max(0.0, min(1.0, float(result["confidence"])))
-
-    # Legal guardrail #4 — political content is force-rejected (confidence=0),
-    # regardless of what the model returned for confidence.
+    # Legal guardrail #4 is read FIRST, before any field validation can raise.
+    #
+    # This used to sit below the classification/severity/confidence coercion,
+    # and `result["classification"].lower()` threw AttributeError whenever the
+    # model returned `"classification": null` — which is exactly what it tends
+    # to do on a political story, because it is being told to reject rather
+    # than categorise. The guardrail was therefore unreachable for a subset of
+    # the very content it exists to catch: the candidate died on an exception,
+    # so confidence was never forced to 0, the "[POLITICAL CONTENT DETECTED
+    # — REJECT]" marker was never prepended, and the operator email and
+    # `agent_events` warning row never fired. A silent crash is worse than a
+    # silently-zeroed row, which is the failure the 2026-07-30 alerting was
+    # added to fix in the first place.
+    #
+    # Observed live 2026-08-02 on an MP-resignation article surfaced by the
+    # WordPress search source.
     result["political"] = bool(result.get("political", False))
     if result["political"]:
         result["confidence"] = 0.0
         logger.warning("Stage 2 [classify] political content detected — confidence forced to 0")
+
+    classification = result.get("classification")
+    classification = classification.lower() if isinstance(classification, str) else ""
+    if classification not in ("heart", "clown", "dagger"):
+        if not result["political"]:
+            raise ValueError(f"Invalid classification: {result.get('classification')!r}")
+        # Political rows are rejected on confidence, not on category, but the
+        # column is NOT NULL downstream — give it a valid placeholder so the
+        # guardrail's own reject path can complete and alert.
+        logger.warning(
+            "Stage 2 [classify] political content returned classification=%r — "
+            "defaulting to 'dagger' so the guardrail-#4 reject path completes",
+            result.get("classification"))
+        classification = "dagger"
+    result["classification"] = classification
+
+    result["severity"]   = max(1, min(5, int(result.get("severity") or 1)))
+    result["confidence"] = 0.0 if result["political"] else \
+        max(0.0, min(1.0, float(result.get("confidence") or 0.0)))
 
     # deaths/injuries: normalize to int or None; never negative.
     # Tolerant of non-numeric model output (e.g. "several") — falls back to None

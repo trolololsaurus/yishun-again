@@ -2,15 +2,19 @@
 Self-contained tests for the Phase-1 source adapter port. No pytest, no network.
 Run: .venv/Scripts/python.exe test_ingestion_sources.py
 
-Phase 1 of issue #23: Mothership, Straits Times and Reddit joined CNA + Google
-News RSS in the live pipeline. The prerequisite was `published_at` — without it
-a candidate is dateless: it bypasses the recency watermark, is re-processed by
-Stage 1/2 every pass, and cannot be approved until an operator sets a date by
-hand (QA H3).
+Phase 1 of issue #23: Mothership, Straits Times and Reddit joined CNA in the
+live pipeline. The prerequisite was `published_at` — without it a candidate is
+dateless: it bypasses the recency watermark, is re-processed by Stage 1/2 every
+pass, and cannot be approved until an operator sets a date by hand (QA H3).
+
+Google News RSS was also part of that original registry. It was removed on
+2026-08-02 and replaced by the news-sitemap and WordPress-search discovery
+adapters; the registry assertions below pin both halves of that change.
 """
 import importlib
 
 srcmod = importlib.import_module("ingestion.sources")
+import classifiers.source_allowlist as sa  # noqa: E402
 from ingestion.sources.legacy import LegacyScraperSource  # noqa: E402
 from datetime import date  # noqa: E402
 
@@ -66,11 +70,36 @@ check("empty scrape returns []", LegacyScraperSource("x", lambda: []).fetch(sinc
 
 # ── the live registry ───────────────────────────────────────────────────────
 names = [s.name for s in srcmod.get_enabled_sources()]
-check("live registry has all 14 sources + Google News (Phases 1-3)",
-      set(names) == {"cna", "mothership", "straits_times", "mustsharenews",
-                     "the_independent", "yahoo", "asiaone", "stomp", "zaobao",
-                     "shinmin", "berita_harian", "tamil_murasu",
-                     "google_news_rss", "reddit", "edmw"})
+
+# The 14 scrapers (Phases 1-3). None of these was touched when Google News RSS
+# was removed on 2026-08-02 — assert the whole set stays registered, so a future
+# "cleanup" cannot quietly drop a publisher.
+SCRAPER_SOURCES = {"cna", "mothership", "straits_times", "mustsharenews",
+                   "the_independent", "yahoo", "asiaone", "stomp", "zaobao",
+                   "shinmin", "berita_harian", "tamil_murasu",
+                   "reddit", "edmw"}
+check("all 14 scrapers still registered", SCRAPER_SOURCES <= set(names))
+
+# Discovery adapters that replaced Google News RSS.
+DISCOVERY_SOURCES = {
+    "cna_sitemap", "straits_times_sitemap", "yahoo_sitemap", "asiaone_sitemap",
+    "stomp_sitemap", "zaobao_sitemap", "berita_harian_sitemap",
+    "tamil_murasu_sitemap", "the_independent_sitemap",
+    "mustsharenews_search", "the_independent_search",
+}
+check("discovery adapters registered", DISCOVERY_SOURCES <= set(names))
+check("registry is exactly scrapers + discovery",
+      set(names) == SCRAPER_SOURCES | DISCOVERY_SOURCES)
+
+# Guardrail: Google News RSS is gone and must not come back. Its wrappers are
+# not article URLs, they broke dedupe, and they put a redirect where a citation
+# belongs (see ingestion/sources/news_sitemap.py).
+check("no Google News source is registered",
+      not any("google" in n for n in names))
+check("no aggregator/redirect source is registered",
+      not any(sa.is_redirect_domain(getattr(s, "sitemap_url", "") or
+                                    getattr(s, "base_url", "") or "https://example.com")
+              for s in srcmod.get_enabled_sources()))
 check("EDMW is registered as a SIGNAL source (never a quoted source)",
       any(s.name == "edmw" and s.source_type == "signal"
           for s in srcmod.get_enabled_sources()))

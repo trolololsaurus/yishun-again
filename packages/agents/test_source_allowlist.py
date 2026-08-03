@@ -66,7 +66,42 @@ check("kept preserves order", r["kept"] == ["https://www.straitstimes.com/a", "h
 
 check("all-approved -> nothing flagged",
       sa.check_source_urls(["https://mothership.sg/x"], DOMAINS) ==
-      {"kept": ["https://mothership.sg/x"], "dropped_signal": [], "unapproved": []})
+      {"kept": ["https://mothership.sg/x"], "dropped_signal": [],
+       "dropped_redirect": [], "unapproved": []})
+
+# ── redirectors: a citation must point at the publisher, not a wrapper ───────
+# google_news_rss put unresolved news.google.com/rss/articles/<blob> URLs into
+# war_room_queue.source_url and source_urls in production (2026-08-01). The
+# source is gone; this rule is the net under the paths that remain (historical
+# backfill, source discovery).
+GNEWS = ("https://news.google.com/rss/articles/CBMizAFBVV95cUxORm9BVGZoT09RZTFM"
+         "Z0hnMUZzSEkyRk9tV3dGMXJvbTUzNmRHVGFz?oc=5")
+
+check("google news wrapper classifies as redirect", sa.classify(GNEWS, DOMAINS) == "redirect")
+check("is_redirect_domain catches the wrapper", sa.is_redirect_domain(GNEWS))
+check("is_redirect_domain catches a subdomain",
+      sa.is_redirect_domain("https://rss.news.google.com/x"))
+check("is_redirect_domain catches a shortener", sa.is_redirect_domain("https://t.co/abc"))
+check("publisher URL is not a redirector",
+      not sa.is_redirect_domain("https://www.straitstimes.com/a"))
+check("blank URL is not a redirector", not sa.is_redirect_domain(""))
+
+rr = sa.check_source_urls([GNEWS, "https://www.straitstimes.com/a"], DOMAINS)
+check("redirector dropped from kept", GNEWS not in rr["kept"])
+check("redirector recorded separately", rr["dropped_redirect"] == [GNEWS])
+check("real publisher survives alongside it", rr["kept"] == ["https://www.straitstimes.com/a"])
+
+# A redirect-only list empties `kept`. That is correct: the candidate has no
+# verifiable source, which is exactly what guardrail #1 is for. It must NOT be
+# rescued by keeping the wrapper.
+only = sa.check_source_urls([GNEWS], DOMAINS)
+check("redirect-only list yields empty kept", only["kept"] == [])
+check("redirect-only list is not silently kept", only["dropped_redirect"] == [GNEWS])
+
+# The redirect rule must not be defeatable by adding the host to `sources`.
+check("redirect wins over an approved sources-table row",
+      sa.classify(GNEWS, {"news.google.com": {"type": "msm", "approved": True,
+                                              "name": "Google News"}}) == "redirect")
 check("empty input -> empty result", sa.check_source_urls([], DOMAINS)["kept"] == [])
 check("None input handled", sa.check_source_urls(None, DOMAINS)["kept"] == [])
 check("blank urls skipped", sa.check_source_urls(["", None], DOMAINS)["kept"] == [])

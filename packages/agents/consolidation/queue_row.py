@@ -8,8 +8,16 @@ Moved here unchanged from scrapers/backfill_agent.py's private _build_queue_row
 build_queue_row() instead of defining its own copy.
 """
 
-from classifiers.source_allowlist import check_source_urls
+import logging
+
+from classifiers.source_allowlist import (
+    check_source_urls,
+    domain_of,
+    is_redirect_domain,
+)
 from consolidation.check import ConsolidationResult
+
+logger = logging.getLogger(__name__)
 
 
 def build_queue_row(
@@ -81,15 +89,36 @@ def build_queue_row(
     allow = check_source_urls(raw_content.get("source_urls") or [])
     if raw_content.get("source_urls") is not None:
         raw_content["source_urls"] = allow["kept"]
-    if allow["dropped_signal"] or allow["unapproved"]:
+    if allow["dropped_signal"] or allow["dropped_redirect"] or allow["unapproved"]:
         raw_content["_source_allowlist"] = {
-            "dropped_signal": allow["dropped_signal"],
-            "unapproved":     allow["unapproved"],
+            "dropped_signal":   allow["dropped_signal"],
+            "dropped_redirect": allow["dropped_redirect"],
+            "unapproved":       allow["unapproved"],
         }
+
+    # `source_url` is the row's headline link — what the War Room renders and
+    # what dedup.is_duplicate matches on — and it used to be copied from the
+    # candidate with no check at all. That is how two news.google.com wrappers
+    # became the visible source on 2026-08-01 rows: unmatched by dedupe (so
+    # they proposed updates to a story we already held) and unusable as a
+    # citation. Prefer the first surviving real source; fall back to the raw
+    # value only so the row is never malformed, and flag it either way.
+    source_url = item["url"]
+    if is_redirect_domain(source_url):
+        replacement = next((u for u in allow["kept"] if not is_redirect_domain(u)), None)
+        logger.warning(
+            "queue_row: candidate source_url is a redirector (%s) — %s",
+            domain_of(source_url),
+            f"substituting {domain_of(replacement)}" if replacement
+            else "no publisher URL available, flagging for the operator",
+        )
+        raw_content.setdefault("_source_allowlist", {})["redirect_source_url"] = source_url
+        if replacement:
+            source_url = replacement
 
     row = {
         "raw_content": raw_content,
-        "source_url":              item["url"],
+        "source_url":              source_url,
         "source_type":             item.get("source_type", "msm"),
         "proposed_title":          draft["title"],
         "proposed_summary":        draft["summary"],

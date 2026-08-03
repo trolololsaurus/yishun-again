@@ -1,8 +1,24 @@
 # Image retry and War Room rectification
 
-**Supersedes** the retry rules in `EDGE_CASES_AND_HARDENING.md` → B2
+**Supersedes** the retry rules in `EDGE_CASES_AND_HARDENING.md` §3 → B2
 ("IMAGE_MAX_RETRIES=1, never on a safety refusal") and the failure handling in
-B5. Everything else in those files stands.
+§3 → B5. Everything else in those files stands.
+
+**This is built, not planned.** The prompt blocks in §6 and §7 are the brief that
+produced the code; read them as the contract, not as outstanding work. Where the
+implementation settled somewhere slightly different from the brief, the text
+below says so. What exists:
+
+| Piece | Where |
+|---|---|
+| Ladder, per-outcome caps, attempt budget, result contract | `packages/agents/art/generate_image.py` |
+| Operator single-shot render (no Haiku, no ladder, no budget) | `render_prompt()`, same file |
+| HTTP bridge for the TypeScript caller | `POST /art/generate`, `POST /art/rectify` in `packages/agents/main.py` |
+| Status columns + CHECK | migrations `014_image_status.sql`, `015_image_status_check.sql` |
+| Rectification queue | `apps/war-room/app/rectify/page.tsx`, `components/RectifyCard.tsx` |
+| Operator actions | `app/api/incidents/[id]/rectify/route.ts`, `.../no-image/route.ts` |
+| Status vocabulary — one declaration per layer | `apps/war-room/lib/types.ts` (`ImageStatus`, `RECTIFIABLE_STATUSES`), `ImageResult` in the generator, the 015 CHECK |
+| Guards | `packages/agents/test_image_generation.py`, `test_rectify_guards.py` |
 
 ---
 
@@ -18,24 +34,38 @@ the ladder below softens the prompt at each step rather than repeating it.
 
 ## 2. Failure taxonomy — not everything retries
 
-| Outcome | Retries | Ladder | Reaches War Room |
+| Outcome | Attempts | Ladder | Reaches War Room |
 |---|---|---|---|
 | **Suppressed** (guardrail #5) | 0 | — | **No** |
 | **Safety refusal** | up to 3 | escalating softening | Yes, if all fail |
-| **Transient** (network, timeout, 5xx) | 2, same prompt | — | Yes, if all fail |
-| **Validation** (corrupt bytes, wrong aspect) | 1, same prompt | — | Yes, if it fails |
+| **Transient** (network, timeout, 5xx, scene writer) | up to 2, backoff between | — | Yes, if both fail |
+| **Validation** (corrupt bytes, wrong aspect) | up to 2 (one retry) | — | Yes, if both fail |
+| **Ceiling reached** mid-pass | 0 | — | Yes, as `skipped` |
+
+The caps are named constants in `generate_image.py` — `REFUSAL_MAX_ATTEMPTS=3`,
+`TRANSIENT_MAX_ATTEMPTS=2`, `VALIDATION_MAX_ATTEMPTS=1` (a retry count, so two
+attempts) — never a `while not ok:` loop. They are counted per outcome class, so
+a refusal followed by two transients ends `transient`, not `refused`.
+
+"Same prompt" is not literal on the non-refusal paths. Only the *rung* is held
+constant: the loop re-runs the Haiku scene writer on every attempt, so a
+transient or validation retry gets a freshly written scene at the same softening
+level rather than a byte-identical prompt. The refusal path is the only one that
+advances a rung.
 
 **Suppression is not a failure.** It is the intended outcome, it must never
 enter the retry path, and it must never appear in the rectification queue —
 otherwise the queue becomes a prompt to override the guardrail. Mark those
-incidents `image_suppressed` and leave them alone.
+incidents `suppressed` (`incidents.image_status`) and leave them alone.
 
 ---
 
 ## 3. The softening ladder
 
-Each rung is a fresh Haiku rewrite of the scene paragraph only. Style preamble,
-palette and exclusions are unchanged — the template still wraps every attempt.
+Each rung is a fresh Haiku rewrite of the scene paragraph only. The five
+template constants — style preamble, composition, physical coherence, palette,
+exclusions (`art/prompt_template.py::assemble_prompt`) — are unchanged, so the
+template still wraps every attempt.
 
 ```
 Attempt 1  As written. Full scene per ART_PIPELINE.md §3.
@@ -50,8 +80,8 @@ Attempt 3  Environment only. No human figures at all. The setting, the light,
 ```
 
 Pass the refusal reason from the API response into the attempt-2 rewrite where
-one is available (`finish_reason`, `block_reason`, safety category). Where it is
-not, fall back to the generic instruction above.
+one is available (`finish_reason`, `block_reason`, safety category — collected by
+`_refusal_reason()`). Where it is not, fall back to the generic instruction above.
 
 Attempt 3 is deliberately close to the register I would have recommended for
 serious incidents anyway: an establishing shot, not a depiction. On a dagger
@@ -70,23 +100,52 @@ are your most newsworthy cards. Under unattended operation, blocking on image
 failure would silently withhold exactly the stories that matter most. The
 frontend already degrades to the placeholder and `og-default.jpg`.
 
+Both writers behave this way: the War Room approve route calls
+`generateIncidentArt` before its INSERT and inserts regardless of the outcome,
+and `ops/auto_publish.py::_generate_art` returns the status fields to merge and
+never raises. A failure or a suppression writes `pixel_art_url: null` plus the
+status, and the row publishes.
+
 **Consequence for B5.** Rectification is by definition post-insert, so it
 requires the update-after-insert path that was removed from the automatic flow.
 That is fine — it is a manual operator action, not a pipeline step — but it
 **must trigger a revalidation hook** after writing `pixel_art_url`, or the live
-page keeps serving the placeholder under ISR despite a correct row. Build the
-revalidation call as part of the rectify endpoint, not as an afterthought.
+page keeps serving the placeholder under ISR despite a correct row.
+
+As built: `apps/web/app/incidents/[slug]/page.tsx` sets `revalidate = 3600`, so
+the stale window is up to an hour. The rectify route **awaits**
+`revalidateIncident(slug)` (`apps/war-room/lib/revalidate.ts`) — an unawaited
+fetch is frozen when the serverless function returns — and reports the outcome
+back as `revalidated` / `revalidate_reason` rather than swallowing it. A failed
+hook is never fatal, because the row is already correct, but the card tells the
+operator the page will keep serving the placeholder.
 
 ---
 
 ## 5. Cost ceiling counts attempts, not incidents
 
-Three attempts per incident triples the worst case. `IMAGE_MAX_PER_RUN=25`
-counts incidents and would permit 75 calls.
+Three attempts per incident triples the worst case. The `IMAGE_MAX_PER_RUN=25`
+proposed in `EDGE_CASES_AND_HARDENING.md` §3 → B2 counts incidents and would
+permit 75 calls.
 
-Add **`IMAGE_MAX_ATTEMPTS_PER_RUN`** (default 40). When reached, stop generating
-for the remainder of the pass, publish the rest with null, flag them for
-rectification, and emit a warning. Publication continues regardless.
+**`IMAGE_MAX_ATTEMPTS_PER_RUN`** (default 40) replaced it and is the only image
+ceiling in the code — `IMAGE_MAX_PER_RUN` was never implemented. When reached,
+generation stops for the remainder of the pass, the rest publish with null and
+status `skipped`, and the outcome is flagged for rectification. Publication
+continues regardless.
+
+Two details the name does not carry:
+
+- The budget is an explicit `AttemptBudget` object, not module state, so a pass
+  owns its own count and tests cannot leak counts into one another.
+  `ops/auto_publish.py` builds exactly one per pass and threads it through every
+  publish. A `/art/generate` call from the War Room builds its own, because that
+  is one operator click rather than an unattended loop — the ceiling bounds the
+  autonomous pass, not the operator.
+- It counts loop attempts, not billed image calls. An attempt whose Haiku scene
+  writer failed before any image call was made still spends budget. That is the
+  conservative direction: the ceiling exists to bound a runaway pass, and a
+  runaway scene writer costs money too.
 
 ---
 
@@ -120,7 +179,8 @@ into the attempt-2 rewrite when present. Generic instruction when absent.
 
 RETURN CONTRACT on exhaustion:
   Return a structured result, not a bare None, so the caller can route it:
-    { url: str|None, status: 'ok'|'suppressed'|'refused'|'transient'|'invalid',
+    { url: str|None,
+      status: 'ok'|'suppressed'|'refused'|'transient'|'invalid'|'skipped',
       attempts: [ {n, prompt, outcome, reason} ], final_prompt: str }
   The attempts list is what the operator sees in War Room — they need to know
   what was tried and what was refused, not just that it failed.
@@ -135,6 +195,28 @@ recorded; three refusals returns status 'refused' with all three prompts;
 suppressed makes zero calls and is never marked refused; attempt ceiling stops
 generation but does not stop publication.
 ```
+
+> **Three deltas between this brief and `art/generate_image.py`.** None changes
+> the contract, but do not read the block above more literally than the code
+> supports:
+>
+> - **There is no `image_suppressed`.** Suppression returns an `ImageResult` with
+>   `status='suppressed'` — never a bare `None`, which is the whole point of the
+>   structured return — and that string is the value written to
+>   `incidents.image_status`. Since 015 the CHECK constraint would reject
+>   `image_suppressed` outright.
+> - `IMAGE_MAX_ATTEMPTS=3` is spelled `REFUSAL_MAX_ATTEMPTS` in the code, and
+>   `VALIDATION_MAX_ATTEMPTS=1` is a *retry* count — a validation failure is
+>   retried once, for two attempts. §2 has the exact caps.
+> - "same prompt" on the transient and validation paths means the same ladder
+>   rung, not identical bytes: the scene writer runs again on every attempt.
+>
+> The first three test lines are asserted directly in `test_image_generation.py`;
+> the fourth is covered as `status='skipped'` with zero calls, its publication
+> half being `ops/auto_publish.py`, which merges the result into the insert and
+> never blocks on it. The same file also guards the R2 HEAD verification after
+> the PUT, the `?v=` content hash changing only when the bytes do, and a wrong
+> aspect ratio coming back `invalid` rather than salvaged by squashing.
 
 ---
 
@@ -156,6 +238,23 @@ later. Write the numbered migration and STOP — do not apply it.
 'suppressed' is terminal and must NEVER appear in the rectification queue.
 Guardrail #5 is not operator-overridable. Do not build an override control.
 
+> **As built.** `014_image_status.sql` adds three nullable columns —
+> `image_status`, `image_prompt`, `image_attempts` — not a `raw_content` field,
+> plus `idx_incidents_image_status` over the four rectifiable values. The
+> backfill is conditional, which is narrower than "existing rows to 'pending'":
+> a pre-existing row becomes `pending` only if `pixel_art_url IS NULL`,
+> otherwise `ok`.
+>
+> The "enforce later" half is `015_image_status_check.sql`: it looks for
+> unknown values first, then adds `incidents_image_status_check` `NOT VALID` and
+> validates it. NULL stays legal. Without it the database was the only layer of
+> the three that agreed on this vocabulary (TS union, Python docstring, column
+> comment) and did not enforce it — and a bad value that merely *looks* terminal
+> is unreachable by every code path that would fix it.
+>
+> Both are hand-applied in the Supabase SQL Editor; there is no migration runner
+> (QA M15).
+
 WAR ROOM VIEW:
 A filtered list of published incidents with status in (refused, transient,
 invalid, **skipped**). For each, show:
@@ -167,9 +266,11 @@ invalid, **skipped**). For each, show:
 > and `idx_incidents_image_status` both use the four.
 >
 > **`pending` is deliberately NOT in the queue**, and it is the largest imageless
-> cohort: migration 014 backfills every pre-existing incident to it, and both
-> writers use it whenever art generation is off or unconfigured. Those were never
-> attempted at all — a backfill job, not a per-incident operator decision.
+> cohort: migration 014 backfills every pre-existing incident without an image to
+> it, and both writers use it whenever art generation is off or unconfigured
+> (`ART_GENERATION_ENABLED` unset on the agents side, `AGENTS_API_URL` or
+> `OPS_TOKEN` unset on the War Room side). Those were never attempted at all — a
+> backfill job, not a per-incident operator decision.
   - the incident title and classification
   - every attempted prompt with its outcome and refusal reason
   - the last attempt's prompt, pre-loaded into an editable field
@@ -183,6 +284,30 @@ OPERATOR ACTIONS — four, no more:
   3. Publish without image     — sets status to 'no_image_final'. Terminal.
                                  Backfill jobs must skip it.
   4. Leave pending             — no change, stays in the queue
+
+> **As built** (`components/RectifyCard.tsx` and the two routes). Actions 1 and
+> 2 are one endpoint — `POST /api/incidents/[id]/rectify` — because they differ
+> only in where the prompt comes from: a body with `prompt` uses it, a body
+> without falls back to the stored `image_prompt`. Action 4 is client-side only:
+> it drops the card from this session's list and writes nothing, so the row is
+> back on the next load.
+>
+> Guardrail #5 is enforced at three independent layers, not just by the queue
+> filter: the page selects `.in('image_status', RECTIFIABLE_STATUSES)` so
+> suppressed rows are excluded by construction; both routes re-check server-side
+> and answer 422 (rectify) or 409 (no-image); and `render_prompt` runs the
+> deterministic `suppress_image()` gate itself before spending anything, when the
+> caller passes `incident` — which the rectify route always does. There is
+> deliberately no control anywhere that can set or clear `suppressed`.
+> `test_rectify_guards.py` reads the TypeScript as text and asserts exactly that.
+>
+> Failures are persisted too, and the write is checked: a refusal writes the new
+> `image_status`, `image_prompt` and appended `image_attempts` before answering,
+> so the reason the operator reads off the screen survives a reload. Both writes
+> are compare-and-set on `RECTIFIABLE_STATUSES` (409 on a miss), so two operators
+> on one row — or a suppression landing in between — cannot both win. Attempt
+> history is appended and renumbered, capped at the most recent 10, because it is
+> JSONB on a published row that `/rectify` loads 200 of at a time.
 
 On successful rectification:
   - upload to R2, write pixel_art_url, set status 'ok'
@@ -207,7 +332,15 @@ plus the live page URL showing the image.
 
 ## 8. Telemetry to add
 
-Per pass, into `agent_events`:
+**Not built yet.** What exists today is per-incident, not per-pass:
+`ops/auto_publish.py::_generate_art` writes one `agent_events` warning per row
+whose status is neither `ok` nor `suppressed` — `image_refused`,
+`image_transient`, `image_invalid`, `image_skipped`, or `image_failed` when the
+generator itself blew up — carrying the slug and the last attempt's reason,
+truncated to 200 characters. Nothing aggregates those, and the War Room approve
+path emits no event at all; its history lives only in the row's `image_attempts`.
+
+Still worth adding, per pass, into `agent_events`:
 
 - attempts issued, split by outcome
 - refusal rate **by classification** — if daggers refuse at 60% and clowns at
@@ -216,6 +349,9 @@ Per pass, into `agent_events`:
   environment-only is your real dagger art direction and the ladder has told
   you something the design could not
 - count entering rectification per pass
+
+The raw material is already stored: `attempts[].outcome` and the rung ordering
+are on every incident row, so this is an aggregation, not new instrumentation.
 
 If the rectification queue grows faster than you clear it, the ladder is not
 working and the answer is a different art direction for that classification —

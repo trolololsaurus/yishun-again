@@ -3,6 +3,11 @@
 **Status:** CANONICAL · Locked to the live, deployed site (the working source of truth)
 **Supersedes:** TechSpec v1_9 §6.0–6.0e and §6.1 for all frontend design + behavior.
 Where this document and any TechSpec section disagree, **this document wins.**
+**Stack (locked in `apps/web/package-lock.json`):** Next.js **16.2.12** App Router
+(Turbopack is the default bundler; `next.config.js` pins `turbopack.root` because
+the repo root also carries a lockfile) · React **19.2.8** · Tailwind CSS 3.4 ·
+MapLibre GL JS 3.6.2 · react-window 1.8.11. Anything describing this app as
+Next.js 14 / React 18 is stale.
 
 > **Why this exists:** the frontend design was never captured in a spec — it lived
 > only in `apps/web/globals.css`, `tailwind.config.js`, and the components. The
@@ -50,18 +55,30 @@ Source of truth: `globals.css` CSS custom properties (mirrored in `tailwind.conf
 | `heart` | GOOD VIBES ❤️ | `--color-good-vibes` | `#4ECDC4` (teal) |
 | `clown` | ABSURDITIES 🤡 | `--color-absurdities` | `#FFE66D` (yellow) |
 | `dagger` | DARK EVENTS 💀 | `--color-dark-events` | `#FF6B6B` (coral) |
-| `custom` + `custom_label='CULTURE'` | CULTURE 🌐 | `culture` | `#A78BFA` (violet) |
+| `custom` + `custom_label='CULTURE'` | YISHUN ON THE MAP 🌐 | `culture` | `#A78BFA` (violet) |
 
 These four colors and their display names are immutable. Any change is a
 regression. (This corrects the TechSpec §6.0c copy-error where GOOD VIBES wrongly
 shared `#E87070` with DARK EVENTS — live has them correctly distinct.)
+
+Two details the table can't carry:
+- `culture` is a **Tailwind-only** token (`tailwind.config.js`), not a CSS custom
+  property — there is no `--color-culture` in `globals.css`. The other three are
+  both.
+- `custom` rows carry a second recognised label, `UNSOLVED CRIME` (❓ "Cold case
+  — perpetrator never identified or convicted"). It has **no colour of its own**:
+  `classColor` returns `text-text-secondary` and `pinColor` returns `#7A8BAA`,
+  which is also the fallback for any unrecognised `custom_label`. Display names
+  and icons live in `CUSTOM_LABEL` / `CUSTOM_ICON` (`lib/utils.ts`).
 
 ---
 
 ## 2. Typography — LOCKED
 
 **Families:** Press Start 2P (display/HUD), Courier Prime → Courier New fallback
-(body/content). Google Fonts. **No font below 9px.**
+(body/content). Google Fonts. **Floor is 9px, with one deliberate exception:** the
+story-timeline node role labels (`REPORTED` / `VERDICT` / …) are 8px, because the
+label must fit a ~80px node without wrapping. Nothing else may go below 9px.
 
 **Press Start 2P (HUD/chrome):**
 | Element | Size |
@@ -72,39 +89,24 @@ shared `#E87070` with DARK EVENTS — live has them correctly distinct.)
 | `/100` | 20px |
 | Chaos descriptor (QUIET…) | 13px |
 | Breakdown stat counts | 20px |
-| Chaos descriptor / section headers | 11px |
+| Section headers (CHAOS INDEX, INCIDENT BREAKDOWN) | 11px |
+| `MAP UNAVAILABLE` error heading | 11px |
 | Filter chip labels | 10px |
-| Year selector label | 10px |
-| Badges (MILESTONE) | 9px |  <!-- DEVELOPING badge removed June-2026; see Feed deltas below -->
-
-<!--
-### Feed / incident-card deltas (June-2026 pass)
-- **DEVELOPING badge + banner removed** (confused readers). `is_developing` drives
-  only the "N reports · First reported …" line — **not** feed sort (see §5; the
-  feed is newest-first).
-- **Lightning (⚡) = corroboration**, derived live from `corroboration_count`:
-  `bolts = max(0, corroboration_count − 1)` (2 sources → ⚡, 3 → ⚡⚡, …). The legacy
-  `hype_meter` column is no longer read. Tooltip updated accordingly. Same rule in
-  feed card, map popup, and detail page.
-- **Story timeline collapses same-date entries** to one node (most-significant role
-  wins the label); renders only with 2+ distinct dates.
-- **"Time to verdict"** is computed from the last verdict/sentencing/appeal entry in
-  `source_timeline` (helpers `lastVerdictEntry` / `verdictNoun`), never from
-  `incident_date` (which is the event date). Label adapts: "to verdict / sentencing / appeal".
-- Helpers: `apps/web/lib/utils.ts` → `hypeFromSources`, `lastVerdictEntry`,
-  `verdictNoun`, `collapseTimelineByDate`.
--->
-
+| Year selector label (YEAR) | 10px |
+| `STORY TIMELINE` disclosure heading | 10px |
+| Badges (MILESTONE) | 9px |  <!-- DEVELOPING badge removed June-2026; see §5 -->
+| Story-timeline node role label | 8px (the exception above) |
 
 **Courier Prime (content):**
 | Element | Size / weight |
 |---|---|
-| Incident titles | 16px bold |
+| Feed-card incident titles | 16px bold |
+| Detail-page title (`<h1>`) | 20px bold |
 | Body / summaries | 16px |
 | Feed header | 14px |
 | Map popup title | 16px / 700 |
 | Map popup metadata | 14px |
-| Metadata (date, area) | 13px |
+| Feed-card metadata (date, area) | 13px |
 | Legal disclaimer | 10px |
 
 ---
@@ -114,16 +116,25 @@ shared `#E87070` with DARK EVENTS — live has them correctly distinct.)
 | Element | Value |
 |---|---|
 | `html, body` | `height: 100%; overflow: hidden` — **no page-level scroll, ever** |
-| Header | 72px fixed top |
-| Right sidebar (Chaos Panel) | 280px fixed, `flex-none` — **never collapses** |
+| Header (`Nav`) | 72px fixed top, `flex-none` |
+| `<main>` | `flex-1 min-h-0 flex flex-col overflow-y-auto` — the scroll region for the non-homepage routes (detail, `/timeline`, `/about`) |
+| Right sidebar (Chaos Panel) | 280px fixed, `flex-none` — **never collapses**; `overflow-y-auto` so a short viewport can still reach the disclaimer |
 | Map | 45vh |
 | Filter chips bar | 48px fixed, `flex-none` |
-| Incident feed | `flex-1 min-h-0 overflow-y-auto` — fills remaining height, scrolls internally |
+| Incident feed | wrapper `flex-1 min-h-0 overflow-hidden`; the scroll region is react-window's `FixedSizeList`, measured by a callback ref |
 | Main left column | `flex-1 min-w-0 flex flex-col overflow-hidden` |
-| Scrollbar | 6px width, no border-radius |
+| Scrollbar | 6px width, `height: 0` (never a horizontal bar), no border-radius |
 
-Only the incident feed scrolls. Everything else is fixed. This is the
+The page itself never scrolls. On the homepage the only internal scroll regions
+are the feed and the sidebar; the map and chip bar are fixed. This is the
 command-console frame.
+
+> The feed's list height is measured by a **callback ref**, not a
+> `useRef` + effect, so the first commit already has the real height instead of
+> the 600px SSR fallback. The earlier ResizeObserver-only version dropped its
+> first callback whenever `contentRect.height` was still 0 and never got a
+> second one — the list stayed 600px tall inside a ~235px box and clipped its own
+> scroll region. Don't revert it.
 
 ---
 
@@ -183,21 +194,58 @@ deterministic tiebreaker (prevents duplicate-slug pagination). `is_developing`
 no longer floats stories to the top — stale flags were burying newer incidents.
 
 **Pagination:** `PAGE_SIZE = 20`, client virtualization `ITEM_HEIGHT = 152px`.
+Infinite scroll: `onItemsRendered` fires `loadMore()` once the last visible row
+is within 3 of the end. Every request takes a ticket (`reqRef`) and only the
+newest may write state — otherwise a fast filter switch could land the previous
+filter's rows on top of the current one's.
 
-**Filters** (`FilterState`): `all | heart | clown | dagger` — **single-select**.
-Selecting a chip filters to that classification; selecting it again returns to
-`all`. CULTURE appears in the feed but is **not** a filter chip (known gap —
-candidate for a future CULTURE chip).
+**Filters** (`FilterState`): `all | heart | clown | dagger` — **single-select**,
+rendered as four chips (`ALL` is its own chip). Clicking a chip sets that filter;
+clicking the active chip again is a **no-op**, not a toggle back to `all` — use
+the `ALL` chip. CULTURE appears in the feed but is **not** a filter chip (known
+gap — candidate for a future CULTURE chip).
 
-**Display date:** cards, detail page, JSON-LD, and sitemap all use
+**Display date:** cards, detail page and JSON-LD (`datePublished`) all use
 `incident_date` (the real article/event date), NOT `published_at` (operator
-approve-time). `fmtDate(null)` renders `—`, never epoch/1970.
+approve-time). `fmtDate(null)` renders `—`, never epoch/1970. Two card
+variations: a developing row shows `N reports · First reported <date>` instead of
+the date/area line, and a concluded row hides `incident_date` in favour of the
+first-reported → verdict line. `sitemap.ts` **orders** by `incident_date` but
+sets `lastModified` to `published_at ?? incident_date` — that field is a crawler
+freshness hint, not a display date, so approve-time is the right value there.
+
+### Feed / incident-card deltas (June-2026 pass)
+- **DEVELOPING badge + banner removed** (confused readers). No `DEVELOPING`
+  string exists anywhere in `apps/web`. `is_developing` now drives exactly two
+  things: the "N reports · First reported …" line and a 2px amber left border on
+  the card — **not** feed sort (the feed is newest-first, above).
+- **Lightning (⚡) = corroboration**, derived live from `corroboration_count`:
+  `bolts = max(0, corroboration_count − 1)` (2 sources → ⚡, 3 → ⚡⚡, …). The legacy
+  `hype_meter` column is no longer read — it is excluded from
+  `PUBLIC_INCIDENT_COLUMNS`, so the public site never even fetches it. Tooltip
+  (`HYPE_TOOLTIP`) updated accordingly. Same rule in feed card, map popup, and
+  detail page.
+- **Story timeline collapses same-date entries** to one node (most-significant
+  role wins the label, via `ROLE_PRIORITY`); renders only with 2+ distinct dates.
+- **"Time to verdict"** is computed from the last verdict/sentencing/appeal entry
+  in `source_timeline` (helpers `lastVerdictEntry` / `verdictNoun`), never from
+  `incident_date` (which is the event date, and equals `first_reported_at` on
+  most rows — the old "1 day to verdict" bug). Label adapts: "to verdict /
+  sentencing / appeal".
+- Helpers: `apps/web/lib/utils.ts` → `hypeFromSources`, `lastVerdictEntry`,
+  `verdictNoun`, `collapseTimelineByDate`.
 
 ---
 
 ## 6. Year selector + Chaos Panel — LOCKED
 
-**Year selector** (in the sidebar Chaos Panel): defaults to current SGT year.
+**Year selector** (in the sidebar Chaos Panel): defaults to the year the SSR
+homepage computed with `new Date().getFullYear()` — that is the **server's**
+year (UTC on Vercel), not SGT, so for the last 8 hours of 31 Dec SGT it lags the
+local year by one. Options come from distinct `incident_date` years, parsed off
+the `YYYY-MM-DD` string rather than via `new Date()` (QA L5: `new Date()` parses
+as UTC, which rolls a 1 Jan SGT date back into the previous year).
+
 Selecting a year sends `year` to `/api/incidents`, `/api/chaos`, and `/api/map`
 simultaneously — all three update together. Feed header shows
 "Showing [year] · [N] loaded". The dropdown always has a year selected (there is
@@ -208,19 +256,22 @@ no-op.
 `sanitiseYear` (`lib/utils.ts`), which accepts any 4-digit year (no hardcoded
 floor — historical backfills predate 1990). Per-route handling of a missing /
 invalid value:
-- `/api/map` and `/api/incidents` (absent param) → default to current year /
-  unfiltered respectively.
+- `/api/map`: absent **or** invalid → current year.
+- `/api/incidents`: absent **or** invalid → unfiltered (no year predicate).
 - `/api/chaos`: absent param → current year; **present-but-invalid → HTTP 400**.
   The client surfaces this as a visible **"CHAOS DATA ERROR"** state in the Chaos
-  Panel (no silent fallback to stale/other-year numbers).
+  Panel (no silent fallback to stale/other-year numbers). The same state covers
+  any non-2xx: an upstream Supabase error is a **500**, deliberately, because a
+  200 with an all-zero payload would render *and CDN-cache* "Quiet" and the
+  client's error path would never fire.
 
 > **Regression guard:** never reintroduce a per-route year regex or a numeric
 > floor in `sanitiseYear`. A floor (the old `>= 1990`) silently dropped valid
 > pre-1990 years on the feed and chaos counts while the map — which used its own
 > regex — kept working, producing a confusing "only the map filters" bug.
 
-**Chaos Index formula** (`lib/utils.ts` — the only place the aggregate is
-computed; `/api/chaos` and the SSR homepage both call it):
+**Chaos Index formula** (`computeChaosScore` in `lib/utils.ts` — the only place
+the aggregate is computed; `/api/chaos` and the SSR homepage both call it):
 ```
 raw   = Σ (severity × weight), floored at 0
   dagger ×3.0 · clown ×1.5 · heart ×−1.0 · custom/culture ×0
@@ -235,8 +286,24 @@ score = round(100 × (1 − e^(−raw / CHAOS_SCALE)))        CHAOS_SCALE = 300
 > year at 100 for good; 2026 read 87 by July. The curve now has diminishing
 > returns and approaches 100 without reaching it: raw 300 → 63, Apocalyptic
 > (≥80) needs raw ≈ 483. 2026 reads 58.
+
 Descriptors: `<20` Quiet · `<40` Simmering · `<60` Elevated · `<80` Critical ·
 `≥80` Apocalyptic.
+
+> **The score is computed on read and never stored.** Both callers sum it live
+> over that year's published `incidents` rows (`severity ?? 0`, so a null
+> severity contributes 0 rather than `NaN` — QA M3). The `chaos_index_snapshots`
+> table exists in migration 001 but **nothing writes to it**: its only reference
+> in the whole repo is a *read* in
+> `orchestrator/herald_agent.py::_check_chaos_record`, which needs ≥ 2 rows and
+> therefore can never fire. Anything claiming the index is "computed on every
+> publish and stored" describes a path that does not exist — do not build a
+> frontend read against that table.
+>
+> Per-incident `chaos_contribution` is a different number, written by Stage 2
+> (`_compute_chaos_contribution`, same 3.0 / 1.5 / −1.0 multipliers). It is
+> deliberately **not** in `PUBLIC_INCIDENT_COLUMNS` and is not what the panel
+> shows.
 
 ---
 
@@ -255,17 +322,27 @@ Descriptors: `<20` Quiet · `<40` Simmering · `<60` Elevated · `<80` Critical 
 ## 8. Behavior gaps (specify before building features that touch them)
 
 Not yet defined anywhere — decide when first relevant:
-- **Filter empty-state** — what renders when a filter returns zero incidents.
+- **Filter empty-state** — a filter returning zero incidents currently renders
+  the header ("Showing [year] · 0 loaded") above an empty list body, because
+  `itemCount` is 0 once `hasMore` is false. No "nothing here" copy, no
+  illustration. That is the behavior, not a decision.
 - **CULTURE filterability** — currently unfilterable; add a chip or leave as-is.
-- **Load-more / end-of-feed** behavior at the bottom of pagination.
-- **Map error/empty state** (tied to §4 known issue).
+- **Map empty-state** — a year with no plottable incidents renders a working map
+  with zero pins and no message.
+
+Two entries previously listed here have since been built and are specified above,
+so they are no longer gaps: **load-more / end-of-feed** (§5 — auto-fetch within 3
+rows of the end; the trailing row reads "Loading…" then "No more incidents.") and
+**map error state** (§4 — "MAP UNAVAILABLE" plus the error text, from
+`map.on('error')` or the 12s timeout).
 
 ---
 
 ## 9. Immutable rules
 
 1. **Classification colors + names never change** — the soul of the project.
-2. **One-page, no page-level scroll** — only the feed scrolls.
+2. **One-page, no page-level scroll** — `html, body { overflow: hidden }`. On the
+   homepage only the feed and the sidebar scroll, internally.
 3. **Sidebar never collapses.**
 4. **Display date is `incident_date`, never `published_at`.**
 5. **This file is the source of truth** — fix the frontend *to this*, and update

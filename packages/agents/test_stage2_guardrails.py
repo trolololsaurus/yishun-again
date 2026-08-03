@@ -37,6 +37,37 @@ check("C1 political forces confidence=0", r["confidence"] == 0.0 and r["politica
 r = sw._classify(_fake_client({**base, "political": False}), {"title": "x", "content": "y"})
 check("C1 non-political keeps confidence", r["confidence"] == 0.9 and r["political"] is False)
 
+# C1: guardrail #4 must survive a malformed classification.
+#
+# REGRESSION (found live 2026-08-02, an MP-resignation article surfaced by the
+# WordPress search source). `result["classification"].lower()` ran BEFORE the
+# political check and threw AttributeError on `"classification": null` — which
+# is what the model tends to return on a political story, because it is being
+# told to reject rather than categorise. The candidate died on an exception, so
+# confidence was never forced to 0, the reject marker was never prepended, and
+# the operator email + agent_events warning never fired. The guardrail was
+# unreachable for a subset of exactly the content it exists to catch.
+r = sw._classify(_fake_client({**base, "classification": None, "political": True,
+                               "confidence": 0.9}), {"title": "x", "content": "y"})
+check("C1 political + null classification does not crash", r["political"] is True)
+check("C1 political + null classification still forces confidence=0", r["confidence"] == 0.0)
+check("C1 political + null classification gets a valid placeholder category",
+      r["classification"] in ("heart", "clown", "dagger"))
+
+r = sw._classify(_fake_client({**base, "classification": "nonsense", "political": True}),
+                 {"title": "x", "content": "y"})
+check("C1 political + invalid classification still rejected, not raised",
+      r["confidence"] == 0.0 and r["classification"] in ("heart", "clown", "dagger"))
+
+# A NON-political row with a bad classification is still a genuine model
+# failure and must keep raising — the placeholder is strictly a guardrail path.
+try:
+    sw._classify(_fake_client({**base, "classification": None, "political": False}),
+                 {"title": "x", "content": "y"})
+    check("non-political null classification still raises", False)
+except (ValueError, AttributeError):
+    check("non-political null classification still raises", True)
+
 # M5: non-numeric deaths/injuries don't crash → None
 r = sw._classify(_fake_client({**base, "deaths": "several", "injuries": "two"}), {"title": "x", "content": "y"})
 check("M5 non-numeric deaths/injuries -> None (no crash)", r["deaths"] is None and r["injuries"] is None)

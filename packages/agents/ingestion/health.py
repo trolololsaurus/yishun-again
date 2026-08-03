@@ -33,11 +33,23 @@ from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
-# 0 items is the NORMAL case: the scrapers filter for Yishun and most sources
-# have nothing on most days. Only an unbroken streak means the listing page
-# changed shape underneath us. (ops/supervisor escalates its own, longer streak
-# to an anomaly; this is the earlier, quieter War Room signal.)
-ZERO_STREAK_WARNING = 3
+# 0 items is the NORMAL case, and the previous value of 3 did not respect that.
+#
+# `items_found` is the count of candidates that survived the Yishun keyword
+# filter, not the number of articles the source served. One outlet publishing
+# nothing about one town for three days running is unremarkable — Tamil Murasu
+# or Berita Harian can go a month. At 3, essentially the whole fleet sat at
+# `warning` permanently: on 2026-08-02, 9 of 15 sources were warning and every
+# one of them read "0 items for 3 consecutive runs". A dashboard where the
+# warning state is the resting state tells the operator nothing, and it was
+# read — reasonably — as "27 scrapers failed" when nothing had failed at all.
+#
+# 30 daily passes is a month of genuine silence, which for a single outlet is
+# worth a look without being the default. Note this is a DISPLAY signal only:
+# real failures already surface as status='error' (the fetch raised), and
+# outage ALERTING derives from pipeline_run_history in ops/supervisor.py, not
+# from this table — deliberately, see CLAUDE.md.
+ZERO_STREAK_WARNING = 30
 
 # A run this much slower than the source's own 7-day baseline is worth a look —
 # usually a site that started serving a bot-check page slowly rather than 403ing.

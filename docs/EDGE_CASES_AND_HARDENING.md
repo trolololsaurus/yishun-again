@@ -1,12 +1,12 @@
 # Edge cases and hardening — addendum to CLAUDE_CODE_PROMPTS_v2
 
-Read §1 first. Those are defects in the spec itself, not hardening — building
-as written produces broken behaviour. §2 onward are per-prompt additions:
-append each block to the named prompt.
+Read §1 first. Those are defects that break behaviour rather than merely harden
+it: §1.1 and §1.2 in the spec as written, §1.3 in what shipped from it. §2
+onward are per-prompt additions: append each block to the named prompt.
 
 ---
 
-# 1. Two spec conflicts — fix before building
+# 1. Three defects — fix before building
 
 ## 1.1 Batch API and generate-before-insert are mutually exclusive
 
@@ -31,35 +31,105 @@ flag to the backfill tool only, or delete it from the live path entirely. At
 
 Amend `ART_PIPELINE.md` §1 and B2 accordingly.
 
+**Landed.** `ART_PIPELINE.md` §1 now marks batch pricing backfill-only and §6
+states `IMAGE_USE_BATCH` defaults to `false`, scoped to bulk archive backfill.
+Nothing in `packages/agents/` reads the flag and `art/generate_image.py` has no
+batch call at all, so the interactive path cannot take the batch tier even by
+misconfiguration.
+
 ## 1.2 The suppression gate depends on a model-generated field
 
-`suppress_image()` reads `incident["tags"]`. Tags are produced by the Haiku
-classifier. If it does not emit a `suicide` tag on a suicide story — and it
-sometimes will not — the gate never fires and the image renders.
+`suppress_image()` as specified in `ART_PIPELINE.md` §4 and Track B's B1 reads
+only `incident["tags"]`. Tags are produced by the Haiku classifier. If it does
+not emit a `suicide` tag on a suicide story — and it sometimes will not — the
+gate never fires and the image renders.
 
 For the one check that must not fail, depending on a model output is the wrong
 architecture. Everything else in this programme moved *toward* deterministic
 verification; this went the other way.
 
-**Fix — second condition, OR not AND:**
+**Fix — second condition, OR not AND.** Shipped in
+`packages/agents/art/suppression.py`:
 
 ```python
-SUPPRESS_TAGS = {"suicide", "self-harm"}
+SUPPRESS_TAGS = frozenset({"suicide", "self-harm"})
 SUPPRESS_PHRASES = (
     "suicide", "self-harm", "self harm",
     "took his own life", "took her own life", "took their own life",
 )
 
 def suppress_image(incident: dict) -> bool:
-    tags = set(incident.get("tags") or [])
-    if tags & SUPPRESS_TAGS:
-        return True
-    text = f"{incident.get('title','')} {incident.get('summary','')}".lower()
-    return any(p in text for p in SUPPRESS_PHRASES)
+    try:
+        if not isinstance(incident, dict):
+            return True                        # fail closed — §2 rule 4
+        if _normalise_tags(incident.get("tags")) & SUPPRESS_TAGS:
+            return True
+        text = _incident_text(incident)        # lowercased title + summary
+        return any(p in text for p in SUPPRESS_PHRASES)
+    except Exception:
+        return True                            # a gate that raises did not run
 ```
 
 Deterministic, no model call, and it fires on the Blk 737 card whether or not
-the classifier tagged it. Amend `ART_PIPELINE.md` §4 and B1.
+the classifier tagged it. Three things the original sketch left out, all of
+them stricter rather than looser:
+
+- **Fails closed.** An input the gate cannot read — `None`, a bare string, a
+  mapping whose `.get()` raises — returns `True`. The sketch would have raised
+  instead, and a gate that raises is a gate that did not run.
+- **Defensive tag normalisation.** `_normalise_tags` tolerates `None`, a bare
+  string in place of a list, and non-string members; it folds whitespace and
+  underscores to hyphens so `self harm` and `self_harm` both match the
+  canonical `self-harm` tag.
+- **Substring, not word-boundary, matching.** Deliberate: over-suppression
+  costs a placeholder, under-suppression puts a generated picture on a suicide
+  story.
+
+Deliberately narrow in the other direction — severity, death count and
+classifier confidence are **not** consulted. Fatalities, violence, fires and
+severity-5 incidents all generate normally.
+
+`ART_PIPELINE.md` §4 and B1 are amended accordingly. Guard:
+`test_image_suppression.py`, including the case that is the whole point of the
+amendment — no suicide tag, "suicide" in the summary, suppressed.
+
+## 1.3 Guardrail #4 was unreachable when the model returned a null category
+
+Legal guardrail #4 — political content forces `confidence = 0` and an
+operator-visible reject marker — sat **below** the classification / severity /
+confidence coercion in `filters/stage2_writer.py::_classify`. That coercion ran
+`result["classification"].lower()`, which raises `AttributeError` on
+`"classification": null` — and null is exactly what the model tends to return
+on a political story, because the prompt tells it to reject rather than
+categorise.
+
+So for a subset of the very content the guardrail exists to catch, the
+candidate died on an exception before the guardrail was ever read: no
+`confidence = 0`, no `[POLITICAL CONTENT DETECTED — REJECT]` marker, no
+operator email, no `agent_events` warning row. Observed live on 2026-08-02 on
+an MP-resignation article.
+
+A silent crash is worse than the silently-zeroed row that the 2026-07-30
+alerting was added to fix — the zeroed row at least reaches the queue and can
+be seen.
+
+**Fix — evaluate the guardrail before anything that can raise:**
+
+1. Read `political` first and force `confidence = 0.0` there and then.
+2. Coerce the category defensively (`isinstance(x, str)`), never `.lower()` on
+   an unvalidated field.
+3. An invalid category on a **non**-political row still raises `ValueError`.
+   That is a genuine model failure and must stay loud.
+4. On a political row, substitute a valid placeholder category (`dagger`) so
+   the guardrail's own reject path can complete and alert. The row is rejected
+   on confidence, not on category, and the column is NOT NULL downstream.
+
+**The general rule: a guardrail must be evaluated before any validation that
+can raise.** A check placed after validation only ever runs on well-formed
+input, and malformed input is exactly what a guardrail is for.
+
+Guard: `test_stage2_guardrails.py` — political with a null category, political
+with an invalid category, and non-political with a null category still raising.
 
 ---
 
@@ -97,6 +167,12 @@ FAILURE-MODE RULES — apply to every task in this programme:
 # 3. Per-prompt additions
 
 ## → A2 (prompt caching)
+
+**Not implemented — measured and rejected** (commit `d976d7b`). The
+consolidation pool is filtered and ranked per candidate, so there is no
+byte-identical prefix to cache, and the filtered prompt (3,889 tokens) is below
+Haiku 4.5's 4,096-token minimum cacheable prefix. The edge cases below are kept
+because they are the reasons the measurement was worth taking.
 
 ```
 EDGE CASES — implement all:
@@ -239,6 +315,9 @@ EDGE CASES — this regex will produce false positives and stall the pipeline:
 
 ## → B1 (suppression gate)
 
+**Shipped** as `art/suppression.py` — §1.2 above is the current gate, guarded by
+`test_image_suppression.py`.
+
 ```
 Implement the amended version from EDGE_CASES §1.2 — tag check OR deterministic
 phrase check on title + summary. Do not ship the tag-only version.
@@ -256,6 +335,41 @@ whole point of the amendment.
 ```
 
 ## → B2 (image generation) — most new failure surface
+
+**Superseded in part by `docs/IMAGE_RETRY_AND_RECTIFY.md`** (§2, §5, §6), which
+was written after this block and explicitly replaces its retry rules. Three
+constants below are not what shipped in `art/generate_image.py`:
+
+| Below | Shipped | Why |
+|---|---|---|
+| `IMAGE_MAX_RETRIES=1`, never on a refusal | per-outcome caps — refusal 3 (each rung a softened rewrite), transient 2, validation 1, suppression 0 | The safety filter is deterministic: resending the same prompt buys identical refusals and identical bills. A retry is only worth having if the attempt differs. |
+| `IMAGE_MAX_PER_RUN=25` (incidents) | `IMAGE_MAX_ATTEMPTS_PER_RUN=40` (attempts) | Three rungs per incident would let a 25-incident ceiling bill 75 calls. |
+| `SCENE_MAX_CHARS` default 1200 | 1500, cut at the last **sentence** end | The model overshoots the stated 600–1000 target; a word-boundary cut left prompts dangling mid-clause. |
+
+Everything else in the block shipped as written: no assumption that
+`inline_data` exists, decode-before-use, aspect validation with no salvage of a
+wrong-aspect return, an exact post-crop size assertion, PUT-then-HEAD
+verification of content-length and content-type before the URL is returned, and
+the directive-marker injection screen (an over-length scene is trimmed to a
+sentence boundary first and only rejected if it is still unsafe).
+
+**One item is only half done: the timeout.** `IMAGE_TIMEOUT_S=30` is passed to
+the Gemini client's `HttpOptions` and nowhere else. The Haiku scene call goes
+through `filters/model_call.create_checked` on a plain
+`anthropic.Anthropic(api_key=...)`, so it carries the SDK's default timeout,
+not this one. On the interactive path the effective bound is external — the War
+Room's `ART_TIMEOUT_MS` (50 s) and Vercel's `maxDuration` (60 s). On the
+auto-publish path (`ops/auto_publish.py` calls `generate_image` in-process) the
+only backstop is Cloud Run's `--timeout=3600`.
+
+**Key collision — which was chosen:** neither option below. The key stays
+`pixel-art/{slug}.png` so a regeneration overwrites in place and never orphans
+an object, and slug uniqueness is enforced upstream by `incidents.slug NOT NULL
+UNIQUE` (the approve route turns the resulting `23505` into a 409 asking the
+operator to edit the title). The public URL carries `?v={md5[:8]}` of the bytes,
+because a stable key under a one-year `max-age` otherwise means a rectified
+image never reaches anyone who already loaded the old one — measured, not
+theorised.
 
 ```
 EDGE CASES — implement all:
@@ -316,6 +430,25 @@ R2 HEAD mismatch; ceiling reached; scene paragraph over length.
 
 ## → B5 (write-back)
 
+**Shipped, with the answers this block asked for.** `IMAGE_RETRY_AND_RECTIFY.md`
+§4 supersedes the failure handling: publication never blocks on the image, and a
+failure is flagged for operator rectification instead.
+
+- *Idempotent approve:* both mechanisms, not one. The queue-status update is a
+  compare-and-set (`.eq('status','pending')`) and a lost race deletes the
+  incident just inserted; `incidents.slug` is `UNIQUE`, so a duplicate insert
+  bounces as `23505` → 409.
+- *Permanent failure marker:* `incidents.image_status` (migration **014**,
+  CHECK-constrained by **015**), plus `image_prompt` and `image_attempts`.
+  Vocabulary: `ok | suppressed | refused | transient | invalid | skipped |
+  pending | no_image_final`. `suppressed` and `no_image_final` are terminal — a
+  backfill must never retry them, and suppressions never enter the
+  rectification queue, or the queue becomes a prompt to override guardrail #5.
+- *Timeout budget:* nested deliberately — `IMAGE_TIMEOUT_S=30` (per external
+  call) < `ART_TIMEOUT_MS=50 s` (War Room → agents) < `maxDuration=60` (Vercel).
+  The platform kill must never be the one that fires: it lands before the
+  insert and would lose the whole approval, not just the picture.
+
 ```
 EDGE CASES:
 
@@ -351,6 +484,12 @@ a suppressed incident publishes with null and is marked suppressed, not failed.
 
 ## → B6 (house cleaning)
 
+**Done.** `modal` and `toml` are out of `requirements.txt` (the removal is
+recorded there as a comment, alongside the `train_lora.py` step the file
+referenced that never existed in the repo), and no first-party module imports
+either. `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` were dropped from the env
+reference on 2026-08-02.
+
 ```
 EDGE CASE:
 
@@ -375,7 +514,11 @@ local venv kept working.
 Deliberately out of scope, so nobody gilds it:
 
 - Retry queues or dead-letter handling for failed images. Log and move on; the
-  frontend already degrades to the placeholder.
+  frontend already degrades to the placeholder. (Still true of *automatic*
+  retry. What was added afterwards, in `IMAGE_RETRY_AND_RECTIFY.md`, is an
+  operator-driven rectification queue keyed on `incidents.image_status` — a
+  human clicking a button, not a background queue, and suppressions are
+  excluded from it by design.)
 - Orphaned-R2 cleanup tooling. Log the keys; sweep manually if it ever matters.
 - Backfilling images across the existing archive. Separate job, batch tier,
   after the live path is proven.

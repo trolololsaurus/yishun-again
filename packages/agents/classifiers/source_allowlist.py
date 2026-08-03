@@ -6,10 +6,14 @@ checked a URL against it. Google News RSS aggregates arbitrary publishers, so
 outlets nobody approved can become `source_urls` on a published incident —
 8days.sg is live on one today.
 
-Two rules, deliberately different in severity:
+Three rules, deliberately different in severity:
 
   signal  (EDMW/HWZ): guardrail #2 — a signal URL must NEVER be a quoted source.
           Removed unconditionally, no operator discretion.
+
+  redirector (news.google.com and friends): removed unconditionally, same as
+          signal. A citation must point at the outlet that did the reporting,
+          not at a wrapper that stands in front of it. See REDIRECT_DOMAINS.
 
   unknown/unapproved: NOT removed. Stripping it could take an incident's only
           source and break guardrail #1 (`source_urls` must hold >= 1 URL).
@@ -72,8 +76,59 @@ def load_source_domains(client=None) -> dict[str, dict]:
     return _cache
 
 
+# ── Redirectors / aggregators ────────────────────────────────────────────────
+# A URL on one of these hosts is a WRAPPER, not an article. It must never be
+# stored as a citation, and it must never be used for dedupe.
+#
+# This exists because google_news_rss did exactly that in production. Its feed
+# entries link to `news.google.com/rss/articles/CBMi<blob>`, which does not
+# HTTP-redirect — decoding one needs a reverse-engineered `batchexecute` RPC
+# that Google rotates. When that resolver failed it fell back to returning the
+# wrapper, and the wrapper was then written to `war_room_queue.source_url` and
+# into `source_urls`. Two rows on 2026-08-01 cited an opaque Google redirect
+# instead of the Stomp article the reporting actually came from.
+#
+# The source that produced them was removed on 2026-08-02 (replaced by
+# ingestion/sources/news_sitemap.py + wp_search.py, which read publishers'
+# own sitemaps and search feeds). This check is the net under that: the
+# historical backfill and source-discovery paths still touch Google News, so
+# the rule is enforced at the point where a URL becomes a citation rather than
+# trusted to hold at every call site.
+#
+# Matching is suffix-aware like the approved list, so `rss.news.google.com`
+# is caught too. Add link shorteners here as they appear — the test is
+# "does this host serve journalism, or point at someone who does".
+REDIRECT_DOMAINS = frozenset({
+    "news.google.com",
+    "google.com",            # /url? and /search redirects
+    "feedproxy.google.com",
+    "news.url.google.com",
+    "t.co",
+    "bit.ly",
+    "tinyurl.com",
+    "ow.ly",
+    "buff.ly",
+    "lnkd.in",
+    "flip.it",
+    "apple.news",
+})
+
+
+def is_redirect_domain(url: str) -> bool:
+    """True if `url` points at an aggregator/redirect wrapper, not a publisher."""
+    host = domain_of(url)
+    return any(_matches(host, d) for d in REDIRECT_DOMAINS)
+
+
 def classify(url: str, domains: dict[str, dict] | None = None) -> str:
-    """Return 'signal' | 'approved' | 'unapproved' for a single URL."""
+    """Return 'redirect' | 'signal' | 'approved' | 'unapproved' for a single URL.
+
+    'redirect' is checked FIRST and does not consult the sources table: a
+    wrapper host is disqualified on its own terms, and must stay disqualified
+    even if someone adds news.google.com to `sources` by mistake.
+    """
+    if is_redirect_domain(url):
+        return "redirect"
     domains = load_source_domains() if domains is None else domains
     host = domain_of(url)
     for approved_domain, meta in domains.items():
@@ -131,18 +186,28 @@ def check_source_urls(urls: list[str], domains: dict[str, dict] | None = None) -
     """
     Apply the allowlist to a candidate's source_urls.
 
-    Returns {"kept": [...], "dropped_signal": [...], "unapproved": [...]}.
+    Returns {"kept": [...], "dropped_signal": [...], "dropped_redirect": [...],
+             "unapproved": [...]}.
 
-    `kept` preserves order and drops only signal URLs. Unapproved URLs stay in
-    `kept` AND are listed in `unapproved` for operator review — see the module
-    docstring for why they are not removed.
+    `kept` preserves order and drops signal and redirector URLs. Unapproved URLs
+    stay in `kept` AND are listed in `unapproved` for operator review — see the
+    module docstring for why they are not removed.
+
+    Dropping can empty `kept`. That is intentional and is NOT special-cased
+    here: a candidate whose only citation was a wrapper has no verifiable
+    source, which is precisely the state guardrail #1 exists to catch. It lands
+    in the queue as unverified, exactly like a signal-only candidate, and waits
+    for an operator to attach a real one.
     """
     domains = load_source_domains() if domains is None else domains
-    kept, dropped_signal, unapproved = [], [], []
+    kept, dropped_signal, dropped_redirect, unapproved = [], [], [], []
     for url in urls or []:
         if not url:
             continue
         verdict = classify(url, domains)
+        if verdict == "redirect":
+            dropped_redirect.append(url)
+            continue
         if verdict == "signal":
             dropped_signal.append(url)
             continue
@@ -155,9 +220,16 @@ def check_source_urls(urls: list[str], domains: dict[str, dict] | None = None) -
             "source_allowlist: removed %d signal URL(s) from source_urls (guardrail #2): %s",
             len(dropped_signal), ", ".join(domain_of(u) for u in dropped_signal),
         )
+    if dropped_redirect:
+        logger.warning(
+            "source_allowlist: removed %d redirector URL(s) from source_urls — "
+            "a citation must point at the publisher, not a wrapper: %s",
+            len(dropped_redirect), ", ".join(domain_of(u) for u in dropped_redirect),
+        )
     if unapproved:
         logger.info(
             "source_allowlist: %d source URL(s) from unapproved domain(s): %s",
             len(unapproved), ", ".join(sorted({domain_of(u) for u in unapproved})),
         )
-    return {"kept": kept, "dropped_signal": dropped_signal, "unapproved": unapproved}
+    return {"kept": kept, "dropped_signal": dropped_signal,
+            "dropped_redirect": dropped_redirect, "unapproved": unapproved}

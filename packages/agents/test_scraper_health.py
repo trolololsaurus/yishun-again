@@ -61,10 +61,26 @@ check("0 items once -> ok, streak 1 (0 items is the NORMAL Yishun-filter case)",
 check("0 items twice -> still ok",
       health.classify(items_found=0, duration_ms=1, errors=None,
                       last_consecutive_zeros=1)[0] == "ok")
-s3, reason3, zeros3 = health.classify(items_found=0, duration_ms=1, errors=None,
-                                      last_consecutive_zeros=2)
-check("0 items on the 3rd consecutive run -> warning",
-      s3 == "warning" and zeros3 == 3 and "3 consecutive" in reason3)
+
+# The threshold moved from 3 to 30 on 2026-08-02. `items_found` counts
+# candidates that survived the YISHUN keyword filter, not articles served, so a
+# single outlet publishing nothing about one town for three days is
+# unremarkable — Tamil Murasu or Berita Harian can go a month. At 3 the whole
+# fleet sat permanently at `warning` (9 of 15 sources on 2026-08-02, every one
+# reading "0 items for 3 consecutive runs"), which reads as a dead fleet when
+# nothing has failed. Assert against the constant, not a literal, so the
+# semantics are pinned but the number stays tunable.
+check("a quiet source below the threshold stays ok",
+      health.classify(items_found=0, duration_ms=1, errors=None,
+                      last_consecutive_zeros=health.ZERO_STREAK_WARNING - 2)[0] == "ok")
+sN, reasonN, zerosN = health.classify(
+    items_found=0, duration_ms=1, errors=None,
+    last_consecutive_zeros=health.ZERO_STREAK_WARNING - 1)
+check("0 items on the ZERO_STREAK_WARNING-th consecutive run -> warning",
+      sN == "warning" and zerosN == health.ZERO_STREAK_WARNING
+      and f"{health.ZERO_STREAK_WARNING} consecutive" in reasonN)
+check("threshold is a month of daily passes, not a few days",
+      health.ZERO_STREAK_WARNING >= 14)
 
 s_err, reason_err, _ = health.classify(items_found=0, duration_ms=50, errors=["403 Forbidden"],
                                        last_consecutive_zeros=0)
@@ -129,10 +145,19 @@ check("row carries items_passed_s1 (the old writer could never know it)",
       c.inserted[0]["items_passed_s1"] == 1)
 check("row status ok", c.inserted[0]["status"] == "ok")
 
-c2 = FakeClient(existing=[{"consecutive_zeros": 2, "duration_ms": 1000}])
+c2 = FakeClient(existing=[{"consecutive_zeros": health.ZERO_STREAK_WARNING - 1,
+                           "duration_ms": 1000}])
 health.record("stomp", "msm", items_found=0, duration_ms=1000, client=c2)
 check("zero streak continues from this source's newest row",
-      c2.inserted[0]["consecutive_zeros"] == 3 and c2.inserted[0]["status"] == "warning")
+      c2.inserted[0]["consecutive_zeros"] == health.ZERO_STREAK_WARNING
+      and c2.inserted[0]["status"] == "warning")
+
+# The counter must keep advancing below the threshold without warning — that is
+# what makes a genuinely dead source eventually surface.
+c2b = FakeClient(existing=[{"consecutive_zeros": 2, "duration_ms": 1000}])
+health.record("stomp", "msm", items_found=0, duration_ms=1000, client=c2b)
+check("a short zero streak advances but stays ok",
+      c2b.inserted[0]["consecutive_zeros"] == 3 and c2b.inserted[0]["status"] == "ok")
 
 c3 = FakeClient()
 health.record("edmw", "signal", items_found=0, duration_ms=90,

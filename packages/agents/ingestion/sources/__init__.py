@@ -16,25 +16,40 @@ from scrapers import (
     scrape_zaobao,
 )
 
-from ingestion.sources.google_news_rss import GoogleNewsRSSSource
 from ingestion.sources.legacy import LegacyScraperSource
 from ingestion.sources.msm.cna import CNASource
+from ingestion.sources.news_sitemap import news_sitemap_sources
+from ingestion.sources.wp_search import wp_search_sources
 
 
 def get_enabled_sources() -> list:
     """
     Live source list for run_ingestion_pass() (§10b step 10).
 
-    PRIMARY (SG MSM, Q1=1b) — the main spine:
+    PRIMARY (SG MSM, Q1=1b) — the main spine, reading each outlet's current
+    feed or listing page:
         RSS-dated:  CNA, Mothership, Straits Times, MustShareNews,
                     The Independent, Yahoo
         HTML-dated: AsiaOne, Stomp, Zaobao, Shin Min, Berita Harian,
                     Tamil Murasu (date resolved per-article by
                     scrapers.resolve_published_at)
-    CORROBORATION:  Google News RSS — cross-checks and catches misses.
 
-    Phases 1-2 of the adapter port (issue #23) — all 13 non-signal scrapers from
-    the spec's "Live pipeline" inventory are now wired in.
+    DISCOVERY — the wider net behind the spine, added 2026-08-02 when Google
+    News RSS was removed:
+        news sitemaps:  the publisher's own Google-News sitemap (9 outlets).
+                        Canonical URLs, real publication dates, and a far
+                        bigger window than the front-page feed — 462 entries
+                        for Straits Times against 44 in its RSS.
+        WP search:      MustShareNews and The Independent answer
+                        `?s=yishun&feed=rss2` with a dated RSS feed of search
+                        results over their whole archive.
+
+    Both discovery adapters emit the PUBLISHER's own URL. That is the point:
+    google_news_rss emitted `news.google.com/rss/articles/<blob>` wrappers that
+    frequently failed to resolve, breaking dedupe and putting a redirect where
+    a citation belongs. See ingestion/sources/news_sitemap.py for the full
+    account, and classifiers/source_allowlist.REDIRECT_DOMAINS for the net that
+    now sits under it. Do not add an aggregator here.
 
     Registration is gated on a source supplying `published_at`: a dateless
     candidate bypasses the recency watermark, is re-processed by Stage 1/2 on
@@ -49,7 +64,10 @@ def get_enabled_sources() -> list:
                     start time in the LISTING markup; the thread page is never
                     fetched and post content is never read.
 
-    All 14 scrapers are now registered (Phase 3 complete).
+    All 14 scrapers are registered (Phase 3 complete), plus 11 discovery
+    adapters. Every one of the 12 MSM scrapers below is untouched by the
+    2026-08-02 change — the discovery adapters were added ALONGSIDE them, not
+    in place of them. The only source removed was GoogleNewsRSSSource.
 
     Add new adapters here as they're built; main.py's pipeline job/endpoint
     don't need to change.
@@ -101,7 +119,13 @@ def get_enabled_sources() -> list:
                 "tamil_murasu", scrape_tamilmurasu.scrape,
                 source_name="Tamil Murasu", source_type="msm",
             ),
-            GoogleNewsRSSSource(),
+            # DISCOVERY — publishers' own news sitemaps and WordPress search
+            # feeds. These took over from GoogleNewsRSSSource on 2026-08-02;
+            # they emit canonical publisher URLs, so their output dedupes
+            # cleanly against the primary scrapers above rather than
+            # manufacturing "update" proposals for stories already held.
+            *news_sitemap_sources(),
+            *wp_search_sources(),
             # SIGNAL sources — never a quoted source. Their URL must never reach
             # source_urls (guardrail #2); they contribute the forum-signal count
             # only, and a signal-only item stays in the queue until an operator

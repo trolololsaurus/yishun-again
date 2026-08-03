@@ -33,19 +33,53 @@ logger = logging.getLogger(__name__)
 socket.setdefaulttimeout(30)
 
 # ── English keyword list (spec §4.1) ────────────────────────────────────────
+#
+# SCOPE RULE: a keyword qualifies only if it names the Yishun planning area or
+# something inside it. Adjacent towns do NOT qualify, however close they are.
+#
+# "sembawang" was in this list until 2026-08-02 and should never have been.
+# Sembawang is its own URA planning area with its own town centre — it is not
+# Yishun and never was. Every TechSpec from v1.5 onward carried the line
+# `# NOTE: "sembawang" removed — separate town, not Yishun`, but the code was
+# never actually changed, so the spec and the filter disagreed for months. The
+# cost was real: it pulled "19-year-old arrested for plotting knife attacks on
+# Sembawang Air Base soldiers" into the queue, which the operator then had to
+# reject by hand. Do not re-add it, and do not add Woodlands, Admiralty,
+# Canberra or Sembawang Hills for the same reason.
+#
+# The subzone names below are all inside the Yishun planning area:
+#   khatib      — Khatib subzone / Khatib MRT (NS14)
+#   chong pang  — Chong Pang subzone, north-west Yishun
+# Matching is plain case-insensitive substring, so the bare "yishun" entry
+# already covers "Yishun Ring Road", "Yishun Ave 6", "Yishun MRT" and friends;
+# only names that do NOT contain "yishun" need their own entry.
+#
+# "nee soon" is deliberately NOT here even though the subzone is Yishun. In
+# news copy it is overwhelmingly the CONSTITUENCY (Nee Soon GRC), not the
+# place: measured against The Independent's search feed on 2026-08-02 its only
+# hit was an article about an MP, which guardrail #4 has to reject as political
+# content anyway. Every genuine Yishun story in that same sample already
+# matched on "yishun", so it bought nothing and cost a banned-category
+# candidate. It stays in the Malay list below, where it is a place-name.
 YISHUN_KEYWORDS = [
-    "yishun", "yishun ring road", "yishun ave", "yishun street",
-    "yishun mrt", "northpoint", "khoo teck puat", "yishun park",
-    "yishun dam", "yishun pond", "sembawang",
+    "yishun",
+    "khatib",
+    "chong pang",
+    "northpoint",       # Northpoint City, the town mall
+    "khoo teck puat",   # KTP Hospital, Yishun Central
 ]
 
 # ── Source-language keywords for pre-translation filtering ──────────────────
 # Translate ONLY after a keyword match — never pre-emptively.
 # "Yishun" appears in SG media of all languages, so always included.
+# Same scope rule as YISHUN_KEYWORDS: planning area only, no adjacent towns.
 _YISHUN_RAW: dict[str, list[str]] = {
-    "zh": ["义顺", "Yishun", "yishun", "北点", "邱德拔"],  # Northpoint, KTP Hospital
-    "ms": ["Yishun", "yishun", "Nee Soon"],               # Nee Soon = Malay name
-    "ta": ["யிஷுன்", "Yishun", "yishun"],                  # Tamil transliteration
+    # 义顺 Yishun, 卡迪 Khatib, 忠邦 Chong Pang, 北点 Northpoint, 邱德拔 KTP Hospital
+    "zh": ["义顺", "Yishun", "yishun", "卡迪", "忠邦", "北点", "邱德拔"],
+    # Nee Soon = the Malay/historical name for the town
+    "ms": ["Yishun", "yishun", "Nee Soon", "nee soon", "Khatib", "khatib",
+           "Chong Pang", "chong pang"],
+    "ta": ["யிஷுன்", "Yishun", "yishun", "கத்திப்", "Khatib", "khatib"],
 }
 
 BROWSER_HEADERS = {

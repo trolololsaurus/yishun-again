@@ -38,44 +38,53 @@ production deployment.
 2. Action: **Allow**
 3. Under **Configure rules**, add one Include rule:
    - Selector: **Emails**
-   - Value: `blyatimirovich.putin@gmail.com`
+   - Value: the operator's address — the same value as `OPERATOR_EMAIL` in §5
 4. Click **Next**, then **Add application**.
 
-This means only the above email can pass the Cloudflare login screen. Anyone
-else (including you with a different email) is blocked at the edge before the
-request reaches Vercel.
+This means only that email can pass the Cloudflare login screen. Anyone else
+(including you with a different email) is blocked at the edge before the request
+reaches Vercel.
+
+Once the application exists, collect the two values `proxy.ts` verifies against
+(§5, §6) — it refuses to serve at all until both are set:
+
+- **Application Audience (AUD) Tag** — on the application's overview/settings
+  page. This is `CF_ACCESS_AUD`.
+- **Team domain** — the `<team>.cloudflareaccess.com` host in the Access login
+  URL. This is `CF_ACCESS_TEAM_DOMAIN`. `proxy.ts` strips a leading `https://`
+  and any trailing slashes, so either form works.
 
 ---
 
-## 4. Create a Service Token (for agents backend)
+## 4. Service Tokens (optional — nothing uses one today)
 
-The agents backend (Cloud Run) calls War Room APIs server-to-server without a
-browser session. It authenticates using a service token instead.
+`proxy.ts` accepts two kinds of Access JWT: an **identity login**, which carries
+an `email` claim, and a **service token**, which carries `common_name` instead.
+Service-token JWTs are allowed through without an email check — the caller
+already proved possession of the client secret to Cloudflare.
+
+⚠️ **No caller in this repo uses one.** Traffic between the two services runs
+the other way: the War Room calls the agents backend (§5a), never the reverse.
+Nothing in `packages/agents/` makes an HTTP request to the War Room —
+`ops/notify.py::war_room_url()` only builds links for operator emails. Neither
+`CF_ACCESS_CLIENT_ID` nor `CF_ACCESS_CLIENT_SECRET` is read anywhere in the
+codebase, and neither belongs in Cloud Run env vars today.
+
+Kept here because the middleware path exists and is the right answer if a
+server-to-server caller is ever added:
 
 1. Go to **Zero Trust → Access → Service Auth → Service Tokens**.
 2. Click **Create Service Token**.
-3. Name it `yishun-agents-backend`.
+3. Name it, e.g. `yishun-agents-backend`.
 4. Copy the **Client ID** and **Client Secret** — the secret is only shown once.
 5. Back in the War Room application, go to **Policies** and add a second policy:
    - Policy name: `Service token`
    - Action: **Service Auth**
-   - Include rule: **Service Token** → `yishun-agents-backend`
+   - Include rule: **Service Token** → the token from step 3
 
-Set the token values in Cloud Run env vars:
-
-```
-CF_ACCESS_CLIENT_ID=<client id from step 4>
-CF_ACCESS_CLIENT_SECRET=<client secret from step 4>
-```
-
-When calling War Room from the agents backend, include these headers:
-
-```python
-headers = {
-    "CF-Access-Client-Id":     os.environ["CF_ACCESS_CLIENT_ID"],
-    "CF-Access-Client-Secret": os.environ["CF_ACCESS_CLIENT_SECRET"],
-}
-```
+The caller then sends `CF-Access-Client-Id` and `CF-Access-Client-Secret`;
+Cloudflare exchanges them for a JWT carrying `common_name`, which is what
+`proxy.ts` verifies.
 
 ---
 
@@ -87,21 +96,37 @@ Set these in the Vercel project for the `war-room` app (Production environment):
 |---|---|---|
 | `SUPABASE_URL` | `https://xxxx.supabase.co` | From Supabase project settings |
 | `SUPABASE_SECRET_KEY` | `eyJ...` | Service role key — bypasses RLS |
-| `OPERATOR_EMAIL` | `blyatimirovich.putin@gmail.com` | Must be lowercase |
-| `CF_ACCESS_CLIENT_ID` | *(from step 4)* | Used by agents backend only |
-| `CF_ACCESS_CLIENT_SECRET` | *(from step 4)* | Used by agents backend only |
+| `CF_ACCESS_TEAM_DOMAIN` | `<team>.cloudflareaccess.com` | **Required.** JWKS issuer — unset ⇒ every request 503s |
+| `CF_ACCESS_AUD` | *(AUD tag from §3)* | **Required.** Same — the gate fails closed |
+| `OPERATOR_EMAIL` | *(the operator's address)* | Optional extra allowlist. Compared case-insensitively |
 | `NEXT_PUBLIC_SITE_URL` | `https://www.yishunagain.com` | **www, not the apex** — see below |
 | `WAR_ROOM_URL` | `https://warroom.yishunagain.com` | |
 | `AGENTS_API_URL` | `https://yishun-agents-xxxxx-as.a.run.app` | Image generation (Track B) — see §5a |
 | `OPS_TOKEN` | *(same value as Cloud Run)* | Byte-identical or every render 401s |
 | `REVALIDATE_SECRET` | *(same value as the `web` project)* | Byte-identical or rectification silently no-ops |
-| `ART_TIMEOUT_MS` | `120000` | Optional. Approve path — sized for the full retry ladder |
-| `RECTIFY_TIMEOUT_MS` | `45000` | Optional. One attempt, no ladder |
+| `ART_TIMEOUT_MS` | `50000` | Optional; code default. Approve path. **Must stay under 60000** |
+| `RECTIFY_TIMEOUT_MS` | `40000` | Optional; code default. One attempt, no ladder. **Must stay under 60000** |
 
-`OPERATOR_EMAIL` is the second line of defence in `middleware.ts`: even if a
-request somehow carries a valid CF Access header from a different email, the
-middleware rejects it with 403. The primary defence is the Cloudflare policy
-above.
+⚠️ **The two `CF_ACCESS_*` vars are not optional.** `proxy.ts` fails closed: with
+either unset in production it answers every request `503 War Room auth not
+configured…`, deliberately, so a misconfigured deploy cannot become an open CMS.
+`CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` are a different thing entirely
+(§4) and are read by nothing — do not set them here.
+
+`OPERATOR_EMAIL` is the second line of defence in `proxy.ts`: a JWT that
+verifies but carries a different `email` claim is rejected with 403. The primary
+defence is the Cloudflare policy above. Two limits worth knowing: it is skipped
+when unset, and it does not apply to service-token JWTs, which carry
+`common_name` and no email. Case does not matter — both sides are lowercased
+before comparison.
+
+⚠️ **The two art timeouts must stay strictly below 60 s.** Both routes declare
+`maxDuration = 60`, and Vercel kills the function at that ceiling regardless of
+any `AbortController`. In the approve route the art call precedes the incident
+INSERT, so a platform kill loses the whole approval, not just the picture —
+whereas the in-handler abort degrades to `status: 'transient'` and still
+publishes. This table previously listed `120000` and `45000`, both of which lose
+that race. Regression guard: `packages/agents/test_rectify_guards.py` (#1).
 
 ⚠️ **`NEXT_PUBLIC_SITE_URL` must carry the `www` host.** This table previously
 said the apex. The War Room's rectification route POSTs to
@@ -128,14 +153,18 @@ binding is `roles/run.invoker` for `yishun-scheduler@…`. Vercel has no identit
 there, so Google's IAM layer answers **403 before the app ever reads the
 header** — verified 2026-08-01 against the live service.
 
-Until this is resolved every render silently returns `status: 'transient'`, the
-incident publishes with `pixel_art_url` null, and the operator sees no error.
-Two options:
+Until this is resolved every render returns `status: 'transient'`. On the
+approve path that means the incident publishes with `pixel_art_url` null and the
+operator sees no error at all — the route logs `art/generate — HTTP 403` and
+inserts anyway, because nothing here is worth losing a publish over. On
+`/rectify` the status at least reaches the card. Two options:
 
 1. **Make the service publicly invokable** and rely on `OPS_TOKEN` as the only
    gate — one command, but the token becomes the entire perimeter:
    ```
-   gcloud run services add-iam-policy-binding yishun-agents      --region asia-southeast1 --member="allUsers" --role="roles/run.invoker"
+   gcloud run services add-iam-policy-binding yishun-agents \
+     --region asia-southeast1 \
+     --member="allUsers" --role="roles/run.invoker"
    ```
 2. **Mint a Google identity token per request** from a service account Vercel
    holds, and send it as `Authorization: Bearer`. Keeps IAM closed; more work,
@@ -150,21 +179,58 @@ unconfigured deploy behaves exactly as it does today.
 
 ## 6. How the Middleware Works
 
-`apps/war-room/middleware.ts` runs on every request except:
+The file is `apps/war-room/proxy.ts`, **not `middleware.ts`** — Next.js 16
+renamed the convention, and refuses to build if both exist. `proxy` always runs
+on the Node.js runtime; the edge runtime is unsupported there and cannot be
+configured. That suits this gate: JWT signature verification wants Node's full
+crypto, not just WebCrypto.
+
+It runs on every request except:
 - `_next/static/*` — static asset chunks
 - `_next/image/*` — image optimisation
 - `favicon.ico`
-- `/api/health` — health-check probe (always allowed)
 
-In **production** (`NODE_ENV=production`):
+`/api/health` is **no longer exempt**. It returns real operational data (scraper
+fleet health, queue counts, pending pattern alerts), and the spec says the War
+Room has no bypass route. Browser calls carry the `CF_Authorization` cookie, so
+they pass the JWT check anyway.
 
-1. Reads the `cf-access-authenticated-user-email` header injected by
-   Cloudflare Access.
-2. If the header is missing → `403 Access denied` (plain text).
-3. If `OPERATOR_EMAIL` is set and the header value doesn't match → `403`.
-4. Otherwise → request passes through to the Next.js app.
+In **production** (`NODE_ENV=production`), in order:
 
-In **development** (`NODE_ENV=development`): check is skipped entirely.
+1. **CSRF check.** For anything other than `GET`/`HEAD`, an `Origin` header that
+   doesn't match the request origin → `403 Cross-origin request rejected`.
+   Server-to-server calls send no `Origin` and pass.
+2. **Rate limit**, `/api/*` only, per-instance fixed window keyed on
+   `x-real-ip` / `cf-connecting-ip`:
+   - 60 req/min for ordinary API routes (the Phase 1 spec limit);
+   - **10 req/min** for `/api/queue/<id>/approve` and
+     `/api/incidents/<id>/rectify`, in their own namespace. These spend ~$0.0336
+     of Gemini per call, so a request ceiling is not a cost ceiling — 60/min
+     against them permits about $2/min per IP, which a stuck retry loop in one
+     browser tab reaches unnoticed.
+   - Over the limit → `429 Too many requests`.
+3. **Config check.** `CF_ACCESS_TEAM_DOMAIN` or `CF_ACCESS_AUD` unset →
+   `503 War Room auth not configured…`. Fails closed on purpose.
+4. **Token.** Reads the `Cf-Access-Jwt-Assertion` header, falling back to the
+   `CF_Authorization` cookie. Missing → `403 Access denied`.
+5. **Verification.** `jwtVerify` against the team's JWKS
+   (`https://<team domain>/cdn-cgi/access/certs`, cached by `jose` on a warm
+   instance), checking `issuer` and `audience`. Any failure → `403`.
+6. **Identity.** An `email` claim (identity login) or a `common_name` claim
+   (service token) is required; neither → `403`. If `OPERATOR_EMAIL` is set, an
+   identity login whose email doesn't match → `403`. Service tokens skip that
+   check.
+7. Otherwise → request passes through to the Next.js app.
+
+> **Why a JWT and not the header.** The old check was the presence of the
+> `cf-access-authenticated-user-email` header. Plain request headers prove
+> nothing: anyone who could reach the origin directly — a leaked `*.vercel.app`
+> URL, say — could set it themselves. Signature verification against
+> Cloudflare's public keys, bound to this application's AUD, cannot be forged
+> that way.
+
+In **development** (`NODE_ENV !== 'production'`): the whole function returns
+early, so auth, CSRF and rate limiting are all skipped. Local-only convenience.
 
 ---
 
@@ -180,28 +246,44 @@ In **development** (`NODE_ENV=development`): check is skipped entirely.
 ### Verify it blocks the wrong email
 
 1. Log in to the Cloudflare Access screen with any email **other than**
-   `blyatimirovich.putin@gmail.com` (you can use a disposable address).
-2. After Cloudflare grants the session, the War Room middleware will still
-   return `403 Access denied` because `OPERATOR_EMAIL` doesn't match.
+   `OPERATOR_EMAIL` (you can use a disposable address), assuming the Access
+   policy in §3 lets it through at all.
+2. After Cloudflare grants the session, the War Room proxy will still return
+   `403 Access denied` because the JWT's `email` claim doesn't match.
 
 ### Verify the correct email works
 
-1. Log in with `blyatimirovich.putin@gmail.com`.
+1. Log in with the address in `OPERATOR_EMAIL`.
 2. The War Room queue page should load normally.
 
-### Verify /api/health is always open
+### Verify /api/health is NOT open
+
+It used to be exempt. It is not any more — it returns fleet health and queue
+counts, and the War Room has no bypass route.
 
 ```bash
-curl -I https://warroom.yishunagain.com/api/health
-# Expect: HTTP/2 200  (no redirect to CF Access login)
+curl -sS -o /dev/null -w '%{http_code}\n' https://warroom.yishunagain.com/api/health
+# Expect the Cloudflare Access login redirect (302) — never 200.
 ```
+
+Requests that reach Vercel without passing Cloudflare — the raw `*.vercel.app`
+URL, for instance — hit the proxy instead, which answers `403` (no or invalid
+JWT) or `503` (`CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD` missing on the
+project). A `503` is the useful one: it says the gate is up and the config is
+not.
 
 ---
 
 ## 8. What is NOT protected by this setup
 
 - The **public site** (`yishunagain.com`) — intentionally open.
-- The **agents backend** (`Cloud Run`) — protected separately by GCP IAM;
-  it is not exposed to the public internet.
+- The **agents backend** (`Cloud Run`) — protected separately, by two layers
+  that have nothing to do with Cloudflare Access: GCP IAM
+  (`--no-allow-unauthenticated`, pinned in `infra/cloudbuild.yaml`, so a caller
+  needs `roles/run.invoker`) and, inside the app, the `X-Ops-Token` shared
+  secret on every `/ops` and `/art` endpoint — 503 if the server has no token
+  configured, 401 if the caller's is wrong. It is not exposed to the public
+  internet. That IAM layer is also what currently blocks the War Room's own
+  calls — see §5a.
 - Supabase direct access — blocked by RLS policies; the secret key is
   server-side only and never in client bundles.

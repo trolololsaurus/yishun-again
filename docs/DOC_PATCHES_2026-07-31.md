@@ -1,5 +1,26 @@
 # Doc patches — 2026-07-31
 
+> [!WARNING]
+> **APPLIED AND SUPERSEDED — DO NOT APPLY THESE PATCHES.**
+>
+> This was a one-off work order, not a description of the system. Its patches
+> were applied, and the docs it targets were then rewritten far more extensively
+> on **2026-08-02** (Google News RSS removal, the news-sitemap + WordPress-search
+> discovery adapters, the `REDIRECT_DOMAINS` allowlist rule, the Yishun keyword
+> correction, and the framework-version fixes).
+>
+> Most "Find:" anchors below no longer exist in the target files, and several
+> "Replace with:" blocks are now themselves stale — for example the guardrail-#2
+> wording it installs has since been rewritten again, and its Next.js/FastAPI
+> version text predates the 16 / 0.115.x correction.
+>
+> Kept as a record of what the July audit found. For current behaviour read
+> `CLAUDE.md`, then `docs/YishunAgain_TechSpec_v1_9.md`. **An agent that applies
+> this file will reintroduce drift, which is the exact failure it was written to
+> fix.**
+
+---
+
 Apply before starting Claude Code. Each patch gives the anchor text to find and
 what to replace it with. **Locate by anchor text, not line number** — line
 numbers are from commit `1b69335` and will drift.

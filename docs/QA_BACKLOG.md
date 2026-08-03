@@ -4,19 +4,24 @@ Companion to `POST_LAUNCH_HARDENING.md`. Records the 39 issues surfaced by the
 June-2026 full-codebase QA sweep (public web, War Room CMS, agents pipeline, DB/
 security) with a tech-lead-approved fix for each, ranked Critical → Low.
 
-**Status:** 🔴 Open · 🟡 Fixed in unmerged PR · 🟢 Cleanup script pending · ✅ Done
+**Status:** 🔴 Open · 🟡 Partly fixed / residual remains · 🟢 Cleanup script pending ·
+✅ Done · ⛔ Moot (the code it describes no longer exists) · 🔵 Won't fix
 
-> **Implementation status — branch `fix/qa-hardening` (this PR).**
-> **Landed:** C1, C2, C4, C3, M5 · H1, H2, H3, H4, H5 · M1, M2, M3, M4, M6, M7,
-> M9, M10, M13 · L1, L2, L5, L11. Plus migration **010** (C3/C4/M7) and tests
-> (`test_stage2_guardrails.py`). Verified: both apps `tsc --noEmit` clean, Python
-> 22/22 tests pass, web+war-room smoke OK.
-> **Already in-flight:** H6 (confirm-update date, merged into this branch via PR #10),
-> H7/H8 (`cleanup_corrupted.py --apply` — operator-run).
-> **Deferred (fast-follow — larger refactors / process, low user impact):** M8
-> (VariableSizeList), M12 (gnews canonicalization), M14 (source_type vocab), M15
-> (migration runner), M16 (map year-effect race), L3, L4 (won't-fix: "Deaths: 0"
-> conveys confirmed-none), L6, L7, L8, L9, L10.
+> **Implementation status — re-verified against the working tree 2026-08-02.**
+> **Closed in code:** C1, C2, C3, C4 · H1, H2, H3, H4, H5, H6 · M1, M2, M3, M4,
+> M5, M6, M7, M9, M10, M11, M13, M14 · L1, L2, L5, L10, L11 · A1–A5, A10, A11,
+> A13. Plus migrations **010** (C3/C4/M7) and **013** (L10), and the standalone
+> guard scripts (`test_stage2_guardrails.py`, `test_political_alert.py`,
+> `test_source_allowlist.py`, `test_watermark_advance.py` — 30 `test_*.py` in
+> `packages/agents/`, run directly, not under pytest).
+> **Moot — the code they describe no longer exists:** M12 and A2, both about
+> `ingestion/sources/google_news_rss.py`, which was **deleted on 2026-08-02**.
+> The history is kept below because the lesson outlived the file.
+> **Operator/live-DB, not answerable from the tree:** H7, H8
+> (`cleanup_corrupted.py --apply`).
+> **Still open:** M8 (VariableSizeList), M15 (migration runner), M16 (partial),
+> L3, L4 (won't-fix: "Deaths: 0" conveys confirmed-none), L6, L7, L8, L9 ·
+> A6, A7, A8, A9, and A12's cost-accounting residual.
 
 ---
 
@@ -32,8 +37,20 @@ security) with a tech-lead-approved fix for each, ranked Critical → Low.
 existing dedup ledger, and a `warning`-level `agent_events` row. A silently
 zeroed row was indistinguishable from any other low-confidence row, so political
 stories were dropped with no trace. The guardrail itself is unchanged.
-**Guards:** `test_stage2_guardrails.py`, `test_political_alert.py` (asserts no env
-switch can disable it and nothing in the alert path writes back to `confidence`).
+**Extended again 2026-08-02:** the guardrail is now read **first**, before any
+field validation. It used to sit below the classification/severity/confidence
+coercion, and `result["classification"].lower()` raised `AttributeError` on
+`"classification": null` — which is what the model tends to return on a political
+story, because it is being told to reject rather than categorise. The guardrail
+was therefore unreachable for a subset of the very content it exists to catch:
+the candidate died on an exception, so confidence was never forced to 0, the
+marker was never prepended, and neither the operator email nor the `agent_events`
+row fired. A non-political row with a bad classification still raises — that is a
+genuine model failure and must not be swallowed.
+**Guards:** `test_stage2_guardrails.py` (now also covers `political: true` with
+`classification: null` and with an invalid classification string),
+`test_political_alert.py` (asserts no env switch can disable it and nothing in
+the alert path writes back to `confidence`).
 
 ### C2 — EDMW URL leaks into `source_urls` ✅ (verified 2026-07-30)
 **Closed in `ingestion/orchestrator.py`** — a signal candidate gets
@@ -45,12 +62,15 @@ switch can disable it and nothing in the alert path writes back to `confidence`)
 `check_source_urls`, and again in `auto_publish.check_eligibility`.
 **Guard:** `test_source_allowlist.py`.
 
-### C3 — UTM analytics silently fail (RLS vs anon key) 🔴
-`apps/web/lib/supabase.ts` + `api/utm/log/route.ts:37-47`. `utm_events` has RLS on with
-no INSERT policy; web uses the anon key → every UTM POST is rejected (500).
-**Fix:** give `/api/utm/log` its own server-only admin client (secret key, never imported
-by client code) **or** add a tightly-scoped anon `FOR INSERT` policy on `utm_events`
-(`WITH CHECK (true)`, no SELECT). Verify against prod which path is live.
+### C3 — UTM analytics silently fail (RLS vs anon key) ✅
+**Was:** `utm_events` had RLS on with no INSERT policy, and `apps/web/lib/supabase.ts`
+writes with the publishable key → every UTM POST was rejected (500).
+**Closed by `migrations/010_qa_hardening.sql`** — the second of the two options was
+taken: a tightly-scoped `anon_insert_utm_events` policy, `FOR INSERT TO anon WITH
+CHECK (true)`, and **no SELECT** (anon still cannot read the table). No admin client
+was introduced, so the secret key stays out of the public app entirely. Acceptable
+because `utm_events` stores no PII — hashed UA + Cloudflare geo only — and
+`/api/utm/log` is rate-limited to 30 req/min per IP.
 
 ### C4 — `source_urls ≥ 1` constraint broken for empty arrays ✅ (verified 2026-07-30)
 **Closed by `migrations/010_qa_hardening.sql`** —
@@ -63,104 +83,220 @@ baseline sweep found **0 published incidents with an empty `source_urls`**.
 
 ## 🟠 High
 
-### H1 — `confirm-close` never writes the incident 🔴
-`war-room/api/queue/[id]/confirm-close/route.ts:30-39`. Operator-confirmed conclusion is
-not persisted.
-**Fix:** before dismissing, `incidents.update({ is_developing:false,
-conclusion_type:'timeout', concluded_at:<source date>, latest_source_role:'timeout' })`
-keyed on `rc.incident_id`; capture the error.
+### H1 — `confirm-close` never writes the incident ✅
+**Was:** the operator-confirmed conclusion was not persisted — only the notification
+was dismissed, leaving `is_developing=TRUE` with no `conclusion_type`/`concluded_at`.
+**Closed in `war-room/app/api/queue/[id]/confirm-close/route.ts`** — before dismissing,
+it writes `{ is_developing:false, conclusion_type:'timeout', concluded_at, latest_source_role:'timeout' }`
+keyed on `rc.incident_id`, and a failed update is a hard 500 rather than a swallowed
+error. `rc.incident_id` is run through `validateUUID` first: `raw_content` is
+pipeline-written JSONB, and a malformed value otherwise reached PostgREST and 500'd
+with a raw DB error. Note `concluded_at` stamps the confirmation time, not a source
+date — this is a timeout conclusion, so there is no source event to date it from.
 
-### H2 — `approve` swallows 3 post-insert errors 🔴
-`war-room/api/queue/[id]/approve/route.ts:117-149`. `incident_links`, queue-status,
-`training_signals` errors discarded → double-publish risk.
-**Fix:** capture each `{error}`; treat the queue-status update failure as a hard 500
-(it governs idempotency); `console.error` the other two. Apply the same to `backfill-bulk` (H/M11).
+### H2 — `approve` swallows 3 post-insert errors ✅
+**Closed in `war-room/app/api/queue/[id]/approve/route.ts`** — each `{error}` is
+captured. The queue-status update governs idempotency, so its failure is a hard 500
+carrying the `incident_id` and a "do not re-approve" message; the `incident_links`
+and `training_signals` failures are logged and non-fatal (a 23505 on a link is
+expected and stays quiet). The status update is also a CAS
+(`.eq('status','pending').select('id')`): if a concurrent approve/reject already
+claimed the item, 0 rows match and the just-inserted incident is deleted, so the
+two-operator race can no longer double-publish. Same treatment applied to
+`backfill-bulk` (M11).
 
-### H3 — Dateless items stamped with *today* on approve 🔴
-`approve/route.ts:50-53`. `_date_fallback` items default `incident_date` to `new Date()`.
-**Fix:** when `rc._date_fallback` is set and the operator supplied no date, **block**
-approval (422 + message) instead of defaulting to today.
+### H3 — Dateless items stamped with *today* on approve ✅
+**Closed in `approve/route.ts`** — the date is taken from the operator's input, else
+`raw_content.date`/`incident_date`; if none parses it returns **422** with a message
+telling the operator to set `incident_date` before approving. Validation is a
+full-match `^\d{4}-\d{2}-\d{2}$` plus `Date.parse`, because the old prefix regex let
+`2026-99-99` through to Postgres, which bounced it as a raw DB error. `backfill-bulk`
+carries the same block per item. This is why a source must supply `published_at` to
+be registered at all — see `ingestion/sources.get_enabled_sources()`.
 
-### H4 — Live rows mislabeled `_backfill:true` 🔴
-`consolidation/queue_row.py:48-56`. Forward-pipeline rows look like backfill → bulk-approve UI
-can mass-approve live drafts.
-**Fix:** add `is_backfill: bool = True` param to `build_queue_row`; orchestrator passes
-`False`. War Room buckets then reflect reality.
+### H4 — Live rows mislabeled `_backfill:true` ✅
+**Closed in `consolidation/queue_row.py`** — `build_queue_row` takes
+`is_backfill: bool = True` (the default keeps the backfill agent's behaviour) and
+writes it to `raw_content._backfill`. `ingestion/orchestrator.py` passes
+`is_backfill=False`, so forward-pipeline drafts no longer land in the bulk-approve
+bucket.
 
-### H5 — Home map shows all-time pins on load, then shrinks to current year 🔴
-`app/page.tsx:36-41` vs `api/map`. SSR seeds all-year pins; year effect shrinks them.
-**Fix:** scope the SSR map query to `currentYear` (mirror the `gte/lt incident_date`
-filter) so initial pins match the default year + sidebar.
+### H5 — Home map shows all-time pins on load, then shrinks to current year ✅
+**Closed in `apps/web/app/page.tsx`** — the SSR map query carries the same half-open
+`gte('incident_date', '${currentYear}-01-01') / lt(…, '${currentYear+1}-01-01')`
+filter as `/api/map`, so the initial pins match the default year and the sidebar.
 
-### H6 — `confirm-update` date corruption 🟡
-`confirm-update/route.ts:63-78`. `new Date()` stamped as timeline + incident_date.
-**Status:** fixed in PR #10 (commit on `feat/feed-lightning-developing-timeline`); merge to close.
+### H6 — `confirm-update` date corruption ✅
+**Closed in `confirm-update/route.ts`** — the timeline entry and `incident_date` use
+the candidate's real article date (`rc.date` → `rc.published_at` → the incident's
+existing date → `first_reported_at`), never `new Date()`. `incident_date` clamps to
+the later of the existing and new dates and `first_reported_at` to the earlier, so a
+merge can never push the date into the future. The route also now claims the queue
+item **before** mutating the incident and releases the claim if the mutation fails —
+the old order left a raced item re-confirmable, appending duplicate timeline entries
+and double-counting `update_count`.
 
 ### H7 — 8 incidents corrupted (`incident_date=2026-06-23`) 🟢
-From the War Room merges. **Status:** `cleanup_corrupted.py --apply` pending.
+From the War Room merges. `cleanup_corrupted.py` is present in `packages/agents/`.
+**Status:** whether `--apply` has been run is a live-DB question the working tree
+cannot answer — verify against Supabase before assuming either way.
 
 ### H8 — `corroboration_count` stale on 13 incidents 🟢
-Merges didn't bump the count → lightning under-counts. **Status:** `cleanup_corrupted.py --apply` pending.
+Merges didn't bump the count → lightning under-counts. Same script, same caveat as H7.
 
 ---
 
 ## 🟡 Medium
 
-- **M1 — Dead "Sev ≥ N" filter** (`timeline/TimelineClient.tsx:32-48`). 🔴
-  **Fix:** add a sanitised `min_severity` param to `/api/incidents` (`.gte('severity', n)`) and send it from `loadMore`.
-- **M2 — Chaos counts polluted by `custom` class** (`api/chaos/route.ts:44-52`, `page.tsx:94`). 🔴
-  **Fix:** only increment `acc[cls]`/`total` when `cls ∈ {heart,clown,dagger}`; count `custom` separately if needed.
-- **M3 — `computeChaosScore` NaN on null severity** (`lib/utils.ts:184-191`). 🔴
-  **Fix:** `sum + (inc.severity ?? 0) * weight`.
-- **M4 — `/api/map` Dec-31 boundary drops year-end pins** (`api/map/route.ts:18-19`). 🔴
-  **Fix:** use half-open `.lt('incident_date', '${year+1}-01-01')` to match feed/chaos.
-- **M5 — `_classify` int() crash on non-numeric deaths/injuries** (`stage2_writer.py:284-286`). 🔴
-  **Fix:** wrap coercion in `try/except (TypeError, ValueError)` → fall back to `None`.
-- **M6 — `/api/map` has no rate limiting** (`api/map/route.ts`). 🔴
-  **Fix:** add `rateLimit(getIp(req))` guard (spec requires it on all `/api/*`).
-- **M7 — `war_room_queue` incident FKs have no `ON DELETE`** (`migrations/001:139`, `002:47`). 🔴
-  **Fix:** new migration `ALTER … SET NULL ON DELETE` for `incident_id` + `update_target_incident_id`. (Deletion script currently nullifies manually.)
-- **M8 — Fixed `ITEM_HEIGHT=152` clips tall cards** (`IncidentFeed.tsx:8`). 🔴
+- **M1 — Dead "Sev ≥ N" filter** ✅ `/api/incidents` reads a `min_severity` param
+  (clamped to 1–5, anything else ignored) and applies `.gte('severity', n)`;
+  `timeline/TimelineClient.tsx` sends it from `buildUrl` whenever `minSev > 1`.
+- **M2 — Chaos counts polluted by `custom` class** ✅ Both count sites — `app/api/chaos/route.ts`
+  and the SSR homepage `app/page.tsx` — only increment `acc[cls]`/`acc.total` when
+  `cls ∈ {heart,clown,dagger}`, so a `custom` row can't add a phantom key or stop the
+  chips summing to ALL.
+- **M3 — `computeChaosScore` NaN on null severity** ✅ `apps/web/lib/utils.ts` —
+  `sum + (inc.severity ?? 0) * weight`. (The same function was later rebalanced to the
+  exponential curve; the null guard is unchanged.)
+- **M4 — `/api/map` Dec-31 boundary drops year-end pins** ✅ `app/api/map/route.ts` uses the
+  half-open `.gte(…'${year}-01-01').lt(…'${year+1}-01-01')` pair, matching feed and chaos.
+- **M5 — `_classify` int() crash on non-numeric deaths/injuries** ✅ `filters/stage2_writer.py` —
+  `max(0, int(val))` sits in `try/except (TypeError, ValueError)` and falls back to `None`.
+- **M6 — `/api/map` has no rate limiting** ✅ `app/api/map/route.ts` opens with
+  `rateLimit(getIp(req))` → 429, like every other `/api/*` route.
+- **M7 — `war_room_queue` incident FKs have no `ON DELETE`** ✅ `migrations/010_qa_hardening.sql`
+  recreates both FKs (`incident_id`, `update_target_incident_id`) as `ON DELETE SET NULL`,
+  mirroring `utm_events.incident_id` and preserving queue history.
+- **M8 — Fixed `ITEM_HEIGHT=152` clips tall cards** (`components/IncidentFeed.tsx:8`). 🔴
+  Still a `FixedSizeList` with `ITEM_HEIGHT = 152`, and `IncidentCard` has no max-height clamp.
   **Fix:** move to `VariableSizeList` with measured rows, or enforce a hard max-height clamp on the card.
-- **M9 — `confirm-update` links missing `confirmed_by_operator` + swallowed error** (`confirm-update/route.ts:108-118`). 🔴
-  **Fix:** add `confirmed_by_operator:true`; capture `{error}`, log when `code !== '23505'`.
-- **M10 — `unpublish` has no `is_published` precondition** (`unpublish/route.ts`). 🔴
-  **Fix:** `.eq('is_published', true).select('id')`; no-op (skip training signal) when 0 rows.
-- **M11 — `backfill-bulk` misreports `updated` + swallows approve errors** (`backfill-bulk/route.ts:72,166`). 🔴
-  **Fix:** `.select('id')` on the update and report returned count; capture approve-path queue error into `errors`.
-- **M12 — Candidate.url canonicalization violated on resolver failure** (`_gnews_helpers.py:163`, `sources/google_news_rss.py:149`). 🔴
-  **Fix:** when resolution still returns a `news.google.com` URL, canonicalize on the article-id blob (so repeat wrappers collapse) or drop the candidate; document dedup is best-effort otherwise.
-- **M13 — Queue-dedup asymmetry (`proposed_summary` vs `summary`)** (`consolidation/check.py:191`). 🔴
-  **Fix:** fall back to `raw_content.summary` when `proposed_summary` empty; skip judging title-only rows.
-- **M14 — `source_type` vocab drift (`edmw`/`rss` vs `signal`)** (`contracts.py:35`, schema). 🔴
-  **Fix:** standardise vocabulary (map `edmw→signal` at ingestion) or add aligned CHECKs on `war_room_queue`/`training_signals.source_type`.
-- **M15 — No migration runner / 006 saga** (`migrations/006_*`, `009`). 🔴
-  **Fix:** adopt Supabase CLI `db push` + a schema-version ledger; delete the superseded `006_ingestion_learning_loop_schema.sql`.
-- **M16 — Map year `useEffect` races `load`; filter not re-applied on year change** (`IncidentMap.tsx:177-217`). 🔴
-  **Fix:** skip the year-effect's first run (a `didMount` ref); re-apply `activeFilter` after `setData`.
+- **M9 — `confirm-update` links missing `confirmed_by_operator` + swallowed error** ✅
+  `confirm-update/route.ts` inserts `incident_links` with `confirmed_by_operator: true`
+  (the operator just confirmed the update) and logs any error whose `code !== '23505'`.
+- **M10 — `unpublish` has no `is_published` precondition** ✅
+  `incidents/[id]/unpublish/route.ts` returns `{ok:true, noop:true}` for an already-draft
+  incident, and the update itself is a CAS (`.eq('is_published', true).select('id')`) —
+  so of two concurrent unpublishes only the one that actually matched a row writes the
+  training signal.
+- **M11 — `backfill-bulk` misreports `updated` + swallows approve errors** ✅
+  `backfill-bulk/route.ts` reports `rejectedIds.size` from the CAS's `.select('id')`
+  rather than the fetched count (which over-reported when a concurrent request got there
+  first), and pushes every approve-path failure — missing title/summary, no valid date,
+  insert error, lost race, queue-update failure — into `errors`.
+- **M12 — Candidate.url canonicalization violated on resolver failure** ⛔ **Moot as of 2026-08-02.**
+  The file this describes, `ingestion/sources/google_news_rss.py`, was **deleted**: the
+  `news.google.com/rss/articles/<blob>` wrappers do not HTTP-redirect (decoding them needs
+  a reverse-engineered `batchexecute` RPC that Google rotates), so resolution failure was
+  the normal case, not the edge case. Two live rows on 2026-08-01 showed all three
+  consequences at once — dedup missed them (it matches on URL), a redirect sat where a
+  citation belongs in `war_room_queue.source_url` and `source_urls`, and
+  `unapproved_source_domain` tripped. Rather than canonicalize on the blob, the aggregator
+  was removed and replaced by discovery adapters that emit the **publisher's own URL**:
+  `ingestion/sources/news_sitemap.py` (9 outlets' Google-News sitemaps) and
+  `ingestion/sources/wp_search.py` (2 WordPress `?s=yishun&feed=rss2` feeds). A third
+  allowlist rule now backstops the class of bug:
+  `classifiers/source_allowlist.REDIRECT_DOMAINS` + `is_redirect_domain()`, checked
+  **first** in `classify()` and without consulting the `sources` table, so it cannot be
+  defeated by adding the host to `sources`; `check_source_urls()` reports them under
+  `dropped_redirect`, and `consolidation/queue_row.py` substitutes a real publisher URL
+  for a redirector `source_url`. `scrapers/_gnews_helpers.py` survives — the backfill
+  agent and the cleanup scripts still import `_resolve_redirect` — and
+  `test_gnews_resolve.py` still covers its decoder.
+- **M13 — Queue-dedup asymmetry (`proposed_summary` vs `summary`)** ✅
+  `consolidation/check.py` falls back to `raw_content.summary` when `proposed_summary`
+  is empty.
+- **M14 — `source_type` vocab drift (`edmw`/`rss` vs `signal`)** ✅ Standardised at the
+  adapter boundary rather than in the schema: `classifiers/source_allowlist.canonical_source_type()`
+  collapses any signal spelling to `'signal'`, so no `Candidate` carries the legacy
+  `'edmw'` downstream (`ingestion/contracts.py` documents the canonical vocabulary on the
+  field). Note this is a normalisation, not a CHECK — guardrail #2 does **not** rest on
+  it: `is_signal_source()` is deliberately belt-and-braces, testing both vocabularies
+  *and* resolving the URL's domain against the `sources` table.
+- **M15 — No migration runner / 006 saga** (`migrations/`). 🔴 **Still open.** Migrations
+  are hand-applied in the Supabase SQL Editor, in order, with nothing recording what has
+  run. The tree is now at **015** (`014_image_status.sql`, `015_image_status_check.sql`),
+  so the window for a mis-ordered or skipped apply has only widened — and there are now two
+  demonstrated failure modes for a skipped file, neither of which announces itself. **009**
+  and **011** extend `training_signals.action` CHECKs; without them the matching inserts are
+  *silently rejected* and the learning loop records nothing, which reads as quiet rather
+  than as an error. **013** drops the `USING(true)` policies of L10; until it is applied the
+  anon key keeps full read/write on `pattern_alerts` and `people_profiles` — a security hole
+  that stays open for exactly as long as nobody notices the file was skipped.
+  **Fix:** adopt Supabase CLI `db push` + a schema-version ledger. The superseded 006 was
+  **renamed, not deleted** — `006_SUPERSEDED_DO_NOT_RUN_ingestion_learning_loop_schema.sql`
+  — which removes the foot-gun without losing the history; a real runner would make the
+  rename unnecessary.
+- **M16 — Map year `useEffect` races `load`; filter not re-applied on year change**
+  (`components/IncidentMap.tsx`). 🟡 **Half closed.** The `load` race is handled: the
+  year effect applies the new FeatureCollection immediately if the `incidents` source
+  exists, else defers via `map.once('load', apply)`, and cancels on unmount. The
+  `didMount` skip was not added, so the first run re-fetches the year SSR already
+  rendered — harmless since H5 made those the same year, but a wasted request.
+  Re-applying `activeFilter` after `setData` proved unnecessary: `setFilter` is a layer
+  property and survives a source-data swap.
 
 ---
 
 ## 🔵 Low
 
-- **L1 — `validateUUID` rejects uppercase UUIDs** (`war-room/lib/utils.ts:73`, `backfill-bulk:25`). Add `/i` flag. 🔴
-- **L2 — `UTMLogger` ships `console.log`s (incl. response body) to prod** (`UTMLogger.tsx`). Gate behind `NODE_ENV!=='production'`. 🔴
-- **L3 — Timeline year input not clamped → silently returns unfiltered archive** (`TimelineClient.tsx:88`). Validate client-side or surface "invalid year". 🔴
-- **L4 — Detail page shows "Deaths: 0" when `deaths=0, injuries>0`** (`[slug]/page.tsx:208`). Use `(deaths ?? 0) > 0` on inner spans. 🔴
-- **L5 — tz drift: `new Date('YYYY-MM-DD').getFullYear()` parses UTC** (`page.tsx:119`). Parse year from `incident_date.slice(0,4)`. 🔴
-- **L6 — `/api/incidents` ignores `limit` param clients send** (`incidents/route.ts`). Honor it (clamped) or drop from clients. 🔴
-- **L7 — Circuit breaker resets on Stage-1 reject + only counts rate-limit/billing** (`orchestrator.py:208,296`). Don't clear on reject; broaden `_classify_error` to 5xx/timeout/connection. 🔴
-- **L8 — `record_run` outside try/except can violate "never raises"** (`orchestrator.py:353`). Wrap in `try/except` + log. 🔴
-- **L9 — In-memory rate limiter is per-instance** (`lib/rateLimit.ts`). Move to Upstash/Redis before relying on it. 🔴 (self-documented)
-- **L10 — `pattern_alerts`/`people_profiles` use `USING(true)` policies** (`migrations/003:39`). Scope `TO service_role` or drop (default-deny is stricter). 🔴
-- **L11 — `incident_links` query relies on RLS for `confirmed_by_operator` without asserting it** (`[slug]/page.tsx:61`). Add a defensive `.eq('confirmed_by_operator', true)`. 🔴
+- **L1 — `validateUUID` rejects uppercase UUIDs** ✅ `war-room/lib/utils.ts` — the regex
+  carries the `/i` flag; uppercase/mixed-case UUIDs are valid per RFC 4122.
+- **L2 — `UTMLogger` ships `console.log`s (incl. response body) to prod** ✅
+  `components/UTMLogger.tsx` is fire-and-forget — `.catch(() => {})`, no response-body
+  logging on any path, so no `NODE_ENV` gate was needed.
+- **L3 — Timeline year input not clamped → silently returns unfiltered archive**
+  (`app/timeline/TimelineClient.tsx`). 🔴 The input now carries `min={2020} max={2100}`,
+  but it is not inside a form, so the browser never enforces them on a typed value. A
+  3-digit or out-of-range entry still fails `sanitiseYear`'s `^\d{4}$`, which returns
+  `null` — i.e. the whole archive, unfiltered, with no indication the year was ignored.
+  **Fix:** validate client-side or surface "invalid year".
+- **L4 — Detail page shows "Deaths: 0" when `deaths=0, injuries>0`** (`app/incidents/[slug]/page.tsx`).
+  🔵 **Won't fix** — `deaths: 0` means *confirmed none*, which is exactly the distinction the
+  Stage 2 extraction rules preserve (null = not mentioned, 0 = confirmed none). The block is
+  gated on `(deaths ?? 0) > 0 || (injuries ?? 0) > 0`, so it never renders on a story with
+  neither; showing the confirmed zero alongside an injury count is the intended reading.
+- **L5 — tz drift: `new Date('YYYY-MM-DD').getFullYear()` parses UTC** ✅ `app/page.tsx`
+  builds the year set with `parseInt(String(r.incident_date).slice(0, 4), 10)`; a Jan-1
+  SGT date no longer rolls back into the prior year.
+- **L6 — `/api/incidents` ignores `limit` param clients send** (`app/api/incidents/route.ts`,
+  `components/IncidentFeed.tsx:52`). 🔴 Unchanged and now purely cosmetic: `IncidentFeed`
+  still sends `limit`, the route still fixes the page at `PAGE_SIZE = 20`, and both
+  constants are 20 — so the two agree by coincidence rather than by contract.
+  **Fix:** honour it (clamped) or drop it from the client.
+- **L7 — Circuit breaker resets on Stage-1 reject + only counts rate-limit/billing**
+  (`ingestion/orchestrator.py`). 🔴 Both halves still stand. `consecutive.clear()` runs on
+  the Stage-1 reject path — the highest-volume branch by far, at 60–70% of raw volume — so
+  a systemic failure interleaved with normal rejects never accumulates. `_classify_error`
+  still returns only `rate_limit_429` and `anthropic_billing`; 5xx, timeout and connection
+  errors classify as `None` and are not counted.
+- **L8 — `record_run` outside try/except can violate "never raises"**
+  (`ingestion/orchestrator.py`, in `run_ingestion_pass`'s tail). 🔴 Still outside the
+  `try`, and `state_store.record_run` does not guard its own `.execute()`, so a
+  `pipeline_run_history` insert failure propagates out of the pass *after* all the real
+  work committed. **Fix:** wrap in `try/except` + log. Worth doing precisely because this
+  table is what `ops/supervisor.py` derives outage alerting from.
+- **L9 — In-memory rate limiter is per-instance** (`apps/web/lib/rateLimit.ts`). 🔴 (self-documented
+  in the file header). The map is now bounded (`MAX_TRACKED_IPS = 10_000`, stale sweep then
+  clear) so spoofed IP headers can't grow memory without limit — but the window is still
+  per-instance, and the effective global limit is still N-instances × limit.
+  **Fix:** move to Upstash/Redis before relying on it.
+- **L10 — `pattern_alerts`/`people_profiles` use `USING(true)` policies** ✅ Closed by
+  `migrations/013_rls_fix_and_reddit_seed_cleanup.sql`, which drops
+  `operator_full_access` on `pattern_alerts` and `operator_only` on `people_profiles`.
+  Default-deny was taken over scoping `TO service_role`: RLS stays enabled with no policy,
+  so the tables are service-role only like every other private table. Both are covered by
+  `tools/rls_audit.py`.
+- **L11 — `incident_links` query relies on RLS for `confirmed_by_operator` without asserting it** ✅
+  `app/incidents/[slug]/page.tsx` filters explicitly with `.eq('confirmed_by_operator', true)`
+  rather than trusting the policy.
 
 ---
 
 ## Addendum — July 2026 autonomy sweep
 
-Found while wiring the daily unattended pass (`docs/AUTONOMY.md`). All five were
-live defects, not hypotheticals.
+Found while wiring the daily unattended pass (`docs/AUTONOMY.md`). Opened with five
+(A1–A5) and grew as the autonomy layer landed; every one was a live defect, not a
+hypothetical.
 
 ### A1 — `Stage1RpmThrottle.wait_if_needed` could loop forever ✅
 `filters/stage1_quota.py`. With `STAGE1_RPM=0`, `len(window) < self._rpm` is never
@@ -169,16 +305,24 @@ reachable from an env-var typo, on the hot path of every Stage 1 call.
 **Fixed:** RPM floored at 1; `MAX_WAIT_SECONDS = 90` cap per call. A 429 is
 recoverable, a hang is not.
 
-### A2 — Google News consumed the entire pass budget ✅
+### A2 — Google News consumed the entire pass budget ✅ (source since removed — 2026-08-02)
 `ingestion/sources/google_news_rss.py`. `_resolve_redirect` (one HTTP round-trip
 each) ran on all ~650 feed entries *before* `RecencyFilter` discarded ~600 of
 them as stale. A dry run took **909 s** and hit its deadline inside this source,
 so `reddit` and `edmw` never ran at all — the two sources ordered behind it were
 being silently starved on every pass.
-**Fixed:** filter on the RSS entry's own `pubDate` before resolving; dedup on the
-wrapper URL first; `MAX_RESOLVES_PER_FETCH = 120` for cold starts. **909 s → 59 s**,
-the remainder being the mandatory politeness delay. Dateless entries are still
-never dropped.
+**Fixed at the time:** filter on the RSS entry's own `pubDate` before resolving;
+dedup on the wrapper URL first; `MAX_RESOLVES_PER_FETCH = 120` for cold starts.
+**909 s → 59 s**, the remainder being the mandatory politeness delay. Dateless
+entries were still never dropped.
+⛔ **Both the source and those mitigations are gone.** `google_news_rss` was
+deleted on 2026-08-02 for the correctness reason in M12 (unresolvable wrappers
+stored as `Candidate.url`), not for cost — so `MAX_RESOLVES_PER_FETCH` no longer
+exists anywhere in the codebase. **The lesson outlived the file and is now
+load-bearing elsewhere:** apply the cheap filter *before* the expensive fetch.
+`ingestion/sources/news_sitemap.py` says so in its own header, and it is why the
+sitemap adapters date-filter entries before touching an article. Do not
+reintroduce an aggregator here.
 
 ### A3 — The pass deadline could not stop a pass ✅
 `ingestion/orchestrator.py`. `max_duration_seconds` was checked in exactly one
@@ -207,15 +351,21 @@ for real breakage. The `Jom` seed row also still sat in `sources`.
 **Fixed:** job removed, remaining `jom` references cleared from `MSM_DOMAINS` lists
 and `scrape_discovery`, seed row deleted in migration 011.
 
-### A10 — `source_reputation` still cannot populate: `training_signals.source_url` is never written 🔴
+### A10 — `source_reputation` still cannot populate: `training_signals.source_url` is never written ✅
 Found immediately after 011 landed. `rebuild_source_reputation()` (A4's fix) reads
-`training_signals.source_url` — and **all 130 rows have it NULL**, so the rebuild scores
-zero domains. The ten War Room routes that insert training signals write
+`training_signals.source_url` — and **all 130 rows had it NULL**, so the rebuild scored
+zero domains. The War Room routes that insert training signals wrote
 `incident_id`/`action`/`decision`/`operator_changes` but never `source_url` or `queue_id`
 (those columns arrived with migration 006 for the ingestion-era schema and no route was
-updated). So A4 fixed the writer, but the writer has no input: **the loop is still open.**
-**Fix:** populate `queue_id`, `source_url`, `source_type`, `proposed_*` on the four
-source-quality routes (`approve`, `reject`, `confirm-update`, `backfill-bulk`).
+updated). So A4 fixed the writer, but the writer had no input: the loop was still open.
+**Fixed:** all four source-quality routes now populate `queue_id`, `source_url`,
+`source_name`, `source_type` and `proposed_classification`/`proposed_severity` —
+`queue/[id]/approve`, `queue/[id]/reject`, `queue/[id]/confirm-update` and
+`backfill-bulk` (both its reject and approve paths). The inserts are `await`ed:
+in a serverless function an unawaited insert can be frozen mid-flight when the
+response returns, which starves the loop just as effectively as a NULL column.
+Rows written before this landed still carry NULL and are unrecoverable, so the
+rebuild's domain coverage only starts from here.
 **Related guard shipped:** `MIN_DOMAIN_OBSERVATIONS = 10` — trust stays at the neutral
 0.500 until a domain has ten verdicts. Without it, 3 approvals and 0 rejections scores
 0.800, clears the `TRUST_BOOST_THRESHOLD`, and buys a +0.10 confidence nudge that can
@@ -289,14 +439,19 @@ as signal.
   passes in production. Near-harmless at one pass/day (usage is far below the cap and
   the container is replaced between passes anyway); would matter if cadence increases.
   **Fix:** move both to Supabase.
-- **A7 — `war-room /api/autonomy` proxy is broken** 🔴 `app/api/autonomy/route.ts`
+- **A7 — `war-room /api/autonomy` proxy is broken** 🔴 `apps/war-room/app/api/autonomy/route.ts`
   calls `${AGENTS_INTERNAL_URL}/autonomy/status` but sends no `X-Ops-Token`, and
-  `AGENTS_INTERNAL_URL` is in neither `.env.local` nor `.env.local.example`. The
-  agents endpoint requires that header, so this returns 401/422 whenever configured.
-  The autonomy table on `/analytics` has therefore never rendered live data.
-- **A8 — `autonomy_tracker.py` bypasses the shared client** 🟡 Uses
-  `os.environ['SUPABASE_URL']` directly, raising `KeyError` instead of the friendly
-  `EnvironmentError` every other module raises.
+  `AGENTS_INTERNAL_URL` appears nowhere in `.env.local.example` — the documented var
+  for this hop is `AGENTS_API_URL`, paired with `OPS_TOKEN`. `main.py`'s
+  `/autonomy/status` is `Depends(_require_ops_token)`, so the call fails auth
+  whenever the URL *is* configured, and 503s ("not configured") when it isn't. Either
+  way the autonomy table on `/analytics` has never rendered live data.
+  **Fix:** use `AGENTS_API_URL` and send `X-Ops-Token`, as `lib/artGenerate.ts`
+  already does for `/art/generate`.
+- **A8 — `autonomy_tracker.py` bypasses the shared client** 🟡
+  `packages/agents/classifiers/autonomy_tracker.py` calls `create_client` with
+  `os.environ['SUPABASE_URL']` / `os.environ['SUPABASE_SECRET_KEY']` directly, raising
+  `KeyError` instead of the friendly `EnvironmentError` every other module raises.
 - **A9 — `ingestion/orchestrator.py` is only partly tested** 🟡 `test_watermark_advance.py`
   (2026-07-30) now drives `run_ingestion_pass` end-to-end in both write modes and
   covers the **mid-pass Stage 1 budget halt**, a **per-candidate transient error**,
@@ -311,8 +466,23 @@ as signal.
 ---
 
 ## Suggested execution order
-1. **C1–C4** — legal guardrails ("never remove") + dead analytics. Highest legal/data risk.
-2. **H1–H5** — operator-action data corruption (damage on every click).
-3. Merge **PR #10/#11**, run `cleanup_corrupted.py --apply` + `cleanup_delete_dupe_drafts.py --apply` (clears H6–H8).
-4. **M1–M5** — user-visible (dead filter, count drift, NaN score, dropped pins, data loss).
-5. Remaining Medium/Low as a hygiene sweep; bundle the DB-constraint fixes (C4, M7, M14) into one migration (010).
+
+Steps 1, 2 and 4 of the original plan are done — every Critical, every High except
+the two operator-run cleanups, and all of M1–M7 landed, with the DB-constraint
+fixes bundled into migration 010 as planned (M14 went to code normalisation
+instead of a CHECK). What remains, in priority order:
+
+1. **A7** — the autonomy proxy is the only remaining item that makes an operator
+   surface lie: `/analytics` renders no live data and has never done so.
+2. **H7/H8** — run `cleanup_corrupted.py --apply` (and
+   `cleanup_delete_dupe_drafts.py --apply`) against the live DB, or confirm they
+   already ran. Corrupt `incident_date` and stale `corroboration_count` are
+   reader-visible.
+3. **L7/L8** — pipeline safety: a circuit breaker that resets on the highest-volume
+   branch is not a circuit breaker, and `record_run` can still throw out of a pass
+   that otherwise succeeded.
+4. **M15** — the migration runner. Now at 015 with no ledger, and a skipped file
+   never announces itself: 009/011 surface as silently rejected inserts, 013 as an
+   anon write hole quietly left open.
+5. Remaining Medium/Low as a hygiene sweep: M8, M16's `didMount`, L3, L6, L9, plus
+   A6, A8, A9 and A12's judgement counter.

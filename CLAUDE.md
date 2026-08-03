@@ -6,9 +6,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Yishun Again is a satirical, semi-autonomous incident archive for Yishun, Singapore. An AI agent pipeline scrapes sources, drafts incident write-ups, and queues them for operator review in a private CMS (War Room). The operator approves, edits, or rejects each draft before it goes live.
 
-**Core constraint:** Every published incident must link to a verifiable source. No private individuals unless named in MSM or Reddit. No political content. Ever.
+**Core constraint:** Every published incident must link to a verifiable source,
+and that link must point at the **publisher** — never an aggregator or a redirect
+wrapper. No private individuals unless named in MSM. No political content. Ever.
+
+(Reddit used to appear in that second sentence alongside MSM. It was reclassified
+as a `signal` in July 2026 — user-generated discussion is not verifiable
+journalism — so it can no longer name anyone. MSM is the sole authority for both
+the citation and the event date.)
 
 Full spec: `docs/YishunAgain_TechSpec_v1_9.md`
+
+> **On documentation drift.** This file and `docs/` are read by agents as fact.
+> A stale claim here does not merely mislead — it gets acted on. Two lived
+> examples: every TechSpec from v1.5 said `sembawang` had been removed from the
+> Yishun keywords while the code still contained it, and this file described art
+> generation as "dormant by design" while it was running on the operator approve
+> path. **If you change behaviour, change the doc in the same commit.** If you
+> find a claim you cannot verify against the code, delete it rather than softening
+> it — an unverifiable claim is worse than a missing one.
 
 ---
 
@@ -17,11 +33,13 @@ Full spec: `docs/YishunAgain_TechSpec_v1_9.md`
 ```
 yishun-again/
 ├── apps/
-│   ├── web/          # Next.js 14 (App Router) — public site, Vercel deploy
-│   └── war-room/     # Next.js 14 (App Router) — private operator CMS
+│   ├── web/          # Next.js 16 (App Router) — public site, Vercel deploy
+│   └── war-room/     # Next.js 16 (App Router) — private operator CMS
 ├── packages/
-│   ├── agents/       # FastAPI 0.110.x + Python 3.11 agent pipeline
+│   ├── agents/       # FastAPI 0.115.x + Python 3.11 agent pipeline
 │   │   ├── scrapers/       # Per-source scraping agents (RSS-first)
+│   │   ├── ingestion/      # Live pass: sources, recency, dedup, health
+│   │   │   └── sources/    # Source adapters — get_enabled_sources()
 │   │   ├── filters/        # Stage 1 (Gemini) + Stage 2 (Claude) filters
 │   │   ├── classifiers/    # Corroboration + severity scoring
 │   │   ├── writers/        # Incident draft generation
@@ -76,7 +94,12 @@ collection (the module-level `SystemExit` aborts the run). Run them directly:
 for f in test_*.py; do ./.venv/Scripts/python.exe "$f" || echo "FAIL $f"; done
 ```
 
-All are offline — no network, no API keys, no DB.
+All are offline — no network, no API keys, no DB. There are **30 test files** and
+they all pass as of 2026-08-02; a red file is a real regression, not a flake.
+
+Note for Windows: the console codepage is cp1252, so a `check()` label containing
+CJK or Tamil raises `UnicodeEncodeError` before the assertion result prints. Keep
+test *names* ASCII even when the strings under test are not.
 
 ### Deployment
 
@@ -120,21 +143,36 @@ Execute strictly in sequence — do not skip ahead:
 
 ## Tech Stack
 
+Versions below are the actual pins (`apps/*/package.json`,
+`packages/agents/requirements.txt`), not aspirations. Check there before
+trusting this table.
+
 | Layer | Tool | Version |
 |---|---|---|
-| Frontend | Next.js App Router | 14.x |
+| Frontend | Next.js App Router | 16.2.x (React 19.2.x) |
 | Map | MapLibre GL JS | 3.x |
 | Database | Supabase (Postgres + REST) | Latest |
 | Image storage | Cloudflare R2 | — |
 | Admin auth | Cloudflare Access | Free tier |
-| Backend | FastAPI | 0.110.x / Python 3.11+ |
+| Backend | FastAPI | 0.115.14 / Python 3.11 |
 | Agent hosting | Google Cloud Run | asia-southeast1 |
 | Stage 1 filter | Gemini API | gemini-3.1-flash-lite |
 | Stage 2 writer | Anthropic API | claude-haiku-4-5-20251001 (classify **and** write) |
-| Orchestrator | LangGraph | 0.1.x |
+| Orchestrator | *hand-rolled* — see below | — |
 | Image gen | Gemini image API | gemini-3.1-flash-lite-image |
-| Scheduling | APScheduler | 3.x (embedded in FastAPI) |
+| Scheduling | Cloud Scheduler (APScheduler is off in prod) | — |
 | CSS | Tailwind CSS | 3.x |
+
+**There is no LangGraph orchestrator.** `langgraph==0.4.0` is pinned in
+`requirements.txt` but **nothing in the codebase imports it** — no `langgraph`,
+no `StateGraph`, anywhere in first-party code. Orchestration is hand-rolled in
+`ops/daily.py` (the daily chain) and `ingestion/orchestrator.py` (the pass).
+This table used to claim "LangGraph 0.1.x" as the orchestrator, which was wrong
+twice over: wrong version, and wrong about it being used at all. Treat the pin
+as an unused dependency, and do not write code that assumes a graph runtime.
+
+FastAPI is pinned to 0.115.14 rather than the 0.110.x this table used to name —
+bumped for the starlette CVE-2024-47874 fix.
 
 ---
 
@@ -238,10 +276,15 @@ Two things that are easy to get wrong:
 **Stage 2 (Claude Haiku):** Classification, draft writing, severity scoring. Returns
 JSON — see spec §4.3 for the schema, with three deltas since:
 
-- **`pixel_art_prompt` is no longer generated.** The War Room approve route
-  hardcodes `pixel_art_url: null`, so it was written on every draft and read by
-  nothing. The DB column and `pixel_art_url` are untouched — art generation is
-  dormant by design, not deleted.
+- **`pixel_art_prompt` is no longer generated by Stage 2.** It was written on
+  every draft and read by nothing, because the art prompt is composed later, at
+  approve time. **Art generation itself is LIVE, not dormant** — this bullet used
+  to claim the approve route "hardcodes `pixel_art_url: null`", which is false.
+  `apps/war-room/app/api/queue/[id]/approve/route.ts` imports
+  `generateIncidentArt` from `@/lib/artGenerate`, calls it *before* the insert,
+  and writes `pixel_art_url`, `image_status`, `image_prompt` and
+  `image_attempts`. `lib/artGenerate.ts` POSTs to the agents backend
+  `/art/generate` with `X-Ops-Token`. See `docs/ART_PIPELINE.md`.
 - **The write model is Haiku**, not Sonnet (`STAGE2_WRITE_MODEL` to roll back).
   Justified by an eval over 30 real inputs; Haiku matched Sonnet on ungrounded
   specifics on the multi-source half and on format compliance.
@@ -260,13 +303,49 @@ the citation and the date. Three tiers:
 - Signal + MSM corroboration → standard incident; the signal count shows as "Forum buzz"
 - MSM only → standard incident, no signal reference
 
-**Scraping:** 15 sources are wired into the live pipeline via `ingestion/sources/`
-(`get_enabled_sources()`): **RSS-dated MSM** — CNA, Mothership, Straits Times,
-MustShareNews, The Independent, Yahoo; **HTML-scraped MSM** — AsiaOne, Stomp,
-Zaobao, Shin Min, Berita Harian, Tamil Murasu, whose listing pages carry no date,
-so `scrapers.resolve_published_at()` reads it from the article (URL path, else
-meta tags); **corroboration** — Google News RSS, the main discovery channel in
-practice; **signal** — Reddit (r/singapore, r/singaporeraw) and EDMW/HWZ.
+**Scraping:** 25 sources are wired into the live pipeline via `ingestion/sources/`
+(`get_enabled_sources()`), in three tiers.
+
+**PRIMARY — 12 MSM scrapers** reading each outlet's current feed or listing page:
+*RSS-dated* — CNA, Mothership, Straits Times, MustShareNews, The Independent,
+Yahoo; *HTML-scraped* — AsiaOne, Stomp, Zaobao, Shin Min, Berita Harian, Tamil
+Murasu, whose listing pages carry no date, so `scrapers.resolve_published_at()`
+reads it from the article (URL path, else meta tags).
+
+**DISCOVERY — 11 adapters** added 2026-08-02, the wider net behind the spine:
+- `news_sitemap.py` (9): each publisher's **own Google-News sitemap** — CNA,
+  Straits Times, Yahoo, AsiaOne, Stomp, Zaobao, Berita Harian, Tamil Murasu, The
+  Independent. Canonical URLs, real publication dates, and a far bigger window
+  than the front-page feed: Straits Times serves **462 sitemap entries against 44
+  in its RSS**. Sitemaps carry no body, so a keyword-matching entry has its
+  article fetched — recency is applied *before* that fetch.
+- `wp_search.py` (2): MustShareNews and The Independent answer
+  `?s=yishun&feed=rss2` with a dated RSS feed of search results over their whole
+  archive.
+
+**SIGNAL — 2**: Reddit (r/singapore, r/singaporeraw) and EDMW/HWZ.
+
+Not covered, and why: **Mothership** has no news sitemap (`/sitemap.xml` just
+re-serves `/feed/`) and ignores `?s=`, so its 10-entry front-page feed is the
+ceiling. **Shin Min** serves no robots.txt and no sitemap at all.
+
+> **Google News RSS was removed on 2026-08-02. Do not add it, or any other
+> aggregator, back.** It had been the dominant discovery channel since the
+> original ingestion build (`f27066c`, 2026-06-18). Its entries link to
+> `news.google.com/rss/articles/<blob>` wrappers which do **not** HTTP-redirect —
+> decoding one needs a reverse-engineered `batchexecute` RPC that Google rotates —
+> so when resolution failed the code stored the **wrapper** as the article URL.
+> That breaks three things at once: `Candidate.url` is contractually "canonical,
+> not a wrapper" because **dedupe matches on URL**, so the wrapper matched nothing
+> and the pipeline could not see it already held the story; the wrapper then
+> landed in `war_room_queue.source_url` and `source_urls`, citing a redirect
+> instead of the outlet that did the reporting; and `source_allowlist` cannot
+> classify news.google.com, so every such row was held back as
+> `unapproved_source_domain`. All three fired in production on 2026-08-01 — two
+> queue rows proposing "updates" to incidents already held, each a duplicate of a
+> Stomp article ingested cleanly the day before. See
+> `ingestion/sources/news_sitemap.py` for the full account, and
+> `source_allowlist.REDIRECT_DOMAINS` for the net now under it.
 
 A source must supply `published_at` to be registered: a dateless candidate
 bypasses the recency watermark, is re-processed by Stage 1/2 every pass, and
@@ -278,11 +357,29 @@ via `source_allowlist.is_signal_source()` — never a plain `== 'edmw'`, because
 `scrape_edmw` and `scrape_reddit` both emit the canonical `'signal'` and that vocabulary mismatch
 silently breached the guardrail once already (`92d6305`).
 
-`google_news_rss` filters candidates on the RSS entry's own `pubDate` **before**
-resolving Google redirect wrappers. Resolving first meant ~600 wasted HTTP
-round-trips per pass on entries the recency filter then discarded — that alone
-consumed the entire pass budget and starved the sources queued behind it
-(909 s → 59 s). `MAX_RESOLVES_PER_FETCH` caps a cold start.
+**What counts as Yishun is `YISHUN_KEYWORDS` in `scrapers/__init__.py`, and the
+scope rule is: the Yishun planning area and things inside it, nothing adjacent.**
+The list is `yishun`, `khatib`, `chong pang`, `northpoint`, `khoo teck puat`.
+Matching is plain case-insensitive substring, so bare `yishun` already covers
+"Yishun Ring Road", "Yishun Ave 6" and friends — only names that do *not* contain
+"yishun" need their own entry.
+
+- **Sembawang is not Yishun.** It is a separate URA planning area. It sat in this
+  list from the first commit (`e71d976`, 2026-06-06) until 2026-08-02 while every
+  TechSpec from v1.5 carried `# NOTE: "sembawang" removed — separate town, not
+  Yishun`. The spec was updated, the code never was, and nothing tested it, so the
+  two disagreed for two months and it kept pulling Sembawang stories into the
+  queue for the operator to reject by hand. Do not re-add it, or Woodlands,
+  Admiralty, Canberra, or Sembawang Hills.
+- **Khatib and Chong Pang are Yishun** — both are subzones of the planning area.
+  Khatib had never been in the list at all.
+- **`nee soon` is deliberately excluded** from the English list. In news copy it
+  reads as the constituency (Nee Soon GRC) far more often than the place, so it
+  imports exactly the political content guardrail #4 must reject; every genuine
+  Yishun story in a live sample already matched on `yishun`. It is retained in the
+  Malay list, where it is a place-name.
+
+Guard: `test_yishun_geography.py`.
 
 Scrapers **raise** `ScraperError`/`ScraperBlocked` on a source-level failure
 rather than returning `[]`; the adapters translate those to
@@ -308,13 +405,26 @@ goes quiet with it. `scraper_health` powers the War Room health views (7-day
 window) and `ops/maintenance.py`'s error digest. Keep it that way: if you need a
 new *alert*, base it on run history.
 
+**A zero-item run is the normal case, and `ZERO_STREAK_WARNING` respects that.**
+`items_found` counts candidates that survived the Yishun keyword filter, not
+articles the source served, so one outlet publishing nothing about one town for
+several days running is unremarkable — Tamil Murasu or Berita Harian can go a
+month. The threshold was 3 until 2026-08-02, which made `warning` the *resting*
+state of the fleet: 9 of 15 sources sat there permanently, every one reading
+"0 items for 3 consecutive runs", and the health panel read as a dead fleet when
+nothing had failed. It is now **30** — a month of genuine silence. This is a
+display signal only; real failures are `status='error'`, and outage alerting
+lives in `ops/supervisor.py` off `pipeline_run_history`.
+
 ---
 
 ## Database
 
 Supabase, `public` schema. RLS enabled on all tables — public reads only, all writes via `SUPABASE_SECRET_KEY` from agents backend only.
 
-Key tables: `incidents`, `sources`, `war_room_queue`, `utm_events`, `training_signals`, `chaos_index_snapshots`
+Key tables: `incidents`, `sources`, `war_room_queue`, `utm_events`,
+`training_signals`. (`chaos_index_snapshots` exists but is **never written** —
+see the Chaos Index section.)
 
 Full schema with exact SQL: `docs/YishunAgain_TechSpec_v1_9.md` §3.
 
@@ -328,11 +438,32 @@ scraped. `type='msm'` rather than `'reference'` is deliberate:
 silently drop court judgments and police releases as citations.
 
 **Source allowlist** (`classifiers/source_allowlist.py`): every `source_url` is
-checked against this table. A `type='signal'` domain is **removed** (guardrail
-#2); a domain that is unknown or not `approved_by_operator` is **kept and
-flagged** in `raw_content._source_allowlist` for operator review — stripping it
-could take an incident's last source and break guardrail #1. Matching is
-suffix-aware, so `cnalifestyle.channelnewsasia.com` inherits CNA's approval.
+checked against this table. **Three rules, deliberately different in severity** —
+`classify()` returns `redirect` | `signal` | `approved` | `unapproved`:
+
+| Verdict | Action | Why |
+|---|---|---|
+| `redirect` | **Removed** unconditionally | A citation must point at the publisher, not a wrapper |
+| `signal` | **Removed** unconditionally | Guardrail #2 |
+| `unapproved` | **Kept and flagged** in `raw_content._source_allowlist` | Stripping it could take an incident's last source and break guardrail #1 |
+
+`redirect` is checked **first and does not consult the sources table**, so the
+rule cannot be defeated by someone adding `news.google.com` to `sources`.
+`REDIRECT_DOMAINS` covers news.google.com, google.com, feedproxy.google.com and
+the common shorteners (t.co, bit.ly, apple.news, …). `check_source_urls()`
+returns a `dropped_redirect` list alongside `dropped_signal`, and
+`consolidation/queue_row.py` also substitutes a real publisher URL when the
+candidate's own `source_url` is a wrapper — that field is what the War Room
+renders and what `dedup.is_duplicate` matches on, and it used to be copied across
+with no check at all.
+
+Dropping can empty `kept`. That is intentional and not special-cased: a candidate
+whose only citation was a wrapper has no verifiable source, which is precisely
+what guardrail #1 exists to catch. It lands in the queue as unverified, like a
+signal-only candidate, and waits for an operator to attach a real one.
+
+Matching is suffix-aware throughout, so `cnalifestyle.channelnewsasia.com`
+inherits CNA's approval — and `rss.news.google.com` inherits the redirect block.
 
 **Migrations are hand-applied in the Supabase SQL Editor (no runner).** Apply in
 order; the live DB depends on `006_phase1_apply_now.sql` + `007` + `009` having all
@@ -373,6 +504,13 @@ table). It also removes the two reddit URLs that 005 seeded into
 `incidents.source_urls` (guardrail #2 breach once 012 reclassified reddit as
 signal) and decrements those rows' `corroboration_count`. `tools/rls_audit.py`
 now covers both tables.
+
+**014 + 015 (image status)** are load-bearing for the live art pipeline.
+`014_image_status.sql` adds `incidents.image_status`, `image_prompt` and
+`image_attempts`; `015_image_status_check.sql` adds the CHECK constraining the
+status vocabulary. Without 014 the War Room rectify queue errors out — it selects
+those columns directly. Art generation runs on the operator approve path, so
+these are not optional.
 
 **RLS note:** `incidents` anon reads are filtered to `is_published = TRUE`
 (`anon_read_published_incidents`), so the **publishable key cannot see drafts at all** —
@@ -428,10 +566,21 @@ under-count by the number of unpublished drafts.
 >   operator-visible reject marker (QA C1). Since 2026-07-30 it also **alerts** —
 >   marker, operator email and a `warning` `agent_events` row — because a
 >   silently-zeroed row was indistinguishable from any other low-confidence row.
+>   **Since 2026-08-02 the guardrail is evaluated BEFORE field validation.** It
+>   used to sit below the classification coercion, and
+>   `result["classification"].lower()` threw `AttributeError` on
+>   `"classification": null` — which is what the model returns on a political
+>   story, because it is being told to reject rather than categorise. The
+>   candidate died on an exception, so confidence was never forced to 0, the
+>   marker was never prepended, and neither the email nor the `agent_events` row
+>   ever fired. The guardrail was unreachable for a subset of exactly the content
+>   it exists to catch. **Never move the political check back below field
+>   validation.**
 > - **#3** still has no programmatic check — operator-gate only.
 >
 > Regression guards: `test_stage2_guardrails.py`, `test_political_alert.py`,
-> `test_source_allowlist.py`. Strengthen these freely; never weaken them.
+> `test_source_allowlist.py`, `test_yishun_geography.py`. Strengthen these freely;
+> never weaken them.
 
 ---
 
@@ -458,10 +607,16 @@ removed in July 2026 and replaced with `gemini-3.1-flash-lite-image`. TechSpec
 
 ## Chaos Index
 
-Computed on every new publish, stored in `chaos_index_snapshots`.
+**Computed on read, not on publish. Nothing writes `chaos_index_snapshots`.**
+This section used to say the score was "computed on every new publish, stored in
+`chaos_index_snapshots`" — it never was. The table exists (migration 001) and the
+only reference to it anywhere in the codebase is a *read* in
+`orchestrator/herald_agent.py`, which needs ≥ 2 rows to fire, so that milestone
+can never trigger. The live score is calculated on every request by
+`computeChaosScore()` in `apps/web/lib/utils.ts`, used by `/api/chaos` and the SSR
+homepage. If you want snapshots, you have to build the writer.
 
-**Per-incident points** (unchanged — these are what Stage 2 stores as
-`chaos_contribution`):
+**Per-incident points** (these are what Stage 2 stores as `chaos_contribution`):
 - Dagger: `severity × 3.0`
 - Clown: `severity × 1.5`
 - Heart: `severity × -1.0`

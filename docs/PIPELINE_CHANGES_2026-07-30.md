@@ -1,6 +1,9 @@
 # Cost + Classification Programme — 2026-07-30
 
-**Status:** Landed, tests green (23/23 files), **not yet deployed**.
+**Status, as at 2026-07-30:** Landed, tests green (23/23 files then), **not
+deployed at the time of writing**. Everything dated below is a snapshot of that
+day; the suite has since grown to **30 files, all passing**, and later changes to
+this code are flagged inline as forward notes rather than folded into the record.
 **Companion to:** `AUTONOMY.md` (§5b, §5c are new), `INGESTION_CHANGELOG.md`, `QA_BACKLOG.md`.
 
 Everything below was measured against the live archive, not assumed. Where a
@@ -100,8 +103,11 @@ Consolidation, measured per pool size:
 ### Retired but still defined
 
 `CLUSTER_MAX_JUDGES`, `MAX_JUDGEMENTS_PER_CANDIDATE` and `EARLY_EXIT_CONFIDENCE`
-are **no longer read anywhere**. They remain defined (and env-settable) so an
-existing deployment config is not an error. `test_consolidation_cost.py` asserts
+are **no longer read on any live path**. The two consolidation constants are not
+imported by `check.py` at all; `CLUSTER_MAX_JUDGES` survives only as the default
+argument of `cluster_with_confirmation`, which is itself retained but unused. All
+three remain defined (and env-settable) so an existing deployment config is not
+an error. `test_consolidation_cost.py` asserts of the two consolidation constants
 both that they still exist *and* that `check.py` no longer imports them — so a
 future agent cannot quietly reintroduce a cap and think it is doing something.
 
@@ -322,6 +328,19 @@ the operator never learned it existed.
 `DISABLE_POLITICAL` are all absent) and that nothing in the alert path can write
 back to `confidence`.
 
+> **Forward note (2026-08-02) — none of the above could fire on part of its own
+> target.** As shipped here, `_classify` validated its fields *before* reading
+> `political`, and `result["classification"].lower()` raised `AttributeError`
+> whenever the model returned `"classification": null` — which is exactly what it
+> tends to do on a political story, because the prompt tells it to reject rather
+> than categorise. The candidate died on that exception, so confidence was never
+> forced to 0, the reject marker was never prepended, and neither the operator
+> email nor the `agent_events` warning row was ever written. Observed live on an
+> MP-resignation article. The guardrail block now runs **first** in `_classify`,
+> ahead of any validation that can raise, and a political row whose classification
+> is unusable is given a placeholder category so the reject path can complete.
+> Guard: `test_stage2_guardrails.py`.
+
 ---
 
 ## 7. Truncation guard on every LLM call
@@ -422,6 +441,19 @@ re-fetch, and it was declining to move. Those articles were re-fetched,
 re-Stage-1'd (Gemini), re-drafted (two Haiku calls) and re-judged by consolidation
 on **every daily pass**, until an unrelated candidate from the same source happened
 to drag the watermark past them.
+
+> **Forward note (2026-08-02): `source_url` is no longer copied from the candidate
+> unchecked.** The claim above still holds — the row carries exactly one headline
+> URL, the primary member's — but `build_queue_row` now tests it against
+> `source_allowlist.is_redirect_domain()` first and substitutes the first surviving
+> real publisher URL when the primary is a redirector, flagging it in
+> `raw_content._source_allowlist.redirect_source_url` either way. The trigger was
+> two live rows on 2026-08-01 whose visible source was a
+> `news.google.com/rss/articles/<blob>` wrapper: dedup matches on URL, so a wrapper
+> matched nothing and proposed an update to a story the archive already held. The
+> aggregator that produced them (`ingestion/sources/google_news_rss.py`) has been
+> deleted; discovery is now the publishers' own news sitemaps and WordPress search
+> feeds, both of which emit canonical publisher URLs.
 
 ### The fix: `decided` vs `unresolved`, in `ingestion/watermark.py`
 
@@ -549,6 +581,19 @@ none reject anything.
   the candidate — but its per-candidate portion still varies, so only the system
   prompt is stable, and it is still far below 4096 tokens.
 
+  > **Forward note (2026-08-02).** The batched shape named at the end of that
+  > bullet was then measured properly and rejected too; the verdict is unchanged
+  > but the reasoning is now recorded against the *live* code, in the comment
+  > block above `UPDATE_MATCH_THRESHOLD` in `consolidation/rules.py`. Read that,
+  > not this bullet, before re-attempting A2. Its four findings: the prefix is not
+  > byte-identical across candidates *by construction* (`check.py` keyword-filters
+  > and ranks the pool per candidate — 39 of 54 records for one measured
+  > candidate); the filtered prompt measures 3,889 tokens against Haiku 4.5's
+  > 4,096-token minimum, and the full unfiltered pool only 5,259; the pass averages
+  > 3.0 candidates against a ~2-call break-even; and A2's premise — "~87 Haiku
+  > calls in 3 minutes" — expired when batching collapsed that to one call per
+  > candidate.
+
 - **`max_tokens=2048` was never actually a problem** — 763/2048 observed. It was
   guarded (§7) rather than changed.
 
@@ -655,7 +700,7 @@ chose them. It is applied.
 ## How to verify after deploying
 
 ```bash
-# 1. Suite (23 files, all must pass)
+# 1. Suite (30 files today, all must pass — standalone scripts, not pytest)
 cd packages/agents && for f in test_*.py; do ./.venv/Scripts/python.exe "$f" || echo "FAIL $f"; done
 
 # 2. Security gate — exits 1 if any ops table is publicly readable

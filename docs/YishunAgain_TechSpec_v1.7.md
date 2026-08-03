@@ -1,3 +1,31 @@
+> [!WARNING]
+> **SUPERSEDED — HISTORICAL RECORD ONLY. DO NOT BUILD FROM THIS FILE.**
+>
+> The current spec is [`YishunAgain_TechSpec_v1_9.md`](YishunAgain_TechSpec_v1_9.md),
+> and `CLAUDE.md` at the repo root outranks even that for anything about how the
+> code behaves today.
+>
+> This file is kept because the reasoning in it is worth reading, not because its
+> claims are true. Known ways it is now wrong:
+>
+> - **Source inventory.** Google News RSS was removed on 2026-08-02 and replaced
+>   by publisher news-sitemap and WordPress-search adapters. The live pipeline
+>   runs 25 sources, not 15.
+> - **Yishun keywords.** These files carry the note that `"sembawang"` was
+>   removed — but the code still contained it until 2026-08-02. The list is now
+>   `yishun`, `khatib`, `chong pang`, `northpoint`, `khoo teck puat`.
+> - **Tech stack.** Next.js is 16 (not 14), FastAPI 0.115.x (not 0.110.x), and
+>   LangGraph is pinned but imported nowhere — orchestration is hand-rolled.
+> - **§9 art pipeline.** The SDXL/Modal/LoRA build was torn down in July 2026
+>   and replaced with the Gemini image API.
+> - **Chaos Index.** It is computed on read in the frontend; nothing has ever
+>   written `chaos_index_snapshots`.
+>
+> Several of these files also carry a stale `**Version:** 1.0` header line that
+> disagrees with their own filename. Trust the filename.
+
+---
+
 # YISHUN AGAIN — TECHNICAL SPECIFICATION
 ## For Coding Agents / Developers
 **Version:** 1.7 | **Phase:** 1 — Foundation Build
