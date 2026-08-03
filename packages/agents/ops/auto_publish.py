@@ -356,7 +356,7 @@ def _publish(item: dict, client, run: AgentRun, budget=None) -> str | None:
     latitude = longitude = None
     try:
         from classifiers.geocoding import geocode_incident
-        coords = geocode_incident(block_number, area_name, title)
+        coords = geocode_incident(block_number, area_name, title, summary)
         if coords:
             latitude, longitude = coords
     except Exception as exc:                      # noqa: BLE001

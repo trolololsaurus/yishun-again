@@ -7,7 +7,7 @@ interface Props {
     'slug' | 'title' | 'classification' | 'custom_label' | 'severity' | 'corroboration_count'
     | 'published_at' | 'incident_date' | 'area_name' | 'is_milestone'
     | 'is_developing' | 'update_count' | 'first_reported_at'
-    | 'source_timeline' | 'latest_source_role'
+    | 'source_urls' | 'source_timeline' | 'latest_source_role'
   >
   style?: React.CSSProperties  // passed from react-window
 }
@@ -16,11 +16,18 @@ export function IncidentCard({ incident, style }: Props) {
   const {
     slug, title, classification, custom_label, severity, corroboration_count, published_at, incident_date,
     area_name, is_milestone, is_developing, update_count, first_reported_at,
-    source_timeline, latest_source_role,
+    source_urls, source_timeline, latest_source_role,
   } = incident
 
+  // Count the SAME array the detail page lists under "Sources", so the feed and
+  // the incident can never disagree. corroboration_count is the fallback for
+  // any caller that did not select source_urls.
+  const sourceCount = Array.isArray(source_urls)
+    ? new Set(source_urls.filter(Boolean)).size
+    : (corroboration_count ?? 1)
+
   // Lightning bolts grow with corroboration: 2 sources → ⚡, 3 → ⚡⚡, etc.
-  const lightning = hypeFromSources(corroboration_count)
+  const lightning = hypeFromSources(sourceCount)
 
   // The real conclusion date lives in source_timeline (verdict/sentencing/
   // appeal entry) — NOT incident_date, which is the event date and equals
@@ -65,6 +72,11 @@ export function IncidentCard({ incident, style }: Props) {
           <span className="font-body text-text-secondary" style={{ fontSize: '14px' }}>
             <span title={severityTooltip(severity)}>{severityDiamonds(severity)}</span>
             {lightning > 0 && <> <span title={HYPE_TOOLTIP}>{hypeMeter(lightning)}</span></>}
+          </span>
+          {/* The count in words, not just bolts to be counted by eye — this is
+              the number the incident page prints under "Sources". */}
+          <span className="font-body text-text-secondary" style={{ fontSize: 12 }} title={HYPE_TOOLTIP}>
+            {sourceCount} source{sourceCount !== 1 ? 's' : ''}
           </span>
         </div>
 

@@ -3,7 +3,7 @@ import { Suspense }      from 'react'
 import { notFound }      from 'next/navigation'
 import Link              from 'next/link'
 import { supabase }      from '@/lib/supabase'
-import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, fmtDate, formatDuration, formatDurationGap, lastVerdictEntry, verdictNoun, collapseTimelineByDate } from '@/lib/utils'
+import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, fmtDate, formatDuration, formatDurationGap, lastVerdictEntry, verdictNoun, collapseTimelineByDate, sharedLocationLabel, dateFromUrl, toParagraphs } from '@/lib/utils'
 import { ShareButton }   from './ShareButton'
 import { UTMLogger }     from '@/components/UTMLogger'
 import { SITE_URL }      from '@/lib/site'
@@ -25,7 +25,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
   const siteUrl   = SITE_URL
   const ogTitle   = data.seo_title ?? data.title ?? slug
-  const ogDesc    = (data.seo_description ?? (data.summary ?? '').slice(0, 160))
+  // Summaries now carry paragraph breaks — collapse them before they reach a
+  // meta tag, where a raw newline is just noise in the snippet.
+  const ogDesc    = (data.seo_description ?? (data.summary ?? '').replace(/\s+/g, ' ').trim().slice(0, 160))
   const ogImage   = data.pixel_art_url
     ? [{ url: data.pixel_art_url, width: 1200, height: 630 }]
     : [{ url: `${siteUrl}/og-default.jpg`, width: 1200, height: 630 }]
@@ -85,7 +87,7 @@ export default async function IncidentPage({ params }: Props) {
     )
     const { data: relatedData } = await supabase
       .from('incidents')
-      .select('id,slug,title,classification,custom_label,incident_date')
+      .select('id,slug,title,classification,custom_label,incident_date,area_name,block_number')
       .in('id', relatedIds)
       .eq('is_published', true)
 
@@ -96,6 +98,8 @@ export default async function IncidentPage({ params }: Props) {
       classification: r.classification,
       custom_label:   r.custom_label,
       incident_date:  r.incident_date,
+      area_name:      r.area_name,
+      block_number:   r.block_number,
       link_type:      linkRows.find(
         l => l.incident_a === r.id || l.incident_b === r.id
       )?.link_type ?? 'related',
@@ -106,6 +110,13 @@ export default async function IncidentPage({ params }: Props) {
     ? incident.source_timeline as SourceTimelineEntry[]
     : []
 
+  // ONE array backs the "Corroborated by N sources" line, the lightning meter
+  // and the rendered source list, so the number can never disagree with the
+  // links underneath it. `corroboration_count` stays the DB column (War Room,
+  // auto-publish, training signals) but is no longer what the page counts.
+  const sourceUrls = [...new Set((incident.source_urls ?? []).filter(Boolean))]
+  const sourceCount = sourceUrls.length
+
   const shareUrl    = `${siteUrl}/incidents/${slug}?utm_source=share&utm_medium=share_card&utm_campaign=${incident.classification}`
   const incidentUrl = `${siteUrl}/incidents/${slug}`
 
@@ -113,7 +124,7 @@ export default async function IncidentPage({ params }: Props) {
     '@context':    'https://schema.org',
     '@type':       'NewsArticle',
     headline:      incident.title,
-    description:   incident.summary.slice(0, 160),
+    description:   incident.summary.replace(/\s+/g, ' ').trim().slice(0, 160),
     datePublished: incident.incident_date,
     url:           incidentUrl,
     image:         incident.pixel_art_url ?? `${siteUrl}/og-default.jpg`,
@@ -149,13 +160,13 @@ export default async function IncidentPage({ params }: Props) {
         >
           {severityDiamonds(incident.severity)}
         </span>
-        {hypeFromSources(incident.corroboration_count) > 0 && (
+        {hypeFromSources(sourceCount) > 0 && (
           <span
             className="font-body text-amber-lt"
             style={{ fontSize: '14px' }}
             title={HYPE_TOOLTIP}
           >
-            {hypeMeter(hypeFromSources(incident.corroboration_count))}
+            {hypeMeter(hypeFromSources(sourceCount))}
           </span>
         )}
         {incident.is_milestone && (
@@ -178,7 +189,7 @@ export default async function IncidentPage({ params }: Props) {
         <span>{fmtDate(incident.incident_date)}</span>
         {incident.area_name && <span>{incident.area_name}</span>}
         {incident.block_number && <span>{incident.block_number}</span>}
-        <span>Corroborated by {incident.corroboration_count} source{incident.corroboration_count !== 1 ? 's' : ''}</span>
+        <span>Corroborated by {sourceCount} source{sourceCount !== 1 ? 's' : ''}</span>
       </div>
 
       {/* Pixel art */}
@@ -197,10 +208,20 @@ export default async function IncidentPage({ params }: Props) {
         </div>
       )}
 
-      {/* Summary */}
-      <p className="font-body text-text-primary leading-relaxed mb-6" style={{ fontSize: '16px' }}>
-        {incident.summary}
-      </p>
+      {/* Summary — paragraphed for readability. Honours the writer's own blank
+          lines; falls back to sentence grouping for the pre-2026-08 rows that
+          were stored as one unbroken block. No words are changed either way. */}
+      <div className="mb-6">
+        {toParagraphs(incident.summary).map((para, i) => (
+          <p
+            key={i}
+            className="font-body text-text-primary leading-relaxed"
+            style={{ fontSize: '16px', marginTop: i === 0 ? 0 : '1em' }}
+          >
+            {para}
+          </p>
+        ))}
+      </div>
 
       {/* Stats row */}
       {((incident.deaths ?? 0) > 0 || (incident.injuries ?? 0) > 0) && (
@@ -214,38 +235,49 @@ export default async function IncidentPage({ params }: Props) {
         </div>
       )}
 
-      {/* Source links — dated and sorted earliest-first */}
+      {/* Source links — every link carries its article's publication date,
+          sorted earliest-first. The date is resolved in a fixed order:
+            1. the `source_timeline` entry for that URL (authoritative — it is
+               the date the publisher reported, recorded at ingestion), then
+            2. the date the publisher stamped into the URL path itself.
+          A link that resolves to neither renders undated rather than borrowing
+          the incident date, which is the EVENT date and routinely differs from
+          when a given outlet ran the story. */}
       {(() => {
-        // Build url→date lookup from source_timeline
         const urlDate = new Map<string, string>()
         for (const entry of timeline) {
-          if (entry.source_url && !urlDate.has(entry.source_url)) {
+          if (entry.source_url && entry.date && !urlDate.has(entry.source_url)) {
             urlDate.set(entry.source_url, entry.date)
           }
         }
-        // Sort: URLs with a known date go first (earliest), undated URLs at end
-        const sorted = [...(incident.source_urls ?? [])].sort((a, b) => {
-          const da = urlDate.get(a) ?? 'zzzz'
-          const db = urlDate.get(b) ?? 'zzzz'
-          return da.localeCompare(db)
-        })
+        const dateFor = (url: string): string | null =>
+          urlDate.get(url) ?? dateFromUrl(url)
+
+        // Dated links first (earliest → latest); undated ones sink to the end.
+        const sorted = [...sourceUrls].sort((a, b) =>
+          (dateFor(a) ?? 'zzzz').localeCompare(dateFor(b) ?? 'zzzz')
+        )
+        const undated = sorted.filter(u => dateFor(u) === null).length
+
         return (
           <div className="mb-6">
             <div className="font-body text-text-secondary mb-2 uppercase" style={{ fontSize: '14px' }}>
-              Sources
+              Sources ({sourceCount})
             </div>
             <ul className="space-y-2">
               {sorted.map((url, i) => {
                 let domain = url
                 try { domain = new URL(url).hostname.replace(/^www\./, '') } catch {}
-                const date = urlDate.get(url)
+                const date = dateFor(url)
                 return (
                   <li key={i} className="flex items-baseline gap-2">
-                    {date && (
-                      <span className="font-body text-text-secondary flex-none" style={{ fontSize: '12px' }}>
-                        {fmtDate(date)}
-                      </span>
-                    )}
+                    <span
+                      className="font-body text-text-secondary flex-none tabular-nums"
+                      style={{ fontSize: '12px', minWidth: '9ch' }}
+                      title={date ? 'Article publication date' : 'Publication date not recorded for this link'}
+                    >
+                      {date ? fmtDate(date) : 'Undated'}
+                    </span>
                     <a
                       href={url}
                       target="_blank"
@@ -259,6 +291,12 @@ export default async function IncidentPage({ params }: Props) {
                 )
               })}
             </ul>
+            {undated > 0 && (
+              <div className="font-body text-text-secondary mt-2" style={{ fontSize: '11px' }}>
+                {undated} of {sourceCount} link{undated !== 1 ? 's' : ''} {undated !== 1 ? 'have' : 'has'} no
+                recorded publication date.
+              </div>
+            )}
           </div>
         )
       })()}
@@ -347,7 +385,14 @@ export default async function IncidentPage({ params }: Props) {
             Related Incidents
           </div>
           <ul className="space-y-2">
-            {relatedIncidents.map(rel => (
+            {relatedIncidents.map(rel => {
+              // "Same location" alone says nothing — the whole archive is one
+              // town. Name the location the two incidents actually share,
+              // derived from their own area/block fields.
+              const where = rel.link_type === 'same_location'
+                ? sharedLocationLabel(incident, rel)
+                : null
+              return (
               <li key={rel.id}>
                 <Link
                   href={`/incidents/${rel.slug}`}
@@ -366,12 +411,19 @@ export default async function IncidentPage({ params }: Props) {
                       {fmtDate(rel.incident_date)}
                       {' · '}
                       <span className="capitalize">{rel.link_type.replace('_', ' ')}</span>
+                      {where && (
+                        <>
+                          {' — '}
+                          <span className="text-amber-lt">{where}</span>
+                        </>
+                      )}
                     </div>
                   </div>
                   <span className="font-body text-text-secondary flex-none" style={{ fontSize: '14px' }}>→</span>
                 </Link>
               </li>
-            ))}
+              )
+            })}
           </ul>
         </div>
       )}

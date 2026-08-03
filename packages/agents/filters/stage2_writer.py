@@ -194,11 +194,16 @@ SUMMARY RULES (SEO-optimised — length follows the sources, not a quota):
 - Written for Google — targets long-tail queries like "yishun stabbing 2024", "yishun cat killing"
 - Do NOT use bullet points. Flowing prose only.
 - Do NOT editorialize beyond dry wit. Facts first.
+- PARAGRAPHS: separate paragraphs with a blank line (\\n\\n in the JSON string).
+  2-4 sentences each, broken where the story turns — what happened / how it
+  unfolded / the outcome or aftermath. A summary of 3 sentences or fewer stays
+  a single paragraph. This is a formatting instruction, not a length one: do
+  not add sentences to justify another paragraph.
 
 Given source content, return JSON only:
 {
   "title": string (max 120 chars, clickbait-native, Yishun must appear, not always first),
-  "summary": string (SEO prose; up to ~1600 chars, only as far as the sources support — never pad to length),
+  "summary": string (SEO prose, paragraphs separated by "\\n\\n"; up to ~1600 chars, only as far as the sources support — never pad to length),
   "classification": "heart" | "clown" | "dagger",
   "severity": integer 1-5,
   "block_number": string | null,
@@ -787,14 +792,18 @@ def write_stage2(content: dict) -> dict:
     # ── Step 3b: Geocode if lat/lon still null after Haiku ───────────────────
     lat = classification.get("latitude")
     lon = classification.get("longitude")
-    if (lat is None or lon is None) and (
-        classification.get("block_number") or classification.get("area_name")
-    ):
+    # No block/area guard: the geocoder mines an address out of the title and
+    # summary when both columns are null, and returns immediately (no HTTP) when
+    # there is nothing usable anywhere. Guarding on the columns is what left
+    # block-in-the-headline stories unpinned.
+    if lat is None or lon is None:
         try:
             from classifiers.geocoding import geocode_incident
             coords = geocode_incident(
                 classification.get("block_number"),
                 classification.get("area_name"),
+                extra_text=draft.get("title"),
+                location_text=draft.get("summary"),
             )
             if coords:
                 lat, lon = coords

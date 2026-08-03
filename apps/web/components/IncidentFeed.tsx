@@ -11,7 +11,7 @@ const PAGE_SIZE   = 20
 type Row = Pick<Incident, 'id' | 'slug' | 'title' | 'classification' | 'custom_label' | 'severity'
   | 'corroboration_count' | 'published_at' | 'incident_date' | 'area_name' | 'is_milestone'
   | 'is_developing' | 'update_count' | 'first_reported_at'
-  | 'source_timeline' | 'latest_source_role'>
+  | 'source_urls' | 'source_timeline' | 'latest_source_role'>
 
 interface Props {
   initialItems: Row[]

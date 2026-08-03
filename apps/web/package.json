@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "eslint",
+    "test": "node --test \"lib/*.test.ts\"",
     "audit": "npm audit"
   },
   "dependencies": {

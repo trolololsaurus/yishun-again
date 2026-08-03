@@ -94,8 +94,15 @@ collection (the module-level `SystemExit` aborts the run). Run them directly:
 for f in test_*.py; do ./.venv/Scripts/python.exe "$f" || echo "FAIL $f"; done
 ```
 
-All are offline — no network, no API keys, no DB. There are **30 test files** and
-they all pass as of 2026-08-02; a red file is a real regression, not a flake.
+All are offline — no network, no API keys, no DB. There are **33 test files** and
+they all pass as of 2026-08-04; a red file is a real regression, not a flake.
+
+The web app has tests too, added 2026-08-04 — `apps/web/lib/utils.test.ts`, run
+with `npm test` from `apps/web`. There is no test framework installed: it uses
+`node:test` plus Node 24's native TypeScript stripping, which is why its import
+of `./utils.ts` carries the extension. It covers the three pure helpers that
+decide what an incident page *says* (`sharedLocationLabel`, `dateFromUrl`,
+`toParagraphs`), where a silent break is a factual error on a published page.
 
 Note for Windows: the console codepage is cp1252, so a `check()` label containing
 CJK or Tamil raises `UnicodeEncodeError` before the assertion result prints. Keep
@@ -288,6 +295,13 @@ JSON — see spec §4.3 for the schema, with three deltas since:
 - **The write model is Haiku**, not Sonnet (`STAGE2_WRITE_MODEL` to roll back).
   Justified by an eval over 30 real inputs; Haiku matched Sonnet on ungrounded
   specifics on the multi-source half and on format compliance.
+- **Summaries are written in paragraphs**, separated by a blank line (`\n\n`),
+  2-4 sentences each. Added 2026-08-04; before it, every one of the 163
+  published summaries was a single unbroken block and 35 ran past 900
+  characters. The public page honours those breaks and falls back to sentence
+  grouping (`toParagraphs`) for rows written before the change — it only ever
+  inserts breaks, never edits words. Anything that puts a summary in a meta tag
+  must collapse the whitespace first.
 - **Summary length is arithmetic, not an instruction.** `min(1600, RATIO x
   non-signal source chars)`, floored at 400, interpolated into the prompt as a
   hard number. The prose "~1600 char" ceiling was measurably ignored — Sonnet
@@ -505,6 +519,21 @@ table). It also removes the two reddit URLs that 005 seeded into
 signal) and decrements those rows' `corroboration_count`. `tools/rls_audit.py`
 now covers both tables.
 
+**016 (signal URLs in `source_urls`)** — guardrail #2 cleanup, same shape as
+013's but for rows the LIVE pipeline produced rather than the 005 seeds. An
+audit on 2026-08-03 found four published incidents quoting a reddit thread as a
+citation, each counting it in `corroboration_count` (so the public "Corroborated
+by N sources" line was inflated by one). The ingestion path itself is already
+correct — `classify()` resolves reddit to `signal` today, verified — so these
+are legacy rows from before the July-2026 reclassification, not a live leak.
+§1 cleans three of them. The fourth, `yishun-remote-gambling-bust-17-arrested-jul-2026`,
+has a reddit thread as its **only** citation: removing it would leave zero
+sources and violate guardrail #1's CHECK, so §1 skips it by design and §2
+leaves the operator two commented-out choices (attach real reporting, or
+unpublish). Apply the data change with
+`packages/agents/tools/repair_display_data.py --apply`, which performs §1's
+semantics via REST — this project has no SQL runner.
+
 **014 + 015 (image status)** are load-bearing for the live art pipeline.
 `014_image_status.sql` adds `incidents.image_status`, `image_prompt` and
 `image_attempts`; `015_image_status_check.sql` adds the CHECK constraining the
@@ -604,6 +633,46 @@ CSS tokens are defined in spec §6.1. Key colours: bg `#0D0D0D`, accent red `#E7
 Map: MapLibre GL JS with OpenFreeMap "Liberty" style (`https://tiles.openfreemap.org/styles/liberty`). Keyless — no Mapbox token, no Stadia/CartoDB. `IncidentMap.tsx` reads `NEXT_PUBLIC_MAPLIBRE_STYLE` with a hardcoded fallback to the same Liberty URL (`||`, so an empty-string env var also falls back), so the map can never be a single point of failure if the var is unset. A set-but-wrong env var overrides the fallback. Because `NEXT_PUBLIC_*` vars are baked at build time, changing it requires a fresh deploy, not just a restart.
 
 **Lightning (⚡) = corroboration, not a separate hype field.** As of the June-2026 feed pass, the lightning meter is derived live from `corroboration_count`: `bolts = max(0, corroboration_count − 1)` (2 sources → ⚡, 3 → ⚡⚡, …). It grows as sources merge into one incident. The legacy `hype_meter` column is no longer read by the frontend. The **DEVELOPING** badge/banner was removed (it confused readers); `is_developing` drives the report-count line only — the feed is sorted newest-first (`incident_date DESC`, `id` tiebreaker), not by `is_developing`. The story timeline collapses same-date entries to a single node, and "time to verdict" is computed from the last verdict/sentencing/appeal entry in `source_timeline` (never `incident_date`). See `docs/FRONTEND_SPEC.md` and `lib/utils.ts` (`hypeFromSources`, `lastVerdictEntry`, `collapseTimelineByDate`).
+
+**The source count is counted, not trusted (2026-08-04).** "Corroborated by N
+sources", the lightning meter, the `Sources (N)` heading and the feed card's
+`N sources` all derive from the SAME `source_urls` array the page lists
+underneath, so the number can never disagree with the links. `corroboration_count`
+remains the DB column (War Room, auto-publish, training signals) but the public
+site no longer displays it. The feed queries therefore select `source_urls` —
+if you add another surface that renders `IncidentCard`, it must select it too or
+the card silently falls back to `corroboration_count`.
+
+**Every source link shows its article's publication date.** Resolution order:
+the `source_timeline` entry for that URL, then a date the publisher stamped into
+the URL path (`dateFromUrl` — malaymail `/2018/07/13/`, zaobao `storyYYYYMMDD`).
+Neither → the link renders **"Undated"**, never the incident date: `incident_date`
+is the EVENT date and a follow-up filed two years later shares neither it nor
+`published_at`. Two supporting fixes: `consolidation/queue_row.py` now synthesises
+a timeline entry per kept source URL (`build_cluster_stage2_input` only emitted
+one for a multi-article cluster, so single-source stories published undated), and
+`tools/backfill_source_dates.py` resolves the historical rows by fetching each
+article.
+
+**Map pins: the address may live in the headline.** `classifiers/geocoding.py`
+reads the block and street from the `block_number`/`area_name` columns first and
+mines the title, then the summary, as a fallback. Before that fallback (added
+2026-08-04) an incident whose address appeared only in its headline built *no
+geocode query at all* — 68 of the 71 unpinned published incidents were in that
+state, including "NSF dies after being pinned down at Block 279 Yishun Street
+22" with `block_number = NULL`. **The POI whitelist is still never scanned over
+the summary**, and that asymmetry is deliberate: an address is a specific
+phrase, whereas every dagger story mentions "taken to Khoo Teck Puat Hospital"
+and mining POIs from prose would pin them all at the hospital. Rows that name no
+location anywhere still get NO pin — never the Yishun centroid. Guard:
+`test_geocode_address_mining.py`.
+
+**A `same_location` related link names the location.** `sharedLocationLabel`
+intersects the two incidents' own `area_name`/`block_number` — block-level when
+both agree, else the street. All 137 confirmed `same_location` links share an
+`area_name`. A shared area of just "Yishun" returns null and the link renders
+"Same location" alone, because an entire town is not a location worth printing.
+Nothing here is hardcoded; do not hardcode it.
 
 Share cards: rendered via OG meta tags — no separate image generation. The
 pixel art image doubles as the OG image, which is why generated images must be

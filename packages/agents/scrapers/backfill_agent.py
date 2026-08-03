@@ -766,7 +766,7 @@ def _build_incident_row(draft: dict, item: dict) -> Optional[dict]:
         from classifiers.geocoding import geocode_incident
         coords = geocode_incident(
             draft.get("block_number"), draft.get("area_name"),
-            extra_text=draft.get("title"),
+            extra_text=draft.get("title"), location_text=draft.get("summary"),
         )
         if coords:
             lat, lon = coords

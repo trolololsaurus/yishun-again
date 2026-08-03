@@ -22,6 +22,10 @@ export interface RelatedIncident {
   classification: Classification
   custom_label:   string | null
   incident_date:  string
+  // Carried so a `same_location` link can NAME the location it shares with the
+  // incident being viewed (sharedLocationLabel) instead of just asserting one.
+  area_name:      string | null
+  block_number:   string | null
   link_type:      'related' | 'follow_up' | 'same_location'
 }
 

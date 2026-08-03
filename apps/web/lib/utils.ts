@@ -205,6 +205,165 @@ export function collapseTimelineByDate(
   return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date))
 }
 
+// ── Shared location for a `same_location` incident link ─────────────────────
+//
+// "Same location" on its own tells the reader nothing — the whole archive is
+// one town. The location is DISCOVERED by intersecting the two incidents' own
+// location fields, never hardcoded: every confirmed same_location link in the
+// DB agrees on `area_name` (all 137 of them), and some also agree on the block.
+// Returns null when the only thing the two share is "Yishun", which is not a
+// location worth printing.
+
+const GENERIC_AREAS = new Set(['yishun', 'yishun town', 'yishun estate'])
+
+function normLoc(raw: string | null | undefined): string {
+  return (raw ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+interface LocatedIncident {
+  area_name:    string | null
+  block_number: string | null
+}
+
+export function sharedLocationLabel(
+  a: LocatedIncident,
+  b: LocatedIncident
+): string | null {
+  const areaA = normLoc(a.area_name)
+  const sameArea = areaA !== '' && areaA === normLoc(b.area_name)
+  const area = (a.area_name ?? '').trim()
+
+  // Most specific: both rows name the same block on the same street. Worth
+  // printing even when the area is the generic "Yishun" — the block carries it.
+  const blkA = normLoc(a.block_number)
+  if (blkA !== '' && blkA === normLoc(b.block_number) && sameArea) {
+    const blk = (a.block_number ?? '').trim()
+    return `${/^\d/.test(blk) ? `Block ${blk}` : blk}, ${area}`
+  }
+
+  // Street/subzone level, e.g. "Yishun Ring Road".
+  if (sameArea && !GENERIC_AREAS.has(areaA)) return area
+
+  return null
+}
+
+// ── Article date recovered from a source URL ────────────────────────────────
+//
+// A display-side FALLBACK for source links that carry no `source_timeline`
+// entry. Many SG publishers stamp the publication date into the path
+// (malaymail /2018/07/13/, zaobao storyYYYYMMDD-), and reading it back is free
+// and exact. Publishers that don't (ST, CNA, Yahoo) return null and the link
+// renders undated rather than with a guessed date — `tools/backfill_source_dates.py`
+// is what actually resolves those, by fetching the article.
+
+const _URL_YMD_PATH = /\/(\d{4})\/(\d{1,2})\/(\d{1,2})(?:\/|$)/
+const _URL_YMD_DASH = /\/(\d{4})-(\d{2})-(\d{2})(?:\/|-|$)/
+const _URL_STORY    = /\bstory(\d{4})(\d{2})(\d{2})\b/
+
+function _isoDate(y: string, m: string, d: string): string | null {
+  const yi = +y, mi = +m, di = +d
+  if (yi < 1990 || yi > 2100 || mi < 1 || mi > 12 || di < 1 || di > 31) return null
+  const iso = `${yi}-${String(mi).padStart(2, '0')}-${String(di).padStart(2, '0')}`
+  // Reject calendar-invalid dates (2026-02-31) — Date rolls them over silently.
+  const dt = new Date(`${iso}T00:00:00Z`)
+  return dt.getUTCFullYear() === yi && dt.getUTCMonth() + 1 === mi && dt.getUTCDate() === di
+    ? iso : null
+}
+
+export function dateFromUrl(url: string | null | undefined): string | null {
+  if (!url) return null
+  let path: string
+  try {
+    path = new URL(url).pathname
+  } catch {
+    return null   // not a parseable URL — never guess from a raw string
+  }
+  for (const re of [_URL_YMD_PATH, _URL_YMD_DASH, _URL_STORY]) {
+    const m = re.exec(path)
+    if (m) {
+      const iso = _isoDate(m[1], m[2], m[3])
+      if (iso) return iso
+    }
+  }
+  return null
+}
+
+// ── Summary paragraphs ──────────────────────────────────────────────────────
+//
+// Every published summary in the DB (163/163) is a single unbroken block, and
+// 35 of them run past 900 characters — a wall of text nobody reads. Stage 2 now
+// emits blank-line paragraph breaks, so `\n\n` is honoured first and this
+// function is a no-op on new drafts. Existing rows have no breaks at all, so
+// they are grouped on sentence boundaries instead. This only ever inserts
+// paragraph breaks — no word is added, removed or reordered.
+
+// Trailing abbreviations that end in '.' without ending a sentence.
+const _ABBREV = /(?:^|[\s(])(?:mr|mrs|ms|dr|prof|st|jr|sr|sgt|insp|supt|capt|lt|col|no|vs|approx|etc|e\.g|i\.e|a\.m|p\.m)\.$/i
+
+export function splitSentences(text: string): string[] {
+  const out: string[] = []
+  const re = /[.!?]["'’)\]]?\s+/g
+  let start = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    const end = m.index + m[0].length
+    // "Mr. Tan" / "e.g. the lift" — the period belongs to an abbreviation.
+    if (_ABBREV.test(text.slice(start, m.index + 1))) continue
+    // A real sentence starts with a capital, a digit or an opening quote.
+    if (!/^["'“(\[]?[A-Z0-9]/.test(text.slice(end))) continue
+    out.push(text.slice(start, end).trim())
+    start = end
+  }
+  const tail = text.slice(start).trim()
+  if (tail) out.push(tail)
+  return out.filter(Boolean)
+}
+
+/** Soft target paragraph length in characters. */
+export const PARAGRAPH_TARGET = 320
+
+export function toParagraphs(
+  raw: string | null | undefined,
+  target: number = PARAGRAPH_TARGET
+): string[] {
+  const text = (raw ?? '').replace(/\r\n?/g, '\n').trim()
+  if (!text) return []
+
+  // 1. Author-supplied breaks always win — blank lines first, then single ones.
+  if (/\n[ \t]*\n/.test(text)) {
+    const paras = text.split(/\n[ \t]*\n+/).map(p => p.replace(/\s*\n\s*/g, ' ').trim()).filter(Boolean)
+    if (paras.length) return paras
+  }
+  if (text.includes('\n')) {
+    const paras = text.split(/\n+/).map(p => p.trim()).filter(Boolean)
+    if (paras.length > 1) return paras
+  }
+
+  // 2. No breaks at all — group sentences.
+  const sentences = splitSentences(text)
+  if (sentences.length <= 2) return [text]
+
+  const paras: string[] = []
+  let buf: string[] = []
+  let len = 0
+  for (const s of sentences) {
+    buf.push(s)
+    len += s.length + 1
+    if (len >= target && buf.length >= 2) {
+      paras.push(buf.join(' '))
+      buf = []
+      len = 0
+    }
+  }
+  if (buf.length) {
+    const tail = buf.join(' ')
+    // Don't strand a short final sentence as its own paragraph.
+    if (paras.length > 0 && tail.length < 120) paras[paras.length - 1] += ' ' + tail
+    else paras.push(tail)
+  }
+  return paras.length ? paras : [text]
+}
+
 export function chaosDescriptor(score: number): string {
   if (score < 20) return 'Quiet'
   if (score < 40) return 'Simmering'

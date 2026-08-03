@@ -96,6 +96,58 @@ def build_queue_row(
             "unapproved":       allow["unapproved"],
         }
 
+    # Every kept source URL should carry the date its article was published —
+    # that is the date the public incident page prints beside each citation.
+    #
+    # clustering.build_cluster_stage2_input only emits a source_timeline when a
+    # cluster holds MORE THAN ONE article, so a single-source story reached
+    # publication with an empty timeline and rendered its one citation undated.
+    # Audited 2026-08-03: 163 undated source links across 163 published
+    # incidents, most of them "1/1". Backfilling history does not fix this —
+    # without the block below, the next single-source incident is undated again.
+    #
+    # The dates are the candidates' OWN published_at values (Candidate's
+    # contract: "parsed from the source's own date field, never inferred from
+    # now"), so this records what the pipeline already knew instead of deriving
+    # anything. Three properties worth keeping:
+    #   - it only ever ADDS. An existing entry — with its operator/pipeline
+    #     `role` and headline — is never rewritten.
+    #   - it iterates `allow["kept"]`, which check_source_urls has already
+    #     stripped, so a signal or redirect URL can never enter the timeline
+    #     (guardrail #2).
+    #   - a dateless candidate contributes NO entry. An undated link is honest;
+    #     a fabricated date beside a citation is not.
+    # Added entries carry no `role`: collapseTimelineByDate() ranks a missing
+    # role lowest, so a synthesised entry can never outrank a real verdict or
+    # initial label sharing its date.
+    _existing = raw_content.get("source_timeline") or []
+    _already = {
+        e.get("source_url") for e in _existing
+        if isinstance(e, dict) and e.get("date")
+    }
+    _known: dict[str, dict] = {}
+    for _art in (draft.get("source_articles") or []):
+        if _art.get("url") and _art.get("date"):
+            _known[_art["url"]] = _art
+    if item.get("url") and item.get("date"):
+        _known.setdefault(item["url"], item)
+
+    _additions = [
+        {
+            "date":        str(_known[u].get("date") or ""),
+            "source_url":  u,
+            "source_name": _known[u].get("source_name", ""),
+            "headline":    _known[u].get("title", ""),
+        }
+        for u in allow["kept"]
+        if u in _known and u not in _already
+    ]
+    if _additions:
+        raw_content["source_timeline"] = sorted(
+            list(_existing) + _additions,
+            key=lambda e: str(e.get("date") or "9999-99-99"),
+        )
+
     # `source_url` is the row's headline link — what the War Room renders and
     # what dedup.is_duplicate matches on — and it used to be copied from the
     # candidate with no check at all. That is how two news.google.com wrappers

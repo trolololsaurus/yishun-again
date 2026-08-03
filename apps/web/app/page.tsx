@@ -78,7 +78,7 @@ export default async function HomePage() {
     // SSR page 0 and the load-more pages stay consistent.
     supabase
       .from('incidents')
-      .select('id,slug,title,classification,custom_label,severity,corroboration_count,published_at,incident_date,area_name,is_milestone,milestone_type,milestone_value,is_developing,update_count,first_reported_at,source_timeline,latest_source_role')
+      .select('id,slug,title,classification,custom_label,severity,corroboration_count,published_at,incident_date,area_name,is_milestone,milestone_type,milestone_value,is_developing,update_count,first_reported_at,source_urls,source_timeline,latest_source_role')
       .eq('is_published', true)
       .order('incident_date', { ascending: false, nullsFirst: false })
       .order('id',            { ascending: false })

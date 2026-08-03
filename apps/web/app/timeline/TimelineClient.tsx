@@ -8,7 +8,7 @@ import type { FilterState, Incident } from '@/lib/types'
 type Row = Pick<Incident, 'id' | 'slug' | 'title' | 'classification' | 'custom_label' | 'severity'
   | 'corroboration_count' | 'published_at' | 'area_name' | 'is_milestone'
   | 'is_developing' | 'update_count' | 'first_reported_at'
-  | 'incident_date' | 'source_timeline' | 'latest_source_role'>
+  | 'incident_date' | 'source_urls' | 'source_timeline' | 'latest_source_role'>
 
 const PAGE_SIZE = 20
 

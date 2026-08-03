@@ -11,6 +11,13 @@ Priority order (most precise first — June-2026 pin overhaul):
   4. Street name alone         → street centroid
   5. Nothing usable            → None (NO pin — never the generic Yishun centre)
 
+The block and street are read from the `block_number` / `area_name` columns
+FIRST and from the title/summary only as a fallback (August 2026). Before that
+fallback existed the address had to be in a column to count, and 68 of the 71
+published incidents with no map pin built no query at all — their address was
+sitting in the headline. The POI whitelist is still never scanned over the
+summary; see build_geocode_queries for why the two cases differ.
+
 LLM-estimated coordinates are never trusted; this module is the only source
 of published pin coordinates.
 
@@ -127,6 +134,36 @@ def _find_street(*texts: Optional[str]) -> Optional[str]:
     return None
 
 
+# An explicit "Block 279" / "Blk 342B" phrase inside prose. Requires the literal
+# word, so "a block of flats" and "Yishun HDB block (near Chong Pang City)" —
+# both real values from the live table — cannot match.
+_TEXT_BLOCK_RE = re.compile(r"\b(?:BLK\.?|BLOCK)\s*(\d{1,4}[A-Z]?)\b", re.IGNORECASE)
+
+
+def _find_block_in_text(*texts: Optional[str]) -> Optional[str]:
+    """
+    Block number mined from prose, for rows whose `block_number` column is NULL
+    while the address sits in plain sight in the headline.
+
+    This is not a hypothetical: 68 of the 71 published incidents with no map pin
+    built NO geocode query at all, because the only place their address appeared
+    was the title — e.g. "NSF dies after being pinned down at Block 279 Yishun
+    Street 22 by childhood friend and stepfather", which had block_number=NULL
+    and area_name='Yishun' and therefore no pin.
+
+    Scanned in argument order, so callers pass the title before the summary:
+    a headline names the incident's own location, whereas a summary may mention
+    other blocks in passing.
+    """
+    for text in texts:
+        if not text:
+            continue
+        m = _TEXT_BLOCK_RE.search(text)
+        if m:
+            return m.group(1).upper()
+    return None
+
+
 def _find_poi(*texts: Optional[str]) -> Optional[str]:
     """First POI-whitelist match across the given strings → OneMap query."""
     combined = " ".join(t for t in texts if t).lower()
@@ -179,15 +216,27 @@ def build_geocode_queries(
     block_number: Optional[str],
     area_name: Optional[str],
     extra_text: Optional[str] = None,
+    location_text: Optional[str] = None,
 ) -> list[tuple[str, str]]:
     """
     Assemble (method, query) pairs in priority order:
     block → full-address → poi → street. Empty list = nothing usable (no pin).
+
+    extra_text is the incident TITLE. location_text is optional extra prose
+    (the summary) mined for a block/street ONLY.
+
+    The POI whitelist is still scanned over block_number, area_name and the
+    title and NEVER over location_text — that guard is the reason every dagger
+    story mentioning "taken to Khoo Teck Puat Hospital" is not pinned at the
+    hospital. Address mining is a different operation: "Block 279 Yishun Street
+    22" is an address, not a keyword, so reading it out of prose is safe where
+    reading a POI name out of prose is not.
     """
     queries: list[tuple[str, str]] = []
 
-    block  = _clean_block(block_number)
-    street = _find_street(area_name, block_number)
+    # The column wins; prose is the fallback for the rows where it is NULL.
+    block  = _clean_block(block_number) or _find_block_in_text(extra_text, location_text)
+    street = _find_street(area_name, block_number, extra_text, location_text)
     poi    = _find_poi(block_number, area_name, extra_text)
 
     # 1. Block-level — the gold standard. OneMap's address index matches the
@@ -225,31 +274,33 @@ def geocode_incident(
     block_number: Optional[str],
     area_name: Optional[str],
     extra_text: Optional[str] = None,
+    location_text: Optional[str] = None,
 ) -> Optional[tuple[float, float]]:
     """
     Geocode a Yishun incident via OneMap using the priority order above.
 
-    extra_text (usually the incident title) is scanned for POI mentions only.
+    extra_text (the incident title) is scanned for POIs and for an address.
+    location_text (the summary) is scanned for an address only.
     Returns (latitude, longitude) or None when no query resolves inside the
     Yishun bounding box. A bare "Yishun" with no block/POI/street returns
     None — such incidents get NO map pin rather than stacking at the centre.
     Rate limit: 0.5 s between requests.
     """
-    for _method, query in build_geocode_queries(block_number, area_name, extra_text):
-        coords = _onemap_lookup(query)
-        time.sleep(_RATE_LIMIT)
-        if coords:
-            return coords
-    return None
+    coords, _ = geocode_incident_with_method(
+        block_number, area_name, extra_text, location_text)
+    return coords
 
 
 def geocode_incident_with_method(
     block_number: Optional[str],
     area_name: Optional[str],
     extra_text: Optional[str] = None,
+    location_text: Optional[str] = None,
 ) -> tuple[Optional[tuple[float, float]], Optional[str]]:
     """Like geocode_incident, but also reports which method resolved."""
-    for method, query in build_geocode_queries(block_number, area_name, extra_text):
+    for method, query in build_geocode_queries(
+        block_number, area_name, extra_text, location_text
+    ):
         coords = _onemap_lookup(query)
         time.sleep(_RATE_LIMIT)
         if coords:
@@ -287,7 +338,7 @@ def _run_backfill(only_missing: bool) -> dict:
 
     q = (
         supabase.table("incidents")
-        .select("id,slug,title,block_number,area_name,latitude,longitude")
+        .select("id,slug,title,summary,block_number,area_name,latitude,longitude")
         .eq("is_published", True)
     )
     if only_missing:
@@ -302,7 +353,8 @@ def _run_backfill(only_missing: bool) -> dict:
 
     for row in rows:
         coords, method = geocode_incident_with_method(
-            row.get("block_number"), row.get("area_name"), extra_text=row.get("title"),
+            row.get("block_number"), row.get("area_name"),
+            extra_text=row.get("title"), location_text=row.get("summary"),
         )
         new_lat, new_lon = coords if coords else (None, None)
         try:
