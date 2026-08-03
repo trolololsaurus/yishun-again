@@ -576,6 +576,17 @@ under-count by the number of unpublished drafts.
 >   ever fired. The guardrail was unreachable for a subset of exactly the content
 >   it exists to catch. **Never move the political check back below field
 >   validation.**
+>   **Also since 2026-08-02: `write_stage2` SKIPS the writer model entirely when
+>   `political` is true.** It used to call `_write_draft` unconditionally, asking
+>   the model to write tabloid copy about an "incident" that by definition isn't
+>   one. Haiku refuses with prose rather than JSON, `_parse_json` raised, and
+>   nothing caught it — in the live pass that surfaced as a `cluster write error`,
+>   which cannot tell a deterministic refusal from a transient fault, so it held
+>   the whole cluster `unresolved` and retried it. A political candidate never
+>   stops refusing, so it and every innocent sibling in its cluster jammed behind
+>   the watermark retry floor, re-buying the same failing call daily. The stub
+>   draft is synthesised deterministically; confidence is already 0 and the reject
+>   marker still lands, so nothing is weakened.
 > - **#3** still has no programmatic check — operator-gate only.
 >
 > Regression guards: `test_stage2_guardrails.py`, `test_political_alert.py`,

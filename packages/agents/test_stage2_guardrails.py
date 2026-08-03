@@ -166,6 +166,89 @@ with mock.patch.object(sw, "find_ungrounded", side_effect=RuntimeError("checker 
 check("a CHECKER error degrades to flag, never to pass",
       rep["flagged"] and rep["checked"] is False)
 
+# ── write_stage2: political content must never reach the writer model ───────
+#
+# REGRESSION (found live 2026-08-03, running the fixed pipeline's dry run
+# against production — the same MP-resignation article that first exposed the
+# guardrail-#4 crash in _classify). write_stage2() called _write_draft()
+# UNCONDITIONALLY after classification, even when political=True. Asked to
+# write dry tabloid copy about an "incident" that by definition isn't one,
+# Haiku correctly refused with plain prose ("I cannot process this
+# submission... Out of scope...") instead of JSON, and _parse_json's failure
+# ("No JSON object in model response") propagated as an UNCAUGHT exception —
+# there was no try/except around the _write_draft call in write_stage2.
+#
+# In the live pipeline that surfaced as ingestion/orchestrator.py's
+# "cluster write error", which cannot distinguish a genuine transient failure
+# from a deterministic refusal: it marks the whole cluster unresolved and
+# retries next pass. A political candidate never stops refusing, so it — and
+# any sibling merged into the same cluster, innocent or not — got stuck
+# behind the watermark's retry floor, re-spending a Haiku write call on the
+# identical refusal every single day.
+print("\nwrite_stage2 (political content skips the writer call):")
+
+POLITICAL_CLASSIFY_PAYLOAD = {
+    "classification": None, "severity": 3, "confidence": 0.9,
+    "block_number": None, "area_name": "Yishun", "latitude": None,
+    "longitude": None, "tags": [], "deaths": None, "injuries": None,
+    "political": True,
+}
+CONTENT_POLITICAL = {
+    "title": "Singaporeans share accounts of an MP's kindness after resignation",
+    "content": "SINGAPORE: After the MP resigned from political office...",
+    "url": "https://theindependent.sg/mp-resignation-tributes/",
+    "source_name": "The Independent Singapore",
+    "source_urls": ["https://theindependent.sg/mp-resignation-tributes/"],
+    "edmw_signal_count": 0,
+    "date": "2026-07-22",
+}
+
+fake = _fake_client(POLITICAL_CLASSIFY_PAYLOAD)
+with mock.patch.object(sw, "_get_client", return_value=fake), \
+     mock.patch.object(sw, "_write_draft") as wd:
+    result = sw.write_stage2(CONTENT_POLITICAL)
+
+check("write_stage2 does not raise on political content", result is not None)
+check("the writer model is never called for political content", wd.call_count == 0)
+check("only the classify call hits the model (one create() call, not two)",
+      fake.messages.create.call_count == 1)
+check("confidence is 0.0", result["confidence"] == 0.0)
+check("political flag propagates to the queue row", result["political"] is True)
+check("reject marker is prepended", result["summary"].startswith("[POLITICAL CONTENT DETECTED"))
+check("_political_flagged metadata is attached", "_political_flagged" in result)
+for key in ("title", "summary", "slug", "seo_title", "seo_description"):
+    check(f"stub draft still carries required field {key!r}", key in result)
+check("groundedness is marked skipped, not silently passed",
+      result["_groundedness"].get("skipped") == "political" and
+      result["_groundedness"]["flagged"] is False)
+
+# A NON-political row must still call the writer model as normal — this fix
+# must not skip drafting for ordinary content.
+NORMAL_CLASSIFY_PAYLOAD = {**base, "political": False}
+NORMAL_WRITE_PAYLOAD = {
+    "title": "Fire breaks out in Yishun flat", "summary": "A fire broke out.",
+    "slug": "fire-yishun-flat", "seo_title": "Fire in Yishun",
+    "seo_description": "A fire broke out in a Yishun flat.",
+}
+call_count = {"n": 0}
+fake2 = mock.MagicMock()
+
+
+def _dispatch(*a, **k):
+    call_count["n"] += 1
+    payload = NORMAL_CLASSIFY_PAYLOAD if call_count["n"] == 1 else NORMAL_WRITE_PAYLOAD
+    msg = mock.MagicMock()
+    msg.content = [mock.MagicMock(text=json.dumps(payload))]
+    return msg
+
+
+fake2.messages.create.side_effect = _dispatch
+with mock.patch.object(sw, "_get_client", return_value=fake2), \
+     mock.patch.object(sw, "find_ungrounded", return_value={"numbers": [], "proper_nouns": []}):
+    result2 = sw.write_stage2({**CONTENT_POLITICAL, "title": "Fire in Yishun flat"})
+check("non-political content still calls the writer model", fake2.messages.create.call_count == 2)
+check("non-political result carries the drafted title", result2["title"] == "Fire breaks out in Yishun flat")
+
 # ── Model selection ─────────────────────────────────────────────────────────
 print("\nwrite model:")
 check("MODEL_WRITE is Haiku", sw.MODEL_WRITE == "claude-haiku-4-5-20251001")

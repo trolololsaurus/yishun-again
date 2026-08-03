@@ -733,12 +733,49 @@ def write_stage2(content: dict) -> dict:
     )
 
     # ── Step 2: Write draft ──────────────────────────────────────────────────
-    logger.info("Stage 2 [write] calling %s (summary budget %d chars)",
-                MODEL_WRITE, summary_char_budget(content))
-    draft = _write_draft(client, content, classification)
+    if classification.get("political"):
+        # Guardrail #4, continued. _classify (above) already forces confidence
+        # to 0 and survives a null/invalid classification — but write_stage2
+        # used to call the writer model UNCONDITIONALLY regardless of that
+        # flag, asking it to draft dry tabloid copy about an "incident" that,
+        # by definition, isn't one. Haiku correctly refuses outright with
+        # plain prose ("I cannot process this submission... Out of scope...")
+        # instead of JSON, and `_parse_json` then raises "No JSON object in
+        # model response" — an exception with NO try/except around it here.
+        #
+        # That propagated uncaught into the cluster-write phase
+        # (ingestion/orchestrator.py), which has no way to tell a genuine
+        # transient failure from a deterministic refusal: it holds the whole
+        # cluster `unresolved` and retries it. A political candidate never
+        # stops refusing, so it — and every candidate merged into the same
+        # cluster, innocent or not — gets stuck behind the watermark's retry
+        # floor and re-spends a Haiku write call on the identical refusal
+        # every single day. Observed live 2026-08-03, the same MP-resignation
+        # article that first exposed the guardrail-#4 crash in `_classify`.
+        #
+        # A political row is never read: confidence is already 0, and the
+        # marker appended below makes the rejection unmissable. There is
+        # nothing for a drafted title/summary to accomplish, so skip the model
+        # call and synthesize the handful of fields the rest of this function
+        # (and its callers) require.
+        logger.info("Stage 2 [write] skipped — political content (guardrail #4)")
+        draft = {
+            "title":           (content.get("title") or "Political content")[:120],
+            "summary":         "",
+            "slug":            _stamp_slug_date("political-content-not-drafted",
+                                                content.get("date")),
+            "seo_title":       (content.get("title") or "Political content")[:60],
+            "seo_description": "Rejected under guardrail #4 — political content "
+                               "is never drafted or published."[:155],
+        }
+        grounding = {"checked": False, "flagged": False, "skipped": "political"}
+    else:
+        logger.info("Stage 2 [write] calling %s (summary budget %d chars)",
+                    MODEL_WRITE, summary_char_budget(content))
+        draft = _write_draft(client, content, classification)
 
-    # ── Step 2b: Groundedness — regenerate once, then flag ───────────────────
-    draft, grounding = _enforce_groundedness(client, content, classification, draft)
+        # ── Step 2b: Groundedness — regenerate once, then flag ───────────────
+        draft, grounding = _enforce_groundedness(client, content, classification, draft)
 
     # ── Step 3: Compute deterministic fields ─────────────────────────────────
     source_urls  = content.get("source_urls", [content.get("url", "")])
