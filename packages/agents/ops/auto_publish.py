@@ -77,10 +77,22 @@ def _threshold() -> float:
 MAX_AUTO_PUBLISH_PER_RUN = int(os.getenv("AUTO_PUBLISH_MAX_PER_RUN", "25"))
 
 # Art generation is opt-in per environment. It is the only step here that spends
-# money per row and it needs CF_R2_* + GEMINI_API_KEY + IMAGE_MODEL, none of
-# which are set on Cloud Run yet — so it defaults OFF and an unconfigured
-# deployment publishes exactly as it does today rather than logging a failure
-# per incident.
+# money per row, so it defaults OFF and an unconfigured deployment publishes
+# exactly as it does today rather than logging a failure per incident.
+#
+# The original reason for the default — "CF_R2_* + GEMINI_API_KEY + IMAGE_MODEL
+# are not set on Cloud Run yet" — is no longer true: verified 2026-08-04, all of
+# them are set on the service. What remains true is the cost, so the flag stays
+# a deliberate operator decision rather than something that flips itself once
+# the config appears.
+#
+# Scope: this gate is read ONLY here, on the autonomous publish path. The HTTP
+# endpoints (`/art/generate`, `/art/rectify`) call art.generate_image directly
+# and are NOT gated by it, so the operator's approve and rectify clicks render
+# regardless. With this false, an auto-published incident lands with
+# image_status='pending' — which reads identically to "the backend was never
+# reachable", the state the Cloud Run 403 produced. Check the flag before
+# concluding the pipeline is broken.
 ART_ENABLED = os.getenv("ART_GENERATION_ENABLED", "false").strip().lower() in ("1", "true", "on", "yes")
 
 _POLITICAL_MARKER = "[POLITICAL CONTENT DETECTED"
