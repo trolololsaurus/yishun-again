@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { validateUUID } from '@/lib/utils'
-import { rectifyIncidentArt } from '@/lib/artGenerate'
+import { generateIncidentArt, rectifyIncidentArt } from '@/lib/artGenerate'
 import { revalidateIncident } from '@/lib/revalidate'
 import { RECTIFIABLE_STATUSES } from '@/lib/types'
 import type { ImageAttempt } from '@/lib/types'
@@ -93,19 +93,45 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   }
 
   const prompt = (body.prompt ?? incident.image_prompt ?? '').trim().slice(0, MAX_PROMPT_CHARS)
-  if (!prompt) {
-    return NextResponse.json({ error: 'No prompt to render' }, { status: 422 })
-  }
+
   // The slug is both the R2 object key and the revalidation path.
   if (!/^[a-z0-9-]+$/.test(incident.slug ?? '')) {
     return NextResponse.json({ error: 'Incident slug is not URL-safe' }, { status: 422 })
   }
 
-  const art = await rectifyIncidentArt({
-    slug:   incident.slug,
-    prompt,
-    incident: { title: incident.title, summary: incident.summary, tags: incident.tags },
-  })
+  // No prompt anywhere — neither typed by the operator nor stored on the row.
+  //
+  // This used to be a hard 422 ("No prompt to render"), which assumed a failed
+  // incident always HAS a prompt to work from. It does not. The prompt is
+  // composed inside the backend's /art/generate, and the War Room only ever
+  // learns it from that response, so any failure at or before the HTTP boundary
+  // stores image_prompt = NULL. That was every row in the table: a Cloud Run
+  // IAM 403 (the War Room sends X-Ops-Token but no Authorization header) meant
+  // FastAPI never ran, and the operator was left with an empty prompt box whose
+  // "Retry as-is" button could only 422 forever.
+  //
+  // The fix is to run the FULL generate path instead: Haiku scene writer,
+  // softening ladder, guardrail-#5 gate. That is precisely the work that never
+  // happened at approve time, so "retry as-is" on a promptless row means "do
+  // the thing that was skipped" — and it returns a final_prompt, which is
+  // persisted below, so the next retry has something to edit.
+  //
+  // Composing the prompt HERE in TypeScript was the alternative and is rejected
+  // for the reason artGenerate.ts already gives: it would put a second copy of
+  // art/prompt_template.py and the suppression gate into a second language.
+  const compose = prompt === ''
+  const art = compose
+    ? await generateIncidentArt({
+        slug:      incident.slug,
+        title:     incident.title,
+        summary:   incident.summary,
+        tags:      incident.tags,
+      })
+    : await rectifyIncidentArt({
+        slug:   incident.slug,
+        prompt,
+        incident: { title: incident.title, summary: incident.summary, tags: incident.tags },
+      })
 
   // Append and renumber. render_prompt always reports n=1, so replacing would
   // erase the history the operator is working from — the whole point of the
@@ -124,7 +150,15 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     // was gone on reload — the exact failure this branch exists to prevent.
     const { data: failRow, error: failErr } = await supabase
       .from('incidents')
-      .update({ image_status: art.status, image_prompt: prompt, image_attempts: attempts })
+      // art.final_prompt first: on the compose path `prompt` is empty, and the
+      // composed prompt is the one thing that makes the next retry editable
+      // rather than another blank box. `|| null` so a total failure leaves the
+      // column NULL rather than an empty string that reads as "prompt exists".
+      .update({
+        image_status:   art.status,
+        image_prompt:   art.final_prompt || prompt || null,
+        image_attempts: attempts,
+      })
       .eq('id', id)
       .in('image_status', RECTIFIABLE_STATUSES)
       .select('id')
@@ -152,7 +186,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     .update({
       pixel_art_url:  art.url,
       image_status:   'ok',
-      image_prompt:   art.final_prompt || prompt,
+      image_prompt:   art.final_prompt || prompt || null,
       image_attempts: attempts,
     })
     .eq('id', id)

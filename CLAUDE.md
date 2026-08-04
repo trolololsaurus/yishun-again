@@ -116,12 +116,29 @@ vercel deploy --prod
 
 # Agents backend (Cloud Run, Singapore region)
 gcloud run deploy yishun-agents --source packages/agents \
-  --region asia-southeast1 --platform managed --no-allow-unauthenticated \
+  --region asia-southeast1 --platform managed --allow-unauthenticated \
   --timeout=3600 --memory=1Gi --min-instances=0 --max-instances=2
 ```
 
 `--timeout=3600` is required — a daily pass runs 5–20 min, well past the 300 s
 default. `--min-instances=0` is the cost control (see `docs/AUTONOMY.md` §6).
+
+**`--allow-unauthenticated` is deliberate, and the auth is `OPS_TOKEN`.** This
+said `--no-allow-unauthenticated` until 2026-08-04, and that flag silently broke
+the art pipeline for its entire life. Cloud Run IAM and the app are two
+independent gates: IAM wants a Google-signed OIDC token in `Authorization`,
+`main.py::_require_ops_token` wants `X-Ops-Token`. Cloud Scheduler satisfies both
+(it runs as `yishun-scheduler@…`, still bound as an invoker), but the War Room is
+on **Vercel, not GCP**, and `lib/artGenerate.ts` sends only `X-Ops-Token`. Every
+`/art/generate` call was rejected at the edge with
+`403 … Empty Authorization header value` and never reached FastAPI — which is why
+`image_prompt` was NULL on all 172 incidents and the archive held exactly one
+image. Every route except `/health` is behind `_require_ops_token`
+(`hmac.compare_digest`, 503 if the server has no token), so the shared secret is
+the gate now. **Do not redeploy with `--no-allow-unauthenticated`** unless you
+are also giving the War Room a way to mint an OIDC token — you will re-break art
+generation, and the only symptom is a queue of `transient` rows with empty
+prompt boxes.
 
 ---
 
@@ -292,6 +309,17 @@ JSON — see spec §4.3 for the schema, with three deltas since:
   and writes `pixel_art_url`, `image_status`, `image_prompt` and
   `image_attempts`. `lib/artGenerate.ts` POSTs to the agents backend
   `/art/generate` with `X-Ops-Token`. See `docs/ART_PIPELINE.md`.
+  **It writes those columns; until 2026-08-04 the values were always null.**
+  Cloud Run's IAM gate rejected every call (see the deploy section above), so
+  `generateIncidentArt`'s failure paths — which all return `final_prompt: ''` —
+  stored `image_prompt: null`. Two lasting consequences worth knowing:
+  `image_status='pending'` does **not** mean "queued", it is the `DISABLED`
+  return meaning *the backend was never reachable and nothing was attempted*;
+  and a NULL `image_prompt` used to make `/rectify` a dead end, since
+  "Retry as-is" fell back to a prompt that did not exist and returned
+  `422 No prompt to render`. That route now runs the full `/art/generate` path
+  when no prompt is stored, so the composed prompt is persisted and the next
+  retry is editable.
 - **The write model is Haiku**, not Sonnet (`STAGE2_WRITE_MODEL` to roll back).
   Justified by an eval over 30 real inputs; Haiku matched Sonnet on ungrounded
   specifics on the multi-source half and on format compliance.

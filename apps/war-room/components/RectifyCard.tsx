@@ -165,8 +165,16 @@ function RectifyCard({
             maxLength={MAX_PROMPT_CHARS}
             className="w-full px-3 py-2 bg-bg border border-border text-text-primary font-body text-sm rounded focus:border-yellow focus:outline-none resize-y"
           />
+          {/* The two paths behave differently and the operator is choosing
+              between them, so the copy has to say which one they get. An empty
+              box means no prompt was ever composed (generation failed at or
+              before the HTTP boundary), and "Retry as-is" then runs the FULL
+              generate path — scene writer plus softening ladder — not the
+              single bare attempt this line used to promise unconditionally. */}
           <div className="font-body text-text-secondary" style={{ fontSize: '11px' }}>
-            {draft.length} / {MAX_PROMPT_CHARS} · one attempt, no automatic softening
+            {draft.trim()
+              ? `${draft.length} / ${MAX_PROMPT_CHARS} · one attempt, no automatic softening`
+              : `${draft.length} / ${MAX_PROMPT_CHARS} · no prompt stored — “Retry as-is” will compose one and run the full softening ladder`}
           </div>
         </div>
 
