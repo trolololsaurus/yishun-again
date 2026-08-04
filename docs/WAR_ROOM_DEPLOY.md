@@ -146,12 +146,24 @@ with `X-Ops-Token`. Reimplementing the guardrail-#5 suppression gate and the
 softening ladder in TypeScript would put the one check that must not fail into
 two languages in two repos.
 
-### ⚠️ Blocked as deployed — `X-Ops-Token` is not enough
+### ✅ RESOLVED 2026-08-04 — was: blocked as deployed, `X-Ops-Token` is not enough
 
-`yishun-agents` is deployed `--no-allow-unauthenticated`, and its only IAM
-binding is `roles/run.invoker` for `yishun-scheduler@…`. Vercel has no identity
-there, so Google's IAM layer answers **403 before the app ever reads the
+`yishun-agents` was deployed `--no-allow-unauthenticated`, with its only IAM
+binding `roles/run.invoker` for `yishun-scheduler@…`. Vercel has no identity
+there, so Google's IAM layer answered **403 before the app ever read the
 header** — verified 2026-08-01 against the live service.
+
+**This section diagnosed the bug correctly on 2026-08-01 and nothing acted on it
+for three days**, during which every `/art/generate` call 403'd, `image_prompt`
+stayed NULL on all 172 incidents, and the archive held exactly one image. Writing
+the diagnosis down is not the same as fixing it; if you find a block like this
+again, change the config in the same commit.
+
+Fixed by granting `allUsers` `roles/run.invoker` **and** flipping the flag in
+`infra/cloudbuild.yaml` — the binding alone does not survive, because
+`--no-allow-unauthenticated` rewrites the IAM policy on every deploy and drops
+`allUsers`. That is precisely how the fix was reverted 8 minutes after it was
+first applied. `OPS_TOKEN` is the gate now.
 
 Until this is resolved every render returns `status: 'transient'`. On the
 approve path that means the incident publishes with `pixel_art_url` null and the
@@ -277,13 +289,12 @@ not.
 ## 8. What is NOT protected by this setup
 
 - The **public site** (`yishunagain.com`) — intentionally open.
-- The **agents backend** (`Cloud Run`) — protected separately, by two layers
-  that have nothing to do with Cloudflare Access: GCP IAM
-  (`--no-allow-unauthenticated`, pinned in `infra/cloudbuild.yaml`, so a caller
-  needs `roles/run.invoker`) and, inside the app, the `X-Ops-Token` shared
-  secret on every `/ops` and `/art` endpoint — 503 if the server has no token
-  configured, 401 if the caller's is wrong. It is not exposed to the public
-  internet. That IAM layer is also what currently blocks the War Room's own
-  calls — see §5a.
+- The **agents backend** (`Cloud Run`) — protected by the `X-Ops-Token` shared
+  secret on every `/ops` and `/art` endpoint (`hmac.compare_digest`; 503 if the
+  server has no token configured, 401 if the caller's is wrong). Since
+  2026-08-04 it is deployed `--allow-unauthenticated`, so that secret is the
+  **only** gate and the service is reachable from the public internet. That is a
+  deliberate trade: the GCP IAM layer it replaces was not protecting these
+  endpoints, it was blocking the War Room's own calls — see §5a.
 - Supabase direct access — blocked by RLS policies; the secret key is
   server-side only and never in client bundles.

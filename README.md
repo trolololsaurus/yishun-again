@@ -152,9 +152,16 @@ vercel deploy --prod
 
 # Agents backend — Cloud Run
 gcloud run deploy yishun-agents --source packages/agents \
-  --region asia-southeast1 --platform managed --no-allow-unauthenticated \
+  --region asia-southeast1 --platform managed --allow-unauthenticated \
   --timeout=3600 --memory=1Gi --min-instances=0 --max-instances=2
 ```
+
+⚠️ **`--allow-unauthenticated` is deliberate — do not "harden" it back.** Auth is
+`OPS_TOKEN` (`X-Ops-Token` on every route but `/health`). `--no-allow-unauthenticated`
+REWRITES the service IAM policy and drops `allUsers`, which blocks the War Room —
+it runs on Vercel, has no GCP identity, and sends only `X-Ops-Token` — at the
+edge with `403 … Empty Authorization header value`. That is what kept the art
+pipeline at one image for its entire life. See CLAUDE.md § Deployment.
 
 `--timeout=3600` is required: a daily pass runs 5–20 min, well past the 300 s
 default. `--min-instances=0` is the cost control (`docs/AUTONOMY.md` §6).

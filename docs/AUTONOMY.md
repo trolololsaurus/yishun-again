@@ -690,15 +690,23 @@ either way, as they use no model at all.
 ```bash
 gcloud run deploy yishun-agents \
   --source packages/agents --region asia-southeast1 --platform managed \
-  --no-allow-unauthenticated --timeout=3600 --memory=1Gi --cpu=1 \
+  --allow-unauthenticated --timeout=3600 --memory=1Gi --cpu=1 \
   --min-instances=0 --max-instances=2
 ```
 
 `--timeout=3600` matters: the ingestion step **alone** is bounded at
 `INGESTION_MAX_SECONDS` = 1500 s, with eleven more steps queued behind it, so the
 300 s default cannot hold a pass. `--min-instances=0` is the cost control.
-`--no-allow-unauthenticated` keeps the ops endpoints off the public internet; the
-scheduler authenticates with OIDC.
+**`--allow-unauthenticated` is deliberate and must stay.** The ops endpoints are
+protected by `OPS_TOKEN` (`X-Ops-Token`, `hmac.compare_digest`, on every route
+except `/health`), not by Cloud Run IAM. This said `--no-allow-unauthenticated`
+until 2026-08-04, and that is the single reason the art pipeline never produced
+an image: the flag REWRITES the service IAM policy and drops `allUsers`, and the
+War Room runs on **Vercel**, has no GCP identity, and sends only `X-Ops-Token` —
+so every `/art/generate` call died at the edge with `403 … Empty Authorization
+header value` and never reached FastAPI. The scheduler was unaffected (it
+authenticates with OIDC as `yishun-scheduler@…`, still bound as an invoker),
+which is exactly why the daily chain kept working and hid the failure for weeks.
 
 Cloud Scheduler stops waiting at its 1800 s attempt deadline while the Cloud Run
 request runs on to 3600 s, so a retry — or an impatient manual trigger — would
