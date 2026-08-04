@@ -12,6 +12,7 @@ import logging
 
 from classifiers.source_allowlist import (
     check_source_urls,
+    dedupe_urls,
     domain_of,
     is_redirect_domain,
 )
@@ -86,6 +87,15 @@ def build_queue_row(
     # operator-approved `sources` table is KEPT — stripping it could take an
     # incident's last source and break guardrail #1 — but recorded so the War
     # Room can surface it and the operator can approve the domain or re-source.
+    # Collapse two spellings of one article BEFORE the allowlist runs, so the
+    # row can never store the same report twice. The public page counts this
+    # array directly ("Corroborated by N sources" and the lightning meter), so
+    # a duplicate here is a factual overstatement to the reader — which is what
+    # `yishun-python-escapes-drain-worksite-aug-2026` shipped as "2 sources"
+    # while holding one Stomp report with and without `?ref=home-editors-picks`.
+    if raw_content.get("source_urls") is not None:
+        raw_content["source_urls"] = dedupe_urls(raw_content["source_urls"])
+
     allow = check_source_urls(raw_content.get("source_urls") or [])
     if raw_content.get("source_urls") is not None:
         raw_content["source_urls"] = allow["kept"]

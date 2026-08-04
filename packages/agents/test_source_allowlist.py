@@ -69,6 +69,36 @@ check("all-approved -> nothing flagged",
       {"kept": ["https://mothership.sg/x"], "dropped_signal": [],
        "dropped_redirect": [], "unapproved": []})
 
+# ── canonical_url: one article must never count as two ──────────────────────
+# yishun-python-escapes-drain-worksite-aug-2026 published as "2 sources" while
+# holding ONE Stomp report, once with ?ref=home-editors-picks and once without.
+STOMP = "https://www.stomp.sg/singapore-seen/workers-yishun-worksite-uncover-slithery-surprise-later-vanishes-drain"
+check("tracking param stripped", sa.canonical_url(STOMP + "?ref=home-editors-picks") == sa.canonical_url(STOMP))
+check("the production duplicate is caught", sa.same_article(STOMP, STOMP + "?ref=home-editors-picks"))
+check("utm_* stripped", sa.same_article(STOMP, STOMP + "?utm_source=x&utm_campaign=y"))
+check("fragment stripped", sa.same_article(STOMP, STOMP + "#comments"))
+check("trailing slash ignored", sa.same_article(STOMP, STOMP + "/"))
+check("www. ignored", sa.same_article("https://stomp.sg/a", "https://www.stomp.sg/a"))
+check("host case ignored", sa.same_article("https://STOMP.sg/a", "https://stomp.sg/a"))
+
+# A denylist, not an allowlist — a query string can BE the article id.
+check("meaningful query preserved",
+      not sa.same_article("https://x.sg/read?id=1", "https://x.sg/read?id=2"))
+check("meaningful query survives alongside tracking",
+      sa.canonical_url("https://x.sg/read?id=1&utm_source=fb").endswith("read?id=1"))
+check("different articles stay different",
+      not sa.same_article("https://stomp.sg/a", "https://stomp.sg/b"))
+check("different hosts stay different",
+      not sa.same_article("https://stomp.sg/a", "https://asiaone.com/a"))
+check("unparseable input is returned, not crashed", sa.canonical_url("not a url") == "not a url")
+check("empty input", sa.canonical_url("") == "" and not sa.same_article("", ""))
+
+d = sa.dedupe_urls([STOMP + "?ref=home-editors-picks", STOMP, "https://asiaone.com/x"])
+check("dedupe_urls collapses the duplicate", len(d) == 2)
+check("dedupe_urls keeps the FIRST spelling", d[0] == STOMP + "?ref=home-editors-picks")
+check("dedupe_urls preserves order", d[1] == "https://asiaone.com/x")
+check("dedupe_urls handles empties", sa.dedupe_urls([None, "", STOMP]) == [STOMP])
+
 # ── redirectors: a citation must point at the publisher, not a wrapper ───────
 # google_news_rss put unresolved news.google.com/rss/articles/<blob> URLs into
 # war_room_queue.source_url and source_urls in production (2026-08-01). The

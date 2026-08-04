@@ -14,7 +14,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { sharedLocationLabel, dateFromUrl, toParagraphs, splitSentences } from './utils.ts'
+import { sharedLocationLabel, dateFromUrl, toParagraphs, splitSentences, canonicalUrl, uniqueSources } from './utils.ts'
 
 // ── sharedLocationLabel ─────────────────────────────────────────────────────
 // "Same location" alone is meaningless in a single-town archive. All 137
@@ -206,4 +206,49 @@ test('paragraphs: empty input yields no paragraphs', () => {
   assert.deepEqual(toParagraphs(''), [])
   assert.deepEqual(toParagraphs(null), [])
   assert.deepEqual(toParagraphs('   \n  '), [])
+})
+
+// ── canonicalUrl / uniqueSources ─────────────────────────────────────────────
+// One article must never be advertised as two. yishun-python-escapes-drain-
+// worksite-aug-2026 shipped as "⚡2 sources" holding one Stomp report twice.
+const STOMP = 'https://www.stomp.sg/singapore-seen/workers-yishun-worksite-uncover-slithery-surprise-later-vanishes-drain'
+
+test('canonicalUrl strips tracking params', () => {
+  assert.equal(canonicalUrl(STOMP + '?ref=home-editors-picks'), canonicalUrl(STOMP))
+  assert.equal(canonicalUrl(STOMP + '?utm_source=fb&utm_campaign=x'), canonicalUrl(STOMP))
+})
+
+test('canonicalUrl ignores fragment, trailing slash, www and host case', () => {
+  assert.equal(canonicalUrl(STOMP + '#comments'), canonicalUrl(STOMP))
+  assert.equal(canonicalUrl(STOMP + '/'), canonicalUrl(STOMP))
+  assert.equal(canonicalUrl('https://stomp.sg/a'), canonicalUrl('https://www.stomp.sg/a'))
+  assert.equal(canonicalUrl('https://STOMP.sg/a'), canonicalUrl('https://stomp.sg/a'))
+})
+
+test('canonicalUrl keeps a query that identifies the article', () => {
+  assert.notEqual(canonicalUrl('https://x.sg/read?id=1'), canonicalUrl('https://x.sg/read?id=2'))
+  assert.ok(canonicalUrl('https://x.sg/read?id=1&utm_source=fb').endsWith('read?id=1'))
+})
+
+test('canonicalUrl does not merge distinct articles or hosts', () => {
+  assert.notEqual(canonicalUrl('https://stomp.sg/a'), canonicalUrl('https://stomp.sg/b'))
+  assert.notEqual(canonicalUrl('https://stomp.sg/a'), canonicalUrl('https://asiaone.com/a'))
+})
+
+test('canonicalUrl degrades on unparseable input', () => {
+  assert.equal(canonicalUrl('not a url'), 'not a url')
+  assert.equal(canonicalUrl(''), '')
+})
+
+test('uniqueSources collapses the production duplicate', () => {
+  const got = uniqueSources([STOMP + '?ref=home-editors-picks', STOMP, 'https://asiaone.com/x'])
+  assert.equal(got.length, 2)
+  assert.equal(got[0], STOMP + '?ref=home-editors-picks')  // first spelling wins
+  assert.equal(got[1], 'https://asiaone.com/x')
+})
+
+test('uniqueSources tolerates null and empty entries', () => {
+  assert.deepEqual(uniqueSources([null, '', undefined, STOMP]), [STOMP])
+  assert.deepEqual(uniqueSources(null), [])
+  assert.deepEqual(uniqueSources(undefined), [])
 })

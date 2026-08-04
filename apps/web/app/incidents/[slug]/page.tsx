@@ -3,7 +3,7 @@ import { Suspense }      from 'react'
 import { notFound }      from 'next/navigation'
 import Link              from 'next/link'
 import { supabase }      from '@/lib/supabase'
-import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, fmtDate, formatDuration, formatDurationGap, lastVerdictEntry, verdictNoun, collapseTimelineByDate, sharedLocationLabel, dateFromUrl, toParagraphs } from '@/lib/utils'
+import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, fmtDate, formatDuration, formatDurationGap, lastVerdictEntry, verdictNoun, collapseTimelineByDate, sharedLocationLabel, dateFromUrl, toParagraphs, uniqueSources } from '@/lib/utils'
 import { ShareButton }   from './ShareButton'
 import { UTMLogger }     from '@/components/UTMLogger'
 import { SITE_URL }      from '@/lib/site'
@@ -114,7 +114,7 @@ export default async function IncidentPage({ params }: Props) {
   // and the rendered source list, so the number can never disagree with the
   // links underneath it. `corroboration_count` stays the DB column (War Room,
   // auto-publish, training signals) but is no longer what the page counts.
-  const sourceUrls = [...new Set((incident.source_urls ?? []).filter(Boolean))]
+  const sourceUrls = uniqueSources(incident.source_urls)
   const sourceCount = sourceUrls.length
 
   const shareUrl    = `${siteUrl}/incidents/${slug}?utm_source=share&utm_medium=share_card&utm_campaign=${incident.classification}`

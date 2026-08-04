@@ -48,6 +48,86 @@ def _matches(host: str, approved: str) -> bool:
     return bool(host) and (host == approved or host.endswith("." + approved))
 
 
+# ── Canonical URL ────────────────────────────────────────────────────────────
+# Tracking parameters that identify HOW a reader arrived, never WHICH article
+# they arrived at. Two URLs differing only by these are the same page.
+#
+# This exists because they were counted as separate sources in production.
+# `yishun-python-escapes-drain-worksite-aug-2026` published with
+# "⚡2 sources" while holding ONE Stomp article twice:
+#
+#   .../workers-yishun-worksite-uncover-slithery-surprise-later-vanishes-drain?ref=home-editors-picks
+#   .../workers-yishun-worksite-uncover-slithery-surprise-later-vanishes-drain
+#
+# The count is a `Set` over source_urls, and those two strings are not equal, so
+# a single report was advertised to readers as corroboration by two. Dedup
+# missed it for the same reason — `dedup.is_duplicate` matched on the raw URL.
+#
+# DENYLIST, not an allowlist: a query string can genuinely identify an article
+# (?id=, ?storyid=), so stripping everything would merge distinct pages — a far
+# worse failure than leaving one duplicate. Only known-inert keys are removed.
+_TRACKING_PARAMS = frozenset({
+    "ref", "ref_src", "ref_url", "referrer",
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_id",
+    "fbclid", "gclid", "dclid", "msclkid", "igshid", "twclid",
+    "mc_cid", "mc_eid", "_ga", "cmpid", "cmp", "spm",
+    "at_medium", "at_campaign", "oc",
+})
+
+
+def canonical_url(url: str) -> str:
+    """
+    A comparison key for "is this the same article?".
+
+    Lower-cases the scheme and host, drops a leading `www.`, removes tracking
+    parameters, drops the fragment, and strips a trailing slash. Everything else
+    — path case, remaining query keys — is preserved, because those can be
+    load-bearing.
+
+    Returns the input unchanged if it cannot be parsed: this feeds dedup, and
+    failing open (treating an odd URL as distinct) risks a duplicate row, while
+    failing closed could silently merge two real sources.
+    """
+    if not url:
+        return ""
+    try:
+        from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+        parts = urlsplit(url.strip())
+        if not parts.scheme or not parts.netloc:
+            return url.strip()
+        host = parts.netloc.lower()
+        if host.startswith("www."):
+            host = host[4:]
+        kept = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+                if k.lower() not in _TRACKING_PARAMS]
+        path = parts.path.rstrip("/") or "/"
+        return urlunsplit((parts.scheme.lower(), host, path, urlencode(kept), ""))
+    except Exception as exc:                      # noqa: BLE001 — never break dedup
+        logger.debug("canonical_url: could not parse %r: %s", url[:80], exc)
+        return url.strip()
+
+
+def same_article(a: str, b: str) -> bool:
+    """True if two URLs point at the same article ignoring tracking noise."""
+    return bool(a) and bool(b) and canonical_url(a) == canonical_url(b)
+
+
+def dedupe_urls(urls: list[str]) -> list[str]:
+    """Drop URLs that are the same article as an earlier one. Order preserved,
+    and the FIRST spelling of each article is the one kept."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for u in urls or []:
+        if not u:
+            continue
+        key = canonical_url(u)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(u)
+    return out
+
+
 def load_source_domains(client=None) -> dict[str, dict]:
     """
     {normalised_domain: {"type": str, "approved": bool, "name": str}} from the

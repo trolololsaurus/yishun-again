@@ -50,7 +50,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 
 from classifiers.corroboration import get_supabase_client
-from classifiers.source_allowlist import is_signal_source
+from classifiers.source_allowlist import canonical_url, is_signal_source
 from consolidation.check import check as consolidation_check, write_incident_links
 from consolidation.queue_row import build_queue_row
 from filters.stage1_filter import filter_content
@@ -719,7 +719,10 @@ def run_ingestion_pass(
                     # dedup. Advancing saves re-fetching and re-checking it.
                     tracker.decided(candidate)
                     continue
-                seen_urls.add(candidate.url)
+                # Canonical form, matching what dedup.is_duplicate looks up —
+                # storing the raw URL here let the same article back in under a
+                # different tracking parameter.
+                seen_urls.add(canonical_url(candidate.url))
                 novel_count += 1
 
                 # ── Safety: max-duration timeout ─────────────────────────────

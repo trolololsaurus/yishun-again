@@ -453,3 +453,58 @@ export function sanitiseClassification(raw: string | null | undefined): 'heart' 
   if (raw === 'heart' || raw === 'clown' || raw === 'dagger') return raw
   return null
 }
+
+// ── Canonical source URL ─────────────────────────────────────────────────────
+//
+// Mirrors classifiers/source_allowlist.py::canonical_url. Two URLs that differ
+// only by a tracking parameter are the same article, and the source COUNT is a
+// factual claim to the reader — "Corroborated by N sources" plus the lightning
+// meter. `yishun-python-escapes-drain-worksite-aug-2026` published as
+// "⚡2 sources" holding one Stomp report twice, once with
+// `?ref=home-editors-picks` and once without.
+//
+// The pipeline now collapses these before writing, but rows written earlier
+// still carry both spellings, so the count is made robust at render time too.
+//
+// DENYLIST, not an allowlist: a query string can genuinely identify an article
+// (?id=, ?storyid=), and merging two distinct pages is far worse than showing
+// one duplicate.
+const TRACKING_PARAMS = new Set([
+  'ref', 'ref_src', 'ref_url', 'referrer',
+  'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id',
+  'fbclid', 'gclid', 'dclid', 'msclkid', 'igshid', 'twclid',
+  'mc_cid', 'mc_eid', '_ga', 'cmpid', 'cmp', 'spm',
+  'at_medium', 'at_campaign', 'oc',
+])
+
+export function canonicalUrl(url: string): string {
+  if (!url) return ''
+  try {
+    const u = new URL(url.trim())
+    u.hash = ''
+    u.hostname = u.hostname.toLowerCase().replace(/^www\./, '')
+    u.protocol = u.protocol.toLowerCase()
+    for (const key of [...u.searchParams.keys()]) {
+      if (TRACKING_PARAMS.has(key.toLowerCase())) u.searchParams.delete(key)
+    }
+    u.pathname = u.pathname.replace(/\/+$/, '') || '/'
+    return u.toString()
+  } catch {
+    // Unparseable — treat as distinct rather than risk merging two real sources.
+    return url.trim()
+  }
+}
+
+/** Unique source URLs, first spelling of each article kept, order preserved. */
+export function uniqueSources(urls: readonly (string | null | undefined)[] | null | undefined): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const u of urls ?? []) {
+    if (!u) continue
+    const key = canonicalUrl(u)
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(u)
+  }
+  return out
+}

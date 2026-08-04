@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, fmtDate, formatDuration, lastVerdictEntry, verdictNoun } from '@/lib/utils'
+import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, fmtDate, formatDuration, lastVerdictEntry, verdictNoun, uniqueSources } from '@/lib/utils'
 import type { Incident } from '@/lib/types'
 
 interface Props {
@@ -22,8 +22,10 @@ export function IncidentCard({ incident, style }: Props) {
   // Count the SAME array the detail page lists under "Sources", so the feed and
   // the incident can never disagree. corroboration_count is the fallback for
   // any caller that did not select source_urls.
+  // uniqueSources() collapses two spellings of one article (tracking params),
+  // so a row holding the same report twice cannot advertise it as two.
   const sourceCount = Array.isArray(source_urls)
-    ? new Set(source_urls.filter(Boolean)).size
+    ? uniqueSources(source_urls).length
     : (corroboration_count ?? 1)
 
   // Lightning bolts grow with corroboration: 2 sources → ⚡, 3 → ⚡⚡, etc.

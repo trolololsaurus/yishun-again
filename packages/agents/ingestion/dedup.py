@@ -51,30 +51,47 @@ def is_duplicate(candidate: Candidate, client, seen_urls: set[str] | None = None
         InfraError: if the underlying Supabase queries fail. Callers MUST NOT
             treat this as "not a duplicate" (§5.2 review S1).
     """
-    url = candidate.url
+    from classifiers.source_allowlist import canonical_url
 
-    if seen_urls is not None and url in seen_urls:
+    url = candidate.url
+    canon = canonical_url(url)
+
+    # In-pass dedup compares CANONICAL forms. Matching raw strings let the same
+    # article through twice when a listing linked it with a tracking parameter
+    # and the article page linked it without — which is exactly how
+    # `yishun-python-escapes-drain-worksite-aug-2026` published holding one
+    # Stomp report twice and advertising "2 sources".
+    if seen_urls is not None and canon in seen_urls:
         return True
 
-    try:
-        result = (
-            client.table("war_room_queue")
-            .select("id")
-            .eq("source_url", url)
-            .limit(1)
-            .execute()
-        )
-        if result.data:
-            return True
+    # Both spellings are checked against the DB. PostgREST matches the stored
+    # string exactly, so a row written before canonicalisation still carries its
+    # tracking parameter and would be missed by a canonical-only lookup. The
+    # second pair of queries only runs when the two forms actually differ.
+    candidates_to_check = [url] if canon == url else [url, canon]
 
-        result = (
-            client.table("incidents")
-            .select("id")
-            .contains("source_urls", [url])
-            .limit(1)
-            .execute()
-        )
-        return bool(result.data)
+    try:
+        for probe in candidates_to_check:
+            result = (
+                client.table("war_room_queue")
+                .select("id")
+                .eq("source_url", probe)
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                return True
+
+            result = (
+                client.table("incidents")
+                .select("id")
+                .contains("source_urls", [probe])
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                return True
+        return False
 
     except Exception as exc:
         raise InfraError(f"Duplicate check failed for {url!r}: {exc}") from exc
