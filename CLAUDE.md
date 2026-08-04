@@ -323,6 +323,21 @@ JSON — see spec §4.3 for the schema, with three deltas since:
 - **The write model is Haiku**, not Sonnet (`STAGE2_WRITE_MODEL` to roll back).
   Justified by an eval over 30 real inputs; Haiku matched Sonnet on ungrounded
   specifics on the multi-source half and on format compliance.
+- **`incident_date` is the EVENT date, and since 2026-08-04 something actually
+  extracts one.** Stage 2's classifier returns `event_date` — read out of the
+  article text ("on July 30 at about 3.57pm", "Last Friday (31 July)", "on
+  Sunday (Aug 2)") and resolved against the publication date. The publication
+  date is now only the FALLBACK, kept alongside as `published_date`.
+  Before this the candidate's `published_at` was carried straight through, so
+  every incident was filed on the day it was REPORTED. Measured on three rows
+  published that morning: the python worksite story happened Jul 30 and was
+  filed Aug 3; the high-beam chase Jul 31, filed Aug 3; the pliers assault
+  Aug 2, filed Aug 3. The date drives the feed sort AND the slug suffix, so a
+  wrong one is visible in three places. `_sanitise_event_date` rejects a date
+  after publication (a model resolving "Sunday" the wrong way) or more than 5
+  years before it (a misparse of some older date in the copy), falling back
+  rather than filing a row under a wrong date. Guard:
+  `test_stage2_guardrails.py`.
 - **Summaries are written in paragraphs**, separated by a blank line (`\n\n`),
   2-4 sentences each. Added 2026-08-04; before it, every one of the 163
   published summaries was a single unbroken block and 35 ran past 900

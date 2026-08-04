@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import sys
+from datetime import date
 
 import anthropic
 from dotenv import load_dotenv
@@ -93,6 +94,54 @@ _MSM_DOMAINS = [
 # Focused on structured metadata extraction only. Creative writing
 # is handled separately by Sonnet using STAGE2_SYSTEM_PROMPT.
 
+def _sanitise_event_date(raw, published: str | None) -> str | None:
+    """
+    Validate the model's `event_date` against the publication date.
+
+    Returns an ISO date, or None when the model gave nothing usable — the
+    caller then falls back to the publication date. Never raises: a bad date
+    must not cost the whole draft.
+
+    Two rules, both because a wrong date is worse than a missing one:
+      - an event cannot happen AFTER it was reported, so anything later than
+        the publication date is rejected outright (a model resolving "Sunday"
+        in the wrong direction produces exactly this);
+      - an event more than ~5 years before publication is almost certainly a
+        misparse of some other date in the copy (a court case citing a 2015
+        conviction). Genuine deep-history rows come through the backfill agent,
+        which sets the date explicitly.
+    """
+    if not isinstance(raw, str):
+        return None
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", raw.strip())
+    if not m:
+        return None
+    try:
+        event = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
+
+    pub = None
+    if isinstance(published, str):
+        pm = re.match(r"(\d{4})-(\d{2})-(\d{2})", published.strip())
+        if pm:
+            try:
+                pub = date(int(pm.group(1)), int(pm.group(2)), int(pm.group(3)))
+            except ValueError:
+                pub = None
+
+    if pub is not None:
+        if event > pub:
+            logger.warning("Stage 2 event_date %s is after publication %s — ignoring",
+                           event, pub)
+            return None
+        if (pub - event).days > 5 * 365:
+            logger.warning("Stage 2 event_date %s is >5y before publication %s — ignoring",
+                           event, pub)
+            return None
+    return event.isoformat()
+
+
 _CLASSIFY_SYSTEM_PROMPT = """\
 You are a metadata classifier for Yishun Again, a satirical incident archive \
 for Yishun, Singapore.
@@ -111,8 +160,21 @@ Return JSON only — no commentary, no markdown fences:
   "confidence": float (0.0-1.0),
   "deaths": integer | null,
   "injuries": integer | null,
-  "political": boolean
+  "political": boolean,
+  "event_date": "YYYY-MM-DD" | null
 }
+
+EVENT DATE (event_date):
+The date the incident HAPPENED, which is usually NOT the date the article was
+published. Read it out of the article text and resolve it against the supplied
+publication date:
+- "on July 30 at about 3.57pm"        -> that July's 30th
+- "Last Friday (31 July)"             -> 2026-07-31
+- "on Sunday (Aug 2)"                 -> 2026-08-02
+- "yesterday" / "on Tuesday"          -> resolve relative to the publication date
+Return null if the article states no event date at all — do NOT guess, and do
+NOT fall back to the publication date yourself; the caller handles that.
+The event can never be AFTER publication, so never return a later date.
 
 Classification guide:
 - heart: Good news, community wins, positive stories
@@ -569,6 +631,25 @@ def _classify(client: anthropic.Anthropic, content: dict) -> dict:
     result["confidence"] = 0.0 if result["political"] else \
         max(0.0, min(1.0, float(result.get("confidence") or 0.0)))
 
+    # ── Event date ───────────────────────────────────────────────────────────
+    # `incident_date` is contractually the date the event HAPPENED. Until
+    # 2026-08-04 nothing ever extracted one: the pipeline carried the
+    # candidate's `published_at` straight through, so every incident was filed
+    # under the date its article ran. Measured on three rows published that day:
+    #
+    #   python worksite    event Jul 30 ("on July 30 at about 3.57pm")   filed Aug 3
+    #   high-beam chase    event Jul 31 ("Last Friday (31 July)")        filed Aug 3
+    #   pliers assault     event Aug 2  ("on Sunday (Aug 2)")            filed Aug 3
+    #
+    # The date is also what the feed sorts on and what the slug is stamped
+    # with, so a wrong one is visible in three places at once.
+    #
+    # Publication date remains the FALLBACK — a story that never states when it
+    # happened is still better filed on its report date than not at all — but it
+    # is no longer the default.
+    result["event_date"] = _sanitise_event_date(
+        result.get("event_date"), content.get("date"))
+
     # deaths/injuries: normalize to int or None; never negative.
     # Tolerant of non-numeric model output (e.g. "several") — falls back to None
     # rather than crashing the whole candidate (QA M5).
@@ -846,7 +927,16 @@ def write_stage2(content: dict) -> dict:
         # incident instead of minting a duplicate. Only added when present so a
         # dateless item stays honestly dateless (and never overrides item['date']
         # with an empty value in build_queue_row's {**item, **draft} merge).
-        **({"date": content["date"]} if content.get("date") else {}),
+        # `date` becomes incidents.incident_date, which is contractually the
+        # date the event HAPPENED. Prefer the event date Haiku read out of the
+        # article; fall back to the publication date only when the article
+        # states none. Before 2026-08-04 this was ALWAYS the publication date,
+        # so incidents were filed on the day they were reported — up to 4 days
+        # late on the rows measured. `published_date` is kept alongside so the
+        # difference is visible downstream rather than lost.
+        **({"date": classification.get("event_date") or content["date"]}
+           if (content.get("date") or classification.get("event_date")) else {}),
+        **({"published_date": content["date"]} if content.get("date") else {}),
         # Legal guardrail #4 — political flag propagates to the queue row
         "political":          classification.get("political", False),
         # Groundedness verdict. build_queue_row spreads the draft into

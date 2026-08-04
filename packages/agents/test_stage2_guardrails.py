@@ -249,6 +249,51 @@ with mock.patch.object(sw, "_get_client", return_value=fake2), \
 check("non-political content still calls the writer model", fake2.messages.create.call_count == 2)
 check("non-political result carries the drafted title", result2["title"] == "Fire breaks out in Yishun flat")
 
+# ── event_date: incident_date is the EVENT date, not the report date ────────
+# REGRESSION (found 2026-08-04). Nothing ever extracted an event date; the
+# candidate's publication date was carried straight through, so incidents were
+# filed on the day they were REPORTED:
+#   python worksite   event Jul 30 ("on July 30 at about 3.57pm")  filed Aug 3
+#   high-beam chase   event Jul 31 ("Last Friday (31 July)")       filed Aug 3
+#   pliers assault    event Aug 2  ("on Sunday (Aug 2)")           filed Aug 3
+print("\nevent date:")
+
+r = sw._classify(_fake_client({**base, "event_date": "2026-07-30"}),
+                 {"title": "x", "content": "y", "date": "2026-08-03"})
+check("an event date before publication is kept", r["event_date"] == "2026-07-30")
+
+r = sw._classify(_fake_client({**base, "event_date": None}),
+                 {"title": "x", "content": "y", "date": "2026-08-03"})
+check("no event date -> None (caller falls back to publication)", r["event_date"] is None)
+
+# An event cannot happen after it was reported. A model resolving "Sunday" the
+# wrong way produces exactly this, and it would date the row into the future.
+r = sw._classify(_fake_client({**base, "event_date": "2026-08-09"}),
+                 {"title": "x", "content": "y", "date": "2026-08-03"})
+check("an event date AFTER publication is rejected", r["event_date"] is None)
+
+r = sw._classify(_fake_client({**base, "event_date": "2026-08-03"}),
+                 {"title": "x", "content": "y", "date": "2026-08-03"})
+check("same-day event is valid", r["event_date"] == "2026-08-03")
+
+# >5y before publication is almost certainly a misparse of some other date in
+# the copy (a court story citing an old conviction).
+r = sw._classify(_fake_client({**base, "event_date": "2010-01-01"}),
+                 {"title": "x", "content": "y", "date": "2026-08-03"})
+check("an implausibly old event date is rejected", r["event_date"] is None)
+
+for junk in ["not a date", "2026-13-45", "", 20260803, {"d": 1}]:
+    r = sw._classify(_fake_client({**base, "event_date": junk}),
+                     {"title": "x", "content": "y", "date": "2026-08-03"})
+    check(f"malformed event_date {junk!r} -> None (no crash)", r["event_date"] is None)
+
+# No publication date to compare against: accept a well-formed date rather than
+# discard the only signal available.
+r = sw._classify(_fake_client({**base, "event_date": "2026-07-30"}),
+                 {"title": "x", "content": "y"})
+check("event date survives when there is no publication date",
+      r["event_date"] == "2026-07-30")
+
 # ── Model selection ─────────────────────────────────────────────────────────
 print("\nwrite model:")
 check("MODEL_WRITE is Haiku", sw.MODEL_WRITE == "claude-haiku-4-5-20251001")
