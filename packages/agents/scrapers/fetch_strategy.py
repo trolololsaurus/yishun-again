@@ -36,6 +36,10 @@ _DIRECT_TIMEOUT        = 15.0
 _WAYBACK_API_TIMEOUT   = 8.0
 _WAYBACK_FETCH_TIMEOUT = 25.0
 _WAYBACK_API           = "https://archive.org/wayback/available"
+# Second endpoint, not a preference: /wayback/available rate-limits far more
+# aggressively (429 on every call during the 2026-08-04 backfill) while CDX
+# answered 200 for the same URLs in the same minute.
+_WAYBACK_CDX           = "https://web.archive.org/cdx/search/cdx"
 
 
 @dataclass
@@ -142,6 +146,26 @@ class WaybackSnapshot(FetchStrategy):
                 return closest["url"]
         except Exception as exc:
             logger.debug("WaybackSnapshot: availability API error for %s: %s", url[:80], exc)
+
+        # CDX fallback. `/wayback/available` rate-limits hard — it answered 429
+        # for every request during the 2026-08-04 date backfill, which silently
+        # cost this whole rung. The CDX endpoint answered 200 for the same URLs
+        # in the same minute, so it is tried second rather than not at all.
+        try:
+            resp = httpx.get(
+                _WAYBACK_CDX,
+                params={"url": url, "output": "json", "limit": -1,
+                        "fl": "timestamp,original", "filter": "statuscode:200"},
+                headers=BROWSER_HEADERS, timeout=_WAYBACK_API_TIMEOUT,
+            )
+            resp.raise_for_status()
+            rows = resp.json()
+            # First row is the header ["timestamp","original"].
+            if isinstance(rows, list) and len(rows) > 1:
+                timestamp, original = rows[-1][0], rows[-1][1]
+                return f"https://web.archive.org/web/{timestamp}/{original}"
+        except Exception as exc:
+            logger.debug("WaybackSnapshot: CDX error for %s: %s", url[:80], exc)
         return None
 
 

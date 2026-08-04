@@ -171,11 +171,32 @@ def strip_html(text: str) -> str:
 # request), then the article's own meta tags. Deliberately NO LLM fallback —
 # this runs on every live pass, unlike the one-off backfill.
 
+# Attribute ORDER is not guaranteed. These patterns originally required
+# `property=...` before `content=...`, so a publisher emitting
+# `<meta content="2026-07-29" property="article:published_time">` — valid HTML,
+# and what several CMSs produce — matched nothing and the article went undated.
+# Each meta key is therefore tried in both orders.
+_PUB_META_KEYS = [
+    "article:published_time",
+    "og:published_time",
+    "datePublished",
+    "publishdate",
+    "pubdate",
+    "date",
+    "DC.date.issued",
+]
 _PUB_META_PATTERNS = [
-    r'property=["\']article:published_time["\'][^>]+content=["\']([^"\']+)',
+    # JSON-LD / any inline JSON — order-independent by construction.
     r'"datePublished"\s*:\s*"([^"]+)"',
-    r'itemprop=["\']datePublished["\'][^>]+content=["\']([^"\']+)',
+    r'"uploadDate"\s*:\s*"([^"]+)"',
     r'<time[^>]+datetime=["\']([^"\']+)',
+] + [
+    p
+    for key in _PUB_META_KEYS
+    for p in (
+        rf'(?:property|name|itemprop)=["\']{re.escape(key)}["\'][^>]*?content=["\']([^"\']+)',
+        rf'content=["\']([^"\']+)["\'][^>]*?(?:property|name|itemprop)=["\']{re.escape(key)}["\']',
+    )
 ]
 _URL_DATE_RE  = re.compile(r"/(\d{4})/(\d{1,2})/(\d{1,2})(?:/|\b)")
 _ISO_DATE_RE  = re.compile(r"(\d{4})-(\d{2})-(\d{2})")

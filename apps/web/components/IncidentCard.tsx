@@ -15,7 +15,7 @@ interface Props {
 export function IncidentCard({ incident, style }: Props) {
   const {
     slug, title, classification, custom_label, severity, corroboration_count, published_at, incident_date,
-    area_name, is_milestone, is_developing, update_count, first_reported_at,
+    area_name, is_milestone, is_developing, first_reported_at,
     source_urls, source_timeline, latest_source_role,
   } = incident
 
@@ -43,7 +43,15 @@ export function IncidentCard({ incident, style }: Props) {
     ? `${formatDuration(new Date(first_reported_at), new Date(verdictDate))} to ${verdictNoun(vEntry.role)}`
     : null
 
-  const reportCount = (update_count ?? 0) + 1
+  // Derived from the SAME array as `sourceCount`, not from `update_count`.
+  //
+  // `update_count` counts operator UPDATE EVENTS in the War Room, not reports.
+  // Consolidation merges a whole cluster of articles in a single write without
+  // touching it, so the two drift apart by construction — the Orchid Park car
+  // fire showed "5 sources" and "3 reports" on the same card, which reads as a
+  // contradiction because it is one. A report IS a source article; there is no
+  // third number to show.
+  const reportCount = sourceCount
 
   return (
     <Link

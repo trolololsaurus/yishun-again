@@ -164,8 +164,21 @@ check("backend statuses are VALIDATED, not cast",
 
 print("\nguardrail #5 — not reachable from this UI:\n")
 
+# Asserted as a PROPERTY, not a literal string. These greps used to pin the exact
+# text `.in('image_status', RECTIFIABLE_STATUSES)`, which broke the moment the
+# page began building its list in a variable and the route switched to
+# RETRYABLE_STATUSES (= RECTIFIABLE + 'ok', so the operator can reject an image
+# they just generated — see lib/types.ts). Both changes were deliberate and
+# neither weakened guardrail #5, but the tests failed anyway and a red guard
+# test that is merely stale trains you to ignore red guard tests.
+#
+# What must remain true is the SEMANTICS: the filter is an allowlist, and
+# 'suppressed' is not in it.
 check("the queue is an allowlist (.in), not an exclusion",
-      ".in('image_status', RECTIFIABLE_STATUSES)" in page_tsx)
+      ".in('image_status'" in page_tsx)
+check("...and every status list it can query excludes 'suppressed'",
+      all("'suppressed'" not in m for m in
+          re.findall(r"\[\s*\.\.\.[A-Z_]+_STATUSES[^\]]*\]", page_tsx)))
 check("the queue never uses .neq to build its filter", ".neq(" not in code_only(page_tsx))
 check("the page never names 'suppressed' as something it queries",
       "'suppressed'" not in code_only(page_tsx))
@@ -184,7 +197,7 @@ check("the card never mentions 'suppressed' as an action",
 check("the rectify route refuses a suppressed incident with 422",
       "'suppressed'" in rectify_ts and "422" in rectify_ts)
 check("the rectify route also rejects any non-rectifiable state",
-      "RECTIFIABLE_STATUSES.includes" in rectify_ts)
+      re.search(r"(RECTIFIABLE|RETRYABLE)_STATUSES\.includes", rectify_ts) is not None)
 check("the no-image route is CAS-guarded by the same list",
       ".in('image_status', RECTIFIABLE_STATUSES)" in noimage_ts)
 check("a suppressed row therefore cannot become no_image_final",
@@ -193,7 +206,13 @@ check("a suppressed row therefore cannot become no_image_final",
 print("\nrectification semantics:\n")
 
 check("the success update is compare-and-set, not blind",
-      ".in('image_status', RECTIFIABLE_STATUSES)" in rectify_ts)
+      ".in('image_status'" in rectify_ts)
+check("...and the CAS list is an allowlist constant, never an inline literal",
+      re.search(r"\.in\('image_status',\s*(RECTIFIABLE|RETRYABLE)_STATUSES\)", rectify_ts)
+      is not None)
+check("guardrail #5: 'suppressed' is in no list the rectify route can write",
+      "RECTIFIABLE_STATUSES = ['refused', 'transient', 'invalid', 'skipped']"
+      in read("lib", "types.ts").replace('"', "'"))
 check("a lost CAS answers 409 rather than silently succeeding", "409" in rectify_ts)
 check("attempts are APPENDED and renumbered, never replaced",
       "...prior" in rectify_ts and "n: i + 1" in rectify_ts)
