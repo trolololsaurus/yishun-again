@@ -78,9 +78,25 @@ steps:
       - $_REGION
       - --platform
       - managed
-      # IAM-protected — never expose the pipeline endpoints publicly
-      # (docs/WAR_ROOM_DEPLOY.md §8). Callers need roles/run.invoker.
-      - --no-allow-unauthenticated
+      # Auth is OPS_TOKEN, not Cloud Run IAM. Every route except /health is
+      # behind main.py::_require_ops_token (hmac.compare_digest; 503 if the
+      # server has no token), so the shared secret is the gate.
+      #
+      # This said --no-allow-unauthenticated until 2026-08-04 and it is the
+      # single reason the art pipeline never produced an image. IAM wants a
+      # Google-signed OIDC token in `Authorization`; the War Room runs on
+      # Vercel, not GCP, and lib/artGenerate.ts sends only `X-Ops-Token`. Every
+      # /art/generate call died at the edge with "403 ... Empty Authorization
+      # header value" and never reached FastAPI. Cloud Scheduler was unaffected
+      # (it runs as yishun-scheduler@, still bound as an invoker), so the daily
+      # chain kept working and hid it.
+      #
+      # Note --no-allow-unauthenticated does not merely *omit* a binding, it
+      # REWRITES the service IAM policy and drops allUsers. So fixing this by
+      # hand does not stick: a deploy through this file silently reverts it, and
+      # the only symptom is /rectify cards going transient with empty prompt
+      # boxes. Changing it here is what makes the fix survive the next build.
+      - --allow-unauthenticated
       # These MUST match the canonical deploy in CLAUDE.md: a daily pass runs
       # 5–20 min, so --timeout=3600 is required (the 300 s default kills it on
       # a first-time deploy through this file), 1Gi matches the documented

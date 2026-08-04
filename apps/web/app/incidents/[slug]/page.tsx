@@ -3,7 +3,7 @@ import { Suspense }      from 'react'
 import { notFound }      from 'next/navigation'
 import Link              from 'next/link'
 import { supabase }      from '@/lib/supabase'
-import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, fmtDate, formatDuration, formatDurationGap, lastVerdictEntry, verdictNoun, collapseTimelineByDate, sharedLocationLabel, dateFromUrl, toParagraphs, uniqueSources } from '@/lib/utils'
+import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, fmtDate, formatDuration, formatDurationGap, lastVerdictEntry, verdictNoun, collapseTimelineByDate, sharedLocationLabel, dateFromUrl, toParagraphs, uniqueSources, canonicalUrl } from '@/lib/utils'
 import { ShareButton }   from './ShareButton'
 import { UTMLogger }     from '@/components/UTMLogger'
 import { SITE_URL }      from '@/lib/site'
@@ -244,14 +244,19 @@ export default async function IncidentPage({ params }: Props) {
           the incident date, which is the EVENT date and routinely differs from
           when a given outlet ran the story. */}
       {(() => {
+        // Keyed on the CANONICAL url. A timeline entry recorded without a
+        // tracking parameter would otherwise fail to match the same article in
+        // source_urls carrying one, and the link would render "Undated" while
+        // its date sat in the row.
         const urlDate = new Map<string, string>()
         for (const entry of timeline) {
-          if (entry.source_url && entry.date && !urlDate.has(entry.source_url)) {
-            urlDate.set(entry.source_url, entry.date)
+          if (entry.source_url && entry.date) {
+            const key = canonicalUrl(entry.source_url)
+            if (!urlDate.has(key)) urlDate.set(key, entry.date)
           }
         }
         const dateFor = (url: string): string | null =>
-          urlDate.get(url) ?? dateFromUrl(url)
+          urlDate.get(canonicalUrl(url)) ?? dateFromUrl(url)
 
         // Dated links first (earliest → latest); undated ones sink to the end.
         const sorted = [...sourceUrls].sort((a, b) =>
