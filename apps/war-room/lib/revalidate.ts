@@ -35,7 +35,12 @@ const REVALIDATE_TIMEOUT_MS = 10_000
  */
 export async function revalidateIncident(slug: string): Promise<RevalidateResult> {
   const base   = (process.env.NEXT_PUBLIC_SITE_URL ?? '').replace(/\/+$/, '')
-  const secret = process.env.REVALIDATE_SECRET ?? ''
+  // .trim() to match the receiving end. A secret pasted into the Vercel
+  // dashboard can carry a trailing newline; the two sides then differ by one
+  // invisible byte and every revalidation 401s, which surfaces to the operator
+  // as "image saved but the page is stale" with no way to tell that from a
+  // genuinely wrong secret. Same lesson as main.py::_require_ops_token.
+  const secret = (process.env.REVALIDATE_SECRET ?? '').trim()
 
   if (!base || !secret) {
     return {

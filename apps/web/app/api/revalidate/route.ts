@@ -21,8 +21,16 @@ export async function POST(req: Request) {
   const { success } = rateLimit(getIp(req), 10)
   if (!success) return NextResponse.json({ error: 'Too many requests' }, { status: 429 })
 
-  const secret = process.env.REVALIDATE_SECRET
-  const auth   = req.headers.get('authorization') ?? ''
+  // .trim() both sides, for the reason main.py::_require_ops_token already
+  // documents about OPS_TOKEN ("this cost an hour once"): a secret pasted into
+  // the Vercel dashboard can carry a trailing newline or space that never
+  // survives the HTTP hop. The two values then differ by one invisible byte and
+  // every call 401s with nothing in the logs to explain it — indistinguishable
+  // from a genuinely wrong token. It does not weaken the comparison: the
+  // trimmed values are still compared in constant time, and whitespace is not
+  // part of any legitimate secret.
+  const secret = (process.env.REVALIDATE_SECRET ?? '').trim()
+  const auth   = (req.headers.get('authorization') ?? '').trim()
   // An unset secret answers 401 like any bad token — a distinct 500 would
   // advertise the misconfiguration to outsiders.
   if (!secret || !safeCompare(auth, `Bearer ${secret}`)) {
