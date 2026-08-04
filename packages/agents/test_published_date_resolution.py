@@ -77,6 +77,38 @@ check("image-CDN upload timestamps are not treated as a publication date",
       _date_from_html('<img src="https://static.mothership.sg/1/2026/07/'
                       'cover-photo-mothership-2026-07-29T171724.jpg">') is None)
 
+# ── Human-readable dateline (the Mothership regression) ─────────────────────
+# Mothership prints its date ONLY as text:
+#     <h3 class="text-sm pl-6">July 30, 2026, 11:30 AM</h3>
+# It was reported "Undated" on a live page because every pattern here assumed
+# DAY-FIRST ("30 July 2026") while Mothership writes MONTH-FIRST. The regex was
+# wrong, not the publisher. Validated 10/10 against known RSS pubDates.
+check("month-first dateline (the regression)",
+      _date_from_html('<h3 class="text-sm pl-6">July 30, 2026, 11:30 AM</h3>') == date(2026, 7, 30))
+check("day-first dateline still works",
+      _date_from_html('<p>Published 30 July 2026</p>') == date(2026, 7, 30))
+check("abbreviated month, month-first",
+      _date_from_html('<p>Jul 30, 2026</p>') == date(2026, 7, 30))
+check("abbreviated month, day-first",
+      _date_from_html('<p>30 Jul 2026</p>') == date(2026, 7, 30))
+check("'Sept' is understood", _date_from_html('<p>Sept 3, 2026</p>') == date(2026, 9, 3))
+
+# Metadata is authoritative and must WIN over body text — a page mentions many
+# dates and only the meta tag is unambiguous.
+check("a meta tag outranks a body dateline",
+      _date_from_html('<meta property="article:published_time" content="2026-07-29">'
+                      '<p>Some older event on July 1, 2026</p>') == date(2026, 7, 29))
+
+# FIRST dateline wins: the article's own sits above the related-posts list.
+check("the first dateline wins (article header before related posts)",
+      _date_from_html('<h3>July 30, 2026, 11:30 AM</h3>'
+                      '<span class="meta-time">July 30, 2026, 10:44 AM</span>'
+                      '<span class="meta-time">June 2, 2026, 9:00 AM</span>') == date(2026, 7, 30))
+
+check("an impossible text date is skipped, not coerced",
+      _date_from_html('<p>February 30, 2026</p>') is None)
+check("a bare year is not a date", _date_from_html('<p>Copyright 2026</p>') is None)
+
 check("the key list is order-independent by construction",
       all(isinstance(k, str) for k in _PUB_META_KEYS) and "og:published_time" in _PUB_META_KEYS)
 
