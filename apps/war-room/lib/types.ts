@@ -127,6 +127,25 @@ export const RECTIFIABLE_STATUSES = ['refused', 'transient', 'invalid', 'skipped
 export type RectifiableStatus = typeof RECTIFIABLE_STATUSES[number]
 
 /**
+ * Statuses the rectify ROUTE will act on. Deliberately WIDER than
+ * RECTIFIABLE_STATUSES, and the two must not be merged.
+ *
+ * RECTIFIABLE_STATUSES answers "which rows belong in the queue" — `ok` does not,
+ * because a working image is not an outstanding task.
+ * RETRYABLE_STATUSES answers "which rows may an operator act on" — `ok` does,
+ * because the operator is looking at the image they just generated and may not
+ * like it. Without this the card's own buttons started returning
+ * `422 not in a rectifiable state (ok)` the instant a render succeeded: you
+ * could generate an image but never reject one.
+ *
+ * `suppressed` is absent and must stay absent — guardrail #5 is not
+ * operator-overridable. `no_image_final` is absent because it is the terminal
+ * choice the operator makes on purpose; it leaves the queue and does not come
+ * back through this route.
+ */
+export const RETRYABLE_STATUSES = [...RECTIFIABLE_STATUSES, 'ok'] as const
+
+/**
  * Columns the /rectify server component selects.
  *
  * Lives here, NOT in RectifyCard.tsx, and that is load-bearing: RectifyCard is

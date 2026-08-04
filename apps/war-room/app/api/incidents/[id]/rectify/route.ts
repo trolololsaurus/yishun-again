@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase'
 import { validateUUID } from '@/lib/utils'
 import { generateIncidentArt, rectifyIncidentArt } from '@/lib/artGenerate'
 import { revalidateIncident } from '@/lib/revalidate'
-import { RECTIFIABLE_STATUSES } from '@/lib/types'
+import { RETRYABLE_STATUSES } from '@/lib/types'
 import type { ImageAttempt } from '@/lib/types'
 
 // Operator rectification (Track B, B4b) — actions 1 and 2.
@@ -84,8 +84,13 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
       { status: 422 },
     )
   }
-  // Also blocks 'ok' and the terminal 'no_image_final'.
-  if (!RECTIFIABLE_STATUSES.includes(incident.image_status as never)) {
+  // RETRYABLE, not RECTIFIABLE: 'ok' is allowed here so an operator can reject
+  // an image they just generated and re-roll it. Gating this on the queue's
+  // filter meant the card's own buttons began answering "not in a rectifiable
+  // state (ok)" the moment a render succeeded — you could make an image but
+  // never reject one. Still blocks the terminal 'no_image_final', and
+  // 'suppressed' was already rejected above.
+  if (!RETRYABLE_STATUSES.includes(incident.image_status as never)) {
     return NextResponse.json(
       { error: `Incident is not in a rectifiable state (${incident.image_status ?? 'null'})` },
       { status: 422 },
@@ -160,7 +165,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         image_attempts: attempts,
       })
       .eq('id', id)
-      .in('image_status', RECTIFIABLE_STATUSES)
+      .in('image_status', RETRYABLE_STATUSES)
       .select('id')
 
     if (failErr) {
@@ -176,6 +181,11 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
     return NextResponse.json({
       ok: true, status: art.status, url: null, attempts, revalidated: false,
+      // The prompt that was actually rendered from. Without this the client has
+      // no way to fill its textarea after a compose, so the operator's next
+      // edit silently REPLACES a 4000-character prompt with whatever short note
+      // they typed instead of amending it.
+      final_prompt: art.final_prompt || prompt || '',
     })
   }
 
@@ -190,7 +200,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
       image_attempts: attempts,
     })
     .eq('id', id)
-    .in('image_status', RECTIFIABLE_STATUSES)
+    .in('image_status', RETRYABLE_STATUSES)
     .select('id, slug')
 
   if (updErr) {
@@ -217,5 +227,8 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     attempts,
     revalidated: rv.ok,
     revalidate_reason: rv.reason,
+    // See the failure branch: the client needs the real prompt to put in the
+    // box, otherwise "reject and re-roll with a tweak" rewrites the whole thing.
+    final_prompt: art.final_prompt || prompt || '',
   })
 }

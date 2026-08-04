@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { RectifyList } from '@/components/RectifyCard'
 import { RECTIFIABLE_STATUSES, RECTIFY_COLUMNS } from '@/lib/types'
@@ -22,12 +23,30 @@ export const revalidate = 0
 // incident to `pending`, and both writers use it whenever art generation is
 // switched off or unconfigured. Those were never attempted. Retrying them one
 // at a time through this UI is the wrong tool — that is a backfill job.
-export default async function RectifyPage() {
+// `?include=ok` also lists incidents that already HAVE an image, so a picture
+// the operator dislikes can be re-rolled later.
+//
+// Without this, "reject and regenerate" only worked inside the session that
+// produced the image: a successful render leaves RECTIFIABLE_STATUSES, so on
+// the next page load the card was gone and the only route back to a bad image
+// was editing the database by hand. Off by default — a working image is not an
+// outstanding task and must not dilute the failure queue.
+//
+// `suppressed` is STILL excluded by construction in both branches. Guardrail #5
+// is not operator-overridable and no query here may widen to `.neq(...)`.
+export default async function RectifyPage(
+  props: { searchParams: Promise<{ include?: string }> },
+) {
+  const includeOk = (await props.searchParams).include === 'ok'
+  const statuses = includeOk
+    ? [...RECTIFIABLE_STATUSES, 'ok']
+    : [...RECTIFIABLE_STATUSES]
+
   const { data, error } = await supabase
     .from('incidents')
     .select(RECTIFY_COLUMNS)
     .eq('is_published', true)
-    .in('image_status', RECTIFIABLE_STATUSES)
+    .in('image_status', statuses)
     .order('published_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(200)
@@ -54,13 +73,37 @@ export default async function RectifyPage() {
       <h1 className="font-body font-bold text-yellow text-lg mb-2">
         IMAGE RECTIFICATION <span className="text-text-secondary">({items.length})</span>
       </h1>
-      <p className="font-body text-text-secondary text-sm mb-6">
-        Published incidents whose image failed. They are live and readable already — only the
-        picture is missing. Suppressed incidents (guardrail&nbsp;#5) never appear here.
+      <p className="font-body text-text-secondary text-sm mb-2">
+        {includeOk
+          ? 'Published incidents whose image failed, plus those that already have one so you can replace it. Every incident here is live and readable regardless.'
+          : 'Published incidents whose image failed. They are live and readable already — only the picture is missing.'}
+        {' '}Suppressed incidents (guardrail&nbsp;#5) never appear here.
+      </p>
+
+      <p className="font-body text-sm mb-6">
+        {includeOk ? (
+          <>
+            <span className="text-text-secondary">Showing incidents that already have an image too. </span>
+            <Link href="/rectify" className="text-yellow hover:underline">
+              Show only failures
+            </Link>
+          </>
+        ) : (
+          <>
+            <span className="text-text-secondary">Want to replace a picture you don’t like? </span>
+            <Link href="/rectify?include=ok" className="text-yellow hover:underline">
+              Include incidents that already have an image
+            </Link>
+          </>
+        )}
       </p>
 
       {items.length === 0
-        ? <p className="font-body text-text-secondary">Nothing to rectify.</p>
+        ? (
+          <p className="font-body text-text-secondary">
+            {includeOk ? 'No published incidents have an image yet.' : 'Nothing to rectify.'}
+          </p>
+        )
         : <RectifyList initialItems={items} />}
     </div>
   )

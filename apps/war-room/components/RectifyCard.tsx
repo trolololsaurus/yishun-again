@@ -47,6 +47,7 @@ function RectifyCard({
 }) {
   const attempts = item.image_attempts ?? []
   const [draft,   setDraft]   = useState(item.image_prompt ?? attempts.at(-1)?.prompt ?? '')
+  const [notes,   setNotes]   = useState('')
   const [busy,    setBusy]    = useState<null | 'rectify' | 'no-image'>(null)
   const [error,   setError]   = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
@@ -54,11 +55,33 @@ function RectifyCard({
   const [confirmNoImage, setConfirmNoImage] = useState(false)
 
   const shown = result?.attempts ?? attempts
+  // A render landed and is on screen waiting to be judged. This is the state the
+  // card previously could not be in: success called onResolved() immediately, so
+  // the row vanished before the operator ever saw the picture they made.
+  const reviewing = result?.status === 'ok' && !!result.url
+  const imageUrl  = result?.url ?? item.pixel_art_url
+
+  /**
+   * Send the prompt for rendering.
+   *
+   * `notes` is appended rather than replacing anything. An operator who wants
+   * "just 1 snake" types six words; before this existed those six words became
+   * the ENTIRE prompt, discarding the ~4000 characters of scene and style that
+   * produced the image they were trying to adjust. Amending is what they mean.
+   */
+  function composeSubmission(): string {
+    const base = draft.trim()
+    const add  = notes.trim()
+    if (!add) return base
+    if (!base) return add
+    return `${base}\n\nOPERATOR ADJUSTMENTS (these take priority):\n${add}`
+  }
 
   async function post(path: 'rectify' | 'no-image', body?: Record<string, unknown>) {
     setBusy(path)
     setError(null)
     setWarning(null)
+    setConfirmNoImage(false)
     try {
       const res = await fetch(`/api/incidents/${item.id}/${path}`, {
         method:  'POST',
@@ -73,11 +96,20 @@ function RectifyCard({
         return
       }
 
-      // A rectify that did not render is NOT a success — the row stays in the
-      // list with its new refusal reason so the operator can edit and try again.
       setResult({ url: data.url ?? null, status: data.status, attempts: data.attempts ?? [] })
+
+      // Fill the box with the prompt that was ACTUALLY rendered from, so the
+      // next edit is an edit. On the compose path the operator started from an
+      // empty box and has no other way to see what the model wrote.
+      if (typeof data.final_prompt === 'string' && data.final_prompt) {
+        setDraft(data.final_prompt)
+      }
+      // The adjustments have been folded into the prompt now; leaving them in
+      // the box would silently apply them twice on the next render.
+      setNotes('')
+
       if (data.status !== 'ok') {
-        setError(`Render ${data.status}. See the latest attempt below, edit the prompt and retry.`)
+        setError(`Render ${data.status}. See the latest attempt below, adjust and try again.`)
         return
       }
       if (data.revalidated === false) {
@@ -86,9 +118,9 @@ function RectifyCard({
           (data.revalidate_reason ? ` (${data.revalidate_reason})` : '') +
           ' — it will keep serving the placeholder for up to an hour.',
         )
-        return
       }
-      onResolved(item.id)
+      // Deliberately NOT resolved here. The operator judges the image and
+      // presses "Keep image" or "Reject & regenerate".
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unknown error')
     } finally {
@@ -117,18 +149,33 @@ function RectifyCard({
             {[item.area_name, item.block_number].filter(Boolean).join(' · ') || '—'}
           </div>
         </div>
-        <span className="font-body text-red uppercase tracking-widest" style={{ fontSize: '11px' }}>
+        {/* Colour by meaning. This was always text-red, so a successful render
+            announced itself in the failure colour. */}
+        <span
+          className={`font-body uppercase tracking-widest ${
+            (result?.status ?? item.image_status) === 'ok' ? 'text-green' : 'text-red'
+          }`}
+          style={{ fontSize: '11px' }}
+        >
           {result?.status ?? item.image_status ?? 'unknown'}
         </span>
       </div>
 
       <div className="px-4 py-3 space-y-3">
-        {result?.url && (
-          <img
-            src={result.url}
-            alt={`Rectified art for ${item.title}`}
-            className="w-full max-w-xl border border-border"
-          />
+        {imageUrl && (
+          <div className="space-y-1">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={imageUrl}
+              alt={`Art for ${item.title}`}
+              className="w-full border border-border"
+            />
+            {reviewing && (
+              <p className="font-body text-text-secondary" style={{ fontSize: '11px' }}>
+                Rendered just now. Keep it, or adjust the prompt below and regenerate.
+              </p>
+            )}
+          </div>
         )}
 
         {/* Every attempt, including a single one. ArtPromptModal gates this on
@@ -153,60 +200,106 @@ function RectifyCard({
           </div>
         )}
 
+        {/* WHAT TO CHANGE — the common case, so it is the visible one.
+            Nobody wants to hand-edit 4000 characters of scene description to
+            say "one snake, not two". This box is short, always starts empty,
+            and is APPENDED to the prompt rather than replacing it. */}
         <div>
           <label className="font-body text-text-secondary uppercase tracking-widest block mb-1"
                  style={{ fontSize: '11px' }}>
-            Prompt
+            What to change
           </label>
           <textarea
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            rows={10}
-            maxLength={MAX_PROMPT_CHARS}
-            className="w-full px-3 py-2 bg-bg border border-border text-text-primary font-body text-sm rounded focus:border-yellow focus:outline-none resize-y"
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            rows={3}
+            maxLength={2000}
+            placeholder={'e.g. Only one snake.\nPut the python in the foreground.\nFewer people.'}
+            className="w-full px-3 py-2 bg-bg border border-border text-text-primary font-body text-sm rounded focus:border-yellow focus:outline-none resize-y placeholder:text-text-secondary/50"
           />
-          {/* The two paths behave differently and the operator is choosing
-              between them, so the copy has to say which one they get. An empty
-              box means no prompt was ever composed (generation failed at or
-              before the HTTP boundary), and "Retry as-is" then runs the FULL
-              generate path — scene writer plus softening ladder — not the
-              single bare attempt this line used to promise unconditionally. */}
           <div className="font-body text-text-secondary" style={{ fontSize: '11px' }}>
             {draft.trim()
-              ? `${draft.length} / ${MAX_PROMPT_CHARS} · one attempt, no automatic softening`
-              : `${draft.length} / ${MAX_PROMPT_CHARS} · no prompt stored — “Retry as-is” will compose one and run the full softening ladder`}
+              ? 'Added to the prompt below — the rest of it is kept.'
+              : 'No prompt stored yet. Leave this empty and press Generate to have one written for you.'}
           </div>
         </div>
+
+        {/* The full prompt, collapsed. Available for real rewrites, out of the
+            way for the 90% case above. */}
+        <details className="border border-border rounded">
+          <summary className="px-2 py-1 font-body text-text-secondary cursor-pointer"
+                   style={{ fontSize: '11px' }}>
+            Full prompt ({draft.length} / {MAX_PROMPT_CHARS} chars) — edit directly
+          </summary>
+          <div className="px-2 py-2 border-t border-border">
+            <textarea
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              rows={12}
+              maxLength={MAX_PROMPT_CHARS}
+              className="w-full px-3 py-2 bg-bg border border-border text-text-primary font-body text-sm rounded focus:border-yellow focus:outline-none resize-y"
+            />
+            <div className="font-body text-text-secondary" style={{ fontSize: '11px' }}>
+              {draft.trim()
+                ? 'Rendered as one attempt, with no automatic softening.'
+                : 'Empty — a prompt will be composed for you, then run through the full softening ladder.'}
+            </div>
+          </div>
+        </details>
 
         {error   && <p className="font-body text-red text-sm">{error}</p>}
         {warning && <p className="font-body text-yellow text-sm">{warning}</p>}
       </div>
 
-      {/* Exactly four actions. There is deliberately NO control here that can
-          set or clear `suppressed` — guardrail #5 is not operator-overridable. */}
+      {/* Two modes. Before a render the question is "make me an image"; after
+          one it is "is this image good enough". Showing both sets at once is
+          what made this confusing — and "Retry with edits" vs "Retry as-is"
+          named an implementation detail (which prompt source is used) rather
+          than anything the operator wants.
+          There is still deliberately NO control that can set or clear
+          `suppressed` — guardrail #5 is not operator-overridable. */}
       <div className="px-4 py-3 border-t border-border flex flex-wrap gap-2 items-center">
-        <button
-          onClick={() => post('rectify', { prompt: draft })}
-          disabled={busy !== null || !draft.trim()}
-          className="px-4 py-2 bg-green text-bg font-body text-sm font-bold rounded disabled:opacity-40"
-        >
-          {busy === 'rectify' ? 'Rendering…' : 'Retry with edits'}
-        </button>
+        {reviewing ? (
+          <>
+            <button
+              onClick={() => onResolved(item.id)}
+              disabled={busy !== null}
+              className="px-4 py-2 bg-green text-bg font-body text-sm font-bold rounded disabled:opacity-40"
+            >
+              Keep image
+            </button>
 
-        <button
-          onClick={() => post('rectify')}
-          disabled={busy !== null}
-          className="px-4 py-2 border border-yellow text-yellow font-body text-sm rounded disabled:opacity-40"
-        >
-          Retry as-is
-        </button>
+            <button
+              onClick={() => post('rectify', { prompt: composeSubmission() })}
+              disabled={busy !== null}
+              className="px-4 py-2 border border-yellow text-yellow font-body text-sm rounded disabled:opacity-40"
+              title="Discard this render and generate another from the prompt below"
+            >
+              {busy === 'rectify' ? 'Regenerating…' : 'Reject & regenerate'}
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => post('rectify', draft.trim() || notes.trim()
+              ? { prompt: composeSubmission() }
+              : undefined)}
+            disabled={busy !== null}
+            className="px-4 py-2 bg-green text-bg font-body text-sm font-bold rounded disabled:opacity-40"
+          >
+            {busy === 'rectify'
+              ? 'Rendering…'
+              : draft.trim() ? 'Regenerate' : 'Generate image'}
+          </button>
+        )}
 
         <button
           onClick={() => (confirmNoImage ? post('no-image') : setConfirmNoImage(true))}
           disabled={busy !== null}
           className="px-4 py-2 border border-red text-red font-body text-sm rounded disabled:opacity-40"
         >
-          {confirmNoImage ? 'Confirm — publish without image' : 'Publish without image'}
+          {/* The incident is already published — that is what the page header
+              says. Naming this "Publish without image" implied the opposite. */}
+          {confirmNoImage ? 'Confirm — give up on an image' : 'Give up on an image'}
         </button>
 
         <button
@@ -214,7 +307,7 @@ function RectifyCard({
           disabled={busy !== null}
           className="px-4 py-2 font-body text-sm text-text-secondary hover:text-text-primary disabled:opacity-40"
         >
-          Leave pending
+          Decide later
         </button>
 
         {confirmNoImage && (
