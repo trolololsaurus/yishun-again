@@ -231,7 +231,38 @@ TIMELINE_DATE_FIXES = [
     ("yishun-ring-road-killing-sri-idayu-2016",
      "https://berita.mediacorp.sg/tonton/ehwal-semasa/mohamad-jonit-adnan-dituduh-bunuh-bekas-isteri-di-yishun-ring-road-563766",
      "2026-08-05", "2016-08-15"),
+    # The Online Citizen stamps the date into the path — /2024/07/29/ — which is
+    # exact and cannot be a timezone artefact. It carried 2024-07-28, the date
+    # of the court appearance it reports rather than the date it ran.
+    # NOTE: this URL now 404s. The date is read off the path, not a fetch.
+    ("yishun-ring-road-murder-fiqri-choo-2024",
+     "https://www.theonlinecitizen.com/2024/07/29/49-year-old-man-charged-with-murder-at-yishun-ring-road/",
+     "2024-07-28", "2024-07-29"),
 ]
+
+# ── Step 6: republish a draft that was never meant to be one ─────────────────
+REPUBLISH_SLUG = "yishun-ring-road-murder-fiqri-choo-2024"
+
+# `source_urls` and `source_timeline` on this row describe DIFFERENT Mothership
+# articles, so the archive lost one citation and left the other undated:
+#
+#   mothership.sg/2024/07/murder-involvement-yishun-man/    27 Jul, 03:55 PM
+#       the initial report — in source_timeline, MISSING from source_urls
+#   mothership.sg/2024/07/yishun-ring-road-murder-charged/  28 Jul, 11:04 AM
+#       the charging report — in source_urls, MISSING from source_timeline,
+#       so the page would print it "Undated"
+#
+# Both verified live (HTTP 200) with the bylines quoted above. Adding each to
+# the side it is missing from is what makes the row internally consistent —
+# 4 citations, every one dated.
+REPUBLISH_ADD_SOURCE_URL = "https://mothership.sg/2024/07/murder-involvement-yishun-man/"
+REPUBLISH_ADD_TIMELINE = {
+    "date": "2024-07-28",
+    "role": "update",
+    "source_url": "https://mothership.sg/2024/07/yishun-ring-road-murder-charged/",
+    "source_name": "Mothership",
+    "headline": "Affendi Bin Yusoff, 49, charged with murder over the death of Fiqri Choo Iskandar, 35",
+}
 
 TITLE_SLUG = "yishun-mcdonalds-bomb-hoax-2023"
 TITLE_WAS  = "A false bomb report at a Yishun McDon's"
@@ -634,11 +665,20 @@ def step_pub_dates(apply: bool) -> dict:
         failed += 1
         print(f"  !! UNACCOUNTED {slug} — no verified date and no recorded reason")
 
-    # Fabricated timeline dates (the resolver stamping its own run date).
+    # Wrong timeline dates — a resolver run-date stamp, or the event's date
+    # where the article's belonged.
+    #
+    # Fetched by slug rather than read out of `rows`: that list is published
+    # incidents only, and a draft awaiting publication is exactly where a date
+    # defect wants fixing — BEFORE anyone sees it. Filtering it out here made
+    # two fixes silently no-op.
     tl_fixed = 0
     for slug, url, was, now in TIMELINE_DATE_FIXES:
-        row = next((r for r in rows if r["slug"] == slug), None)
+        found = (supabase.table("incidents").select("id,slug,source_timeline")
+                 .eq("slug", slug).limit(1).execute().data or [])
+        row = found[0] if found else None
         if not row:
+            print(f"  SKIP  timeline fix — {slug} not found")
             continue
         timeline = list(row.get("source_timeline") or [])
         hit = False
@@ -664,6 +704,123 @@ def step_pub_dates(apply: bool) -> dict:
             "cohort": len(cohort)}
 
 
+# ── Step 6: republish ────────────────────────────────────────────────────────
+
+# Weights from CLAUDE.md's Chaos Index section. `chaos_contribution` is what
+# Stage 2 stores per incident; it is NULL on this row (and 27 others).
+_CHAOS_WEIGHT = {"dagger": 3.0, "clown": 1.5, "heart": -1.0}
+
+
+def step_republish(apply: bool) -> dict:
+    """Publish a finished draft, filling the gaps a normal approve would have.
+
+    The row is a complete, three-source, operator-quality draft created
+    2026-06-12 that was simply never published — `is_published` false,
+    `published_at` NULL. Everything below is what the War Room's approve path
+    (`app/api/queue/[id]/approve/route.ts`) does on the way in, done here
+    because the row is already an incident and never goes through that route:
+    art, coordinates, chaos contribution, then publish.
+
+    Art runs the SAME `art.generate_image.generate_image` the `/art/generate`
+    endpoint calls internally, so guardrail #5's suppression gate is the one in
+    `art/suppression.py` and not a reimplementation.
+    """
+    from datetime import datetime, timezone
+
+    supabase = _client()
+    rows = (supabase.table("incidents").select("*")
+            .eq("slug", REPUBLISH_SLUG).execute().data or [])
+    if not rows:
+        print(f"  SKIP  {REPUBLISH_SLUG} not found")
+        return {"fixed": 0, "failed": 1}
+    inc = rows[0]
+
+    if inc.get("is_published"):
+        print(f"  SKIP  {REPUBLISH_SLUG} is already published")
+        return {"fixed": 0, "failed": 0}
+
+    print(f"  {inc['title'][:88]}")
+    print(f"  incident_date={inc.get('incident_date')}  severity={inc.get('severity')}"
+          f"  classification={inc.get('classification')}  sources={len(inc.get('source_urls') or [])}")
+
+    patch = {"is_published": True,
+             "published_at": datetime.now(timezone.utc).isoformat()}
+
+    # ── sources: reunite source_urls with source_timeline ──
+    urls = list(inc.get("source_urls") or [])
+    if REPUBLISH_ADD_SOURCE_URL not in urls:
+        urls.append(REPUBLISH_ADD_SOURCE_URL)
+        patch["source_urls"] = urls
+        patch["corroboration_count"] = len(urls)
+        # Legacy column, capped at 5 by migration 001's CHECK.
+        patch["hype_meter"] = min(5, max(0, len(urls) - 1))
+        print(f"  source_urls         {len(inc.get('source_urls') or [])} -> {len(urls)}")
+        print(f"          + {REPUBLISH_ADD_SOURCE_URL}")
+
+    timeline = list(inc.get("source_timeline") or [])
+    if not any(e.get("source_url") == REPUBLISH_ADD_TIMELINE["source_url"] for e in timeline):
+        timeline.append(dict(REPUBLISH_ADD_TIMELINE))
+        patch["source_timeline"] = sorted(timeline, key=lambda e: e.get("date") or "")
+        print(f"  source_timeline     {len(inc.get('source_timeline') or [])} -> {len(timeline)} entries")
+        print(f"          + {REPUBLISH_ADD_TIMELINE['date']}  {REPUBLISH_ADD_TIMELINE['source_url']}")
+
+    # ── chaos_contribution ──
+    if inc.get("chaos_contribution") is None:
+        weight = _CHAOS_WEIGHT.get(inc.get("classification") or "", 0.0)
+        patch["chaos_contribution"] = round((inc.get("severity") or 0) * weight, 2)
+        print(f"  chaos_contribution  NULL -> {patch['chaos_contribution']}")
+
+    # ── coordinates ──
+    if inc.get("latitude") is None or inc.get("longitude") is None:
+        try:
+            from classifiers.geocoding import geocode_incident_with_method
+            # Positional, and the last two are asymmetric on purpose: the title
+            # is scanned for POIs AND an address, the summary for an address
+            # only — mining POIs from prose would pin every dagger story at
+            # Khoo Teck Puat. See CLAUDE.md's map-pins note.
+            coords, method = geocode_incident_with_method(
+                inc.get("block_number"), inc.get("area_name"),
+                inc.get("title"), inc.get("summary"))
+        except Exception as exc:                              # noqa: BLE001
+            coords, method = None, f"error: {exc}"
+        if coords:
+            patch["latitude"], patch["longitude"] = coords
+            print(f"  coordinates         NULL -> {coords[0]:.6f}, {coords[1]:.6f}  ({method})")
+        else:
+            # Never the Yishun centroid — an unpinned row is honest, a wrong
+            # pin is not.
+            print(f"  coordinates         unresolved ({method}) — stays unpinned")
+
+    # ── art ──
+    if not inc.get("pixel_art_url") or not inc.get("image_prompt"):
+        if not apply:
+            print("  art                 would compose the prompt and render "
+                  "(skipped in dry run — it spends a Gemini call)")
+        else:
+            from art.generate_image import generate_image
+            result = generate_image(inc).as_dict()
+            patch["image_status"] = result.get("status")
+            patch["image_prompt"] = result.get("final_prompt") or None
+            patch["image_attempts"] = result.get("attempts") or []
+            if result.get("url"):
+                patch["pixel_art_url"] = result["url"]
+            print(f"  art                 status={result.get('status')} "
+                  f"prompt={len(result.get('final_prompt') or '')} chars")
+            print(f"                      url={result.get('url')}")
+
+    print(f"  is_published        False -> True")
+
+    if not apply:
+        return {"fixed": 0, "failed": 0}
+
+    res = supabase.table("incidents").update(patch).eq("id", inc["id"]).execute()
+    if not res.data:
+        print("        !! update returned no rows — still a draft")
+        return {"fixed": 0, "failed": 1}
+    print("  published.")
+    return {"fixed": 1, "failed": 0}
+
+
 # Ordered: url_date must run before merge, which rewrites the same timeline.
 STEPS = {
     "published_at": ("1. missing published_at on live rows", step_published_at),
@@ -671,6 +828,7 @@ STEPS = {
     "url_date":     ("3. fabricated Mothership URL date",    step_url_date),
     "merge":        ("4. merge duplicate incident rows",     step_merge),
     "pub_dates":    ("5. published_at read off the articles", step_pub_dates),
+    "republish":    ("6. republish a draft never meant to be one", step_republish),
 }
 
 
