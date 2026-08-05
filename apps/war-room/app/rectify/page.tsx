@@ -1,8 +1,9 @@
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { RectifyList } from '@/components/RectifyCard'
-import { RECTIFIABLE_STATUSES, RECTIFY_COLUMNS } from '@/lib/types'
-import type { RectifyItem } from '@/lib/types'
+import { RECTIFIABLE_STATUSES, RETRYABLE_STATUSES, RECTIFY_COLUMNS, rectifyBlockReason } from '@/lib/types'
+import { incidentRefFromInput, canonicalUrl } from '@/lib/utils'
+import type { RectifyItem, RectifyBlockReason } from '@/lib/types'
 
 export const revalidate = 0
 
@@ -13,10 +14,11 @@ export const revalidate = 0
 // degrades to the placeholder — so everything listed here is already live and
 // readable; only the picture is missing.
 //
-// `suppressed` is excluded BY CONSTRUCTION via `.in(RECTIFIABLE_STATUSES)`, not
+// `suppressed` is excluded BY CONSTRUCTION via `.in(...)` on an allowlist, not
 // by filtering it out afterwards. Guardrail #5 is not operator-overridable and
 // there is deliberately no control anywhere in this view that could set or
-// clear it. Do not widen this query to `.neq('image_status', 'ok')`.
+// clear it. Do not widen any query here to `.neq('image_status', 'ok')` —
+// INCLUDING the lookup path, which is the newest way to reach a single row.
 //
 // `pending` is also excluded, and that is worth saying out loud because it is
 // the LARGEST imageless cohort: migration 014 backfills every pre-existing
@@ -32,12 +34,24 @@ export const revalidate = 0
 // was editing the database by hand. Off by default — a working image is not an
 // outstanding task and must not dilute the failure queue.
 //
-// `suppressed` is STILL excluded by construction in both branches. Guardrail #5
-// is not operator-overridable and no query here may widen to `.neq(...)`.
+// ── ?url= — one incident, found by what the operator was looking at ──
+// A hallucinated image is spotted on the PAGE, not in a queue, and 161 of the
+// 167 published incidents are `ok` and therefore invisible here by default.
+// Scrolling `?include=ok` to find the one is the wrong shape of work, so the
+// box at the top takes the public URL (or the War Room preview URL, or a bare
+// slug, or the SOURCE article's URL) and goes straight to that row.
+// It filters on RETRYABLE_STATUSES — the set `lib/types` already defines as
+// "which rows may an operator act on" — so `suppressed` stays unreachable and
+// the lookup can never act on something the card's own buttons would refuse.
 export default async function RectifyPage(
-  props: { searchParams: Promise<{ include?: string }> },
+  props: { searchParams: Promise<{ include?: string; url?: string }> },
 ) {
-  const includeOk = (await props.searchParams).include === 'ok'
+  const params    = await props.searchParams
+  const query     = (params.url ?? '').trim()
+  const includeOk = params.include === 'ok'
+
+  if (query) return <LookupView query={query} />
+
   const statuses = includeOk
     ? [...RECTIFIABLE_STATUSES, 'ok']
     : [...RECTIFIABLE_STATUSES]
@@ -51,28 +65,15 @@ export default async function RectifyPage(
     .order('id', { ascending: false })
     .limit(200)
 
-  if (error) {
-    return (
-      <div>
-        <h1 className="font-body font-bold text-yellow text-lg mb-6">IMAGE RECTIFICATION</h1>
-        <p className="font-body text-red">
-          Could not load the queue: {error.message}
-        </p>
-        <p className="font-body text-text-secondary text-sm mt-2">
-          If this mentions <code>image_status</code>, migration{' '}
-          <code>014_image_status.sql</code> has not been applied yet.
-        </p>
-      </div>
-    )
-  }
+  if (error) return <QueueError message={error.message} />
 
   const items = (data ?? []) as unknown as RectifyItem[]
 
   return (
     <div>
-      <h1 className="font-body font-bold text-yellow text-lg mb-2">
-        IMAGE RECTIFICATION <span className="text-text-secondary">({items.length})</span>
-      </h1>
+      <Header count={items.length} />
+      <LookupForm />
+
       <p className="font-body text-text-secondary text-sm mb-2">
         {includeOk
           ? 'Published incidents whose image failed, plus those that already have one so you can replace it. Every incident here is live and readable regardless.'
@@ -105,6 +106,153 @@ export default async function RectifyPage(
           </p>
         )
         : <RectifyList initialItems={items} />}
+    </div>
+  )
+}
+
+// ── The lookup ───────────────────────────────────────────────────────────────
+
+async function LookupView({ query }: { query: string }) {
+  const ref = incidentRefFromInput(query)
+
+  let slug = ref.slug
+
+  // A source article URL: match it against the incidents' own citations.
+  // Compared through `canonicalUrl` because the operator copies the clean URL
+  // out of the address bar while the scraper stored whatever it was served
+  // (`…?ref=home-trending-now`), and an exact `.contains()` would miss.
+  if (!slug && ref.sourceUrl) {
+    const { data } = await supabase
+      .from('incidents')
+      .select('slug, source_urls')
+      .eq('is_published', true)
+      .limit(1000)
+    const wanted = canonicalUrl(ref.sourceUrl)
+    slug = (data ?? []).find(
+      row => (row.source_urls ?? []).some((u: string) => canonicalUrl(u) === wanted),
+    )?.slug ?? null
+  }
+
+  if (!slug) return <NotFound query={query} reason="no_match" />
+
+  const { data, error } = await supabase
+    .from('incidents')
+    .select(RECTIFY_COLUMNS)
+    .eq('slug', slug)
+    .eq('is_published', true)
+    .in('image_status', [...RETRYABLE_STATUSES])
+    .limit(1)
+
+  if (error) return <QueueError message={error.message} />
+
+  const items = (data ?? []) as unknown as RectifyItem[]
+  if (items.length > 0) {
+    return (
+      <div>
+        <Header count={items.length} />
+        <LookupForm value={query} />
+        <p className="font-body text-text-secondary text-sm mb-6">
+          Showing the one incident matching that link.{' '}
+          <Link href="/rectify" className="text-yellow hover:underline">Back to the queue</Link>
+        </p>
+        <RectifyList initialItems={items} />
+      </div>
+    )
+  }
+
+  // Nothing actionable. Say WHY — "not found" would send the operator hunting
+  // for a row that is sitting right there, blocked or unpublished. This read
+  // selects three scalar columns and renders no controls, and the reason is
+  // classified in lib/types (which owns the status vocabulary), so this path
+  // cannot become a way around guardrail #5.
+  const { data: why } = await supabase
+    .from('incidents')
+    .select('slug, is_published, image_status')
+    .eq('slug', slug)
+    .limit(1)
+
+  return <NotFound query={query} reason={rectifyBlockReason(why?.[0])} slug={slug} />
+}
+
+const BLOCK_MESSAGE: Record<RectifyBlockReason, string> = {
+  guardrail5:
+    'Image generation is blocked for this incident by guardrail #5 (suicide or self-harm). ' +
+    'That is not operator-overridable, and there is no control here that could clear it.',
+  draft:
+    'That incident exists but is not published. Rectification only covers live incidents.',
+  no_match:
+    'No published incident matches that link. Paste the incident page URL, the source article URL, or the slug.',
+  not_actionable:
+    'That incident’s image is in a state the rectify route will not act on. ' +
+    '"pending" means art generation was never attempted — that is a backfill job, not a ' +
+    'rectification — and "no_image_final" is the terminal choice an operator already made.',
+}
+
+function NotFound({ query, reason, slug }: { query: string; reason: RectifyBlockReason; slug?: string }) {
+  const message = BLOCK_MESSAGE[reason]
+
+  return (
+    <div>
+      <Header count={0} />
+      <LookupForm value={query} />
+      <p className="font-body text-red text-sm mb-2">{message}</p>
+      {slug && (
+        <p className="font-body text-text-secondary text-sm mb-6">
+          Matched slug: <code>{slug}</code>
+        </p>
+      )}
+      <p className="font-body text-sm">
+        <Link href="/rectify" className="text-yellow hover:underline">Back to the queue</Link>
+      </p>
+    </div>
+  )
+}
+
+// ── Shared chrome ────────────────────────────────────────────────────────────
+
+function Header({ count }: { count: number }) {
+  return (
+    <h1 className="font-body font-bold text-yellow text-lg mb-2">
+      IMAGE RECTIFICATION <span className="text-text-secondary">({count})</span>
+    </h1>
+  )
+}
+
+/** A plain GET form — no client component, and it works without JS. */
+function LookupForm({ value = '' }: { value?: string }) {
+  return (
+    <form method="get" action="/rectify" className="mb-4 flex gap-2 flex-wrap items-center">
+      <input
+        type="text"
+        name="url"
+        defaultValue={value}
+        placeholder="Paste an incident URL, a source article URL, or a slug"
+        className="flex-1 min-w-[22rem] bg-surface border border-border px-2 py-1 font-body text-sm text-text-primary placeholder:text-text-secondary"
+      />
+      <button
+        type="submit"
+        className="px-3 py-1 border border-border font-body text-sm text-yellow hover:bg-surface"
+      >
+        Find
+      </button>
+      {value && (
+        <Link href="/rectify" className="font-body text-sm text-text-secondary hover:text-text-primary">
+          Clear
+        </Link>
+      )}
+    </form>
+  )
+}
+
+function QueueError({ message }: { message: string }) {
+  return (
+    <div>
+      <h1 className="font-body font-bold text-yellow text-lg mb-6">IMAGE RECTIFICATION</h1>
+      <p className="font-body text-red">Could not load the queue: {message}</p>
+      <p className="font-body text-text-secondary text-sm mt-2">
+        If this mentions <code>image_status</code>, migration{' '}
+        <code>014_image_status.sql</code> has not been applied yet.
+      </p>
     </div>
   )
 }

@@ -94,8 +94,8 @@ collection (the module-level `SystemExit` aborts the run). Run them directly:
 for f in test_*.py; do ./.venv/Scripts/python.exe "$f" || echo "FAIL $f"; done
 ```
 
-All are offline — no network, no API keys, no DB. There are **33 test files** and
-they all pass as of 2026-08-04; a red file is a real regression, not a flake.
+All are offline — no network, no API keys, no DB. There are **37 test files** and
+they all pass as of 2026-08-05; a red file is a real regression, not a flake.
 
 The web app has tests too, added 2026-08-04 — `apps/web/lib/utils.test.ts`, run
 with `npm test` from `apps/web`. There is no test framework installed: it uses
@@ -103,6 +103,20 @@ with `npm test` from `apps/web`. There is no test framework installed: it uses
 of `./utils.ts` carries the extension. It covers the three pure helpers that
 decide what an incident page *says* (`sharedLocationLabel`, `dateFromUrl`,
 `toParagraphs`), where a silent break is a factual error on a published page.
+
+The War Room has two of its own, same runner, no `npm test` script — invoke
+them directly from the repo root:
+
+```bash
+node --test apps/war-room/lib/utils.paragraphs.test.ts apps/war-room/lib/utils.incidentRef.test.ts
+```
+
+`utils.paragraphs.test.ts` is a PARITY guard: it reads both `lib/utils.ts`
+files and asserts the ported blocks are byte-identical, because the War Room
+duplicates the web app's paragraph splitting **and** its
+`canonicalUrl`/`uniqueSources` source counting (there is no `packages/shared`
+wired into either app). Change one copy and it goes red — change both or
+neither. `utils.incidentRef.test.ts` covers `/rectify`'s URL lookup box.
 
 Note for Windows: the console codepage is cp1252, so a `check()` label containing
 CJK or Tamil raises `UnicodeEncodeError` before the assertion result prints. Keep

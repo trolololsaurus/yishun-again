@@ -198,7 +198,16 @@ _PUB_META_PATTERNS = [
         rf'content=["\']([^"\']+)["\'][^>]*?(?:property|name|itemprop)=["\']{re.escape(key)}["\']',
     )
 ]
-_URL_DATE_RE  = re.compile(r"/(\d{4})/(\d{1,2})/(\d{1,2})(?:/|\b)")
+# The day segment must be the WHOLE segment — `/2018/07/13/`, not the leading
+# digits of a slug. This ended in `(?:/|\b)`, and `\b` is satisfied by the
+# boundary between a digit and a hyphen, so Mothership's dateless
+# `/2026/07/6-men-charged-yishun-rioting/` resolved to 2026-07-06 — a date
+# eighteen days BEFORE the incident, printed on the published page beside the
+# link. Mothership stamps only /YYYY/MM/ into its paths and its day is never
+# there to read; the fetch rungs below are what find it.
+# Matches apps/web `dateFromUrl`, which always required a full segment.
+# Guard: test_url_date_extraction.py.
+_URL_DATE_RE  = re.compile(r"/(\d{4})/(\d{1,2})/(\d{1,2})(?=[/?#]|$)")
 _ISO_DATE_RE  = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 _HTML_READ_CAP = 400_000   # bytes; the meta tags live in <head>
 

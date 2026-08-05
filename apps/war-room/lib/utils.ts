@@ -61,6 +61,119 @@ export function hypeMeter(hype: number): string {
   return '⚡'.repeat(hype)
 }
 
+// ── Source counting ──────────────────────────────────────────────────────────
+//
+// PORTED from apps/web/lib/utils.ts, same reason as the paragraph block below:
+// the War Room must show the operator the number readers will see. The public
+// incident page derives its ⚡ meter and its "Corroborated by N sources" line
+// from `uniqueSources(source_urls).length`, NOT from `corroboration_count` —
+// so a War Room reading the stored column shows a different bolt count on any
+// row where the two have drifted. Guard: lib/utils.paragraphs.test.ts.
+
+const TRACKING_PARAMS = new Set([
+  'ref', 'ref_src', 'ref_url', 'referrer',
+  'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id',
+  'fbclid', 'gclid', 'dclid', 'msclkid', 'igshid', 'twclid',
+  'mc_cid', 'mc_eid', '_ga', 'cmpid', 'cmp', 'spm',
+  'at_medium', 'at_campaign', 'oc',
+])
+
+export function canonicalUrl(url: string): string {
+  if (!url) return ''
+  try {
+    const u = new URL(url.trim())
+    u.hash = ''
+    u.hostname = u.hostname.toLowerCase().replace(/^www\./, '')
+    u.protocol = u.protocol.toLowerCase()
+    for (const key of [...u.searchParams.keys()]) {
+      if (TRACKING_PARAMS.has(key.toLowerCase())) u.searchParams.delete(key)
+    }
+    u.pathname = u.pathname.replace(/\/+$/, '') || '/'
+    return u.toString()
+  } catch {
+    // Unparseable — treat as distinct rather than risk merging two real sources.
+    return url.trim()
+  }
+}
+
+/** Unique source URLs, first spelling of each article kept, order preserved. */
+export function uniqueSources(urls: readonly (string | null | undefined)[] | null | undefined): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const u of urls ?? []) {
+    if (!u) continue
+    const key = canonicalUrl(u)
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(u)
+  }
+  return out
+}
+
+/** Bolts shown for a story with `sourceCount` citations: 2 sources → ⚡. */
+export function hypeFromSources(sourceCount: number | null | undefined): number {
+  return Math.max(0, (sourceCount ?? 1) - 1)
+}
+
+// ── Finding one incident from something the operator pasted ──────────────────
+
+/** Only a real absolute URL, or a bare host with a dot-TLD. Without the second
+ *  test `new URL('https://' + input)` happily parses a bare slug as a HOSTNAME,
+ *  and "yishun-cat-abuse-feb-2017" would be treated as a website. */
+const _LOOKS_LIKE_URL = /^(https?:\/\/|[\w-]+(\.[\w-]+)+(\/|$))/i
+
+/** Slug charset used everywhere a slug reaches Supabase. */
+export function sanitiseSlug(raw: string): string {
+  return raw.trim().toLowerCase().replace(/[^a-z0-9-]/g, '')
+}
+
+export interface IncidentRef {
+  /** An incidents.slug, from `/incidents/<slug>` or a bare slug. */
+  slug:      string | null
+  /** Some other URL — treated as one of the incident's own citations. */
+  sourceUrl: string | null
+}
+
+/**
+ * Resolve whatever the operator pasted into something we can look up.
+ *
+ * Three things get pasted at a rectify queue, and guessing wrong sends the
+ * operator hunting for a row that is right there:
+ *   • the public incident page   https://www.yishunagain.com/incidents/<slug>
+ *   • the War Room preview       https://warroom.yishunagain.com/incidents/<slug>
+ *   • the SOURCE article         https://www.straitstimes.com/singapore/…
+ * The first two are the same lookup; the third matches against `source_urls`.
+ * A bare slug is accepted too.
+ */
+export function incidentRefFromInput(raw: string | null | undefined): IncidentRef {
+  const text = (raw ?? '').trim()
+  if (!text) return { slug: null, sourceUrl: null }
+
+  if (!_LOOKS_LIKE_URL.test(text)) {
+    const slug = sanitiseSlug(text)
+    return { slug: slug || null, sourceUrl: null }
+  }
+
+  let parsed: URL
+  try {
+    parsed = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`)
+  } catch {
+    const slug = sanitiseSlug(text)
+    return { slug: slug || null, sourceUrl: null }
+  }
+
+  // `/incidents/<slug>` on ANY host — the public site, the War Room and
+  // localhost all serve it at that path, and which one the operator copied
+  // from is not information worth being strict about.
+  const m = parsed.pathname.match(/\/incidents\/([^/]+)\/?$/)
+  if (m) {
+    const slug = sanitiseSlug(decodeURIComponent(m[1]))
+    if (slug) return { slug, sourceUrl: null }
+  }
+
+  return { slug: null, sourceUrl: parsed.toString() }
+}
+
 export function slugify(text: string): string {
   return text
     .toLowerCase()

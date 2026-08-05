@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
-import { toParagraphs, splitSentences, PARAGRAPH_TARGET } from './utils.ts'
+import { toParagraphs, splitSentences, PARAGRAPH_TARGET, uniqueSources, hypeFromSources } from './utils.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const WEB_UTILS    = resolve(here, '../../web/lib/utils.ts')
@@ -33,6 +33,25 @@ function extractParagraphBlock(path: string): string {
   return block.replace(/\r\n/g, '\n').trimEnd()
 }
 
+/**
+ * Pull the URL-canonicalisation + source-counting block. Same duplication, same
+ * reason: the count is a factual claim ("Corroborated by N sources", the ⚡
+ * meter), and the operator must be shown the number the reader gets.
+ *
+ * The two files order their exports differently, so this ends at the close of
+ * `uniqueSources` rather than at a fixed following symbol.
+ */
+function extractSourceCountBlock(path: string): string {
+  const src = readFileSync(path, 'utf8').replace(/\r\n/g, '\n')
+  const start = src.indexOf('const TRACKING_PARAMS = new Set([')
+  assert.notEqual(start, -1, `TRACKING_PARAMS not found in ${path}`)
+  const fnAt = src.indexOf('export function uniqueSources', start)
+  assert.notEqual(fnAt, -1, `uniqueSources not found in ${path}`)
+  const close = src.indexOf('\n}\n', fnAt)
+  const end = close === -1 ? src.length : close + 3
+  return src.slice(start, end).trimEnd()
+}
+
 test('war-room paragraph logic is identical to the web copy', () => {
   assert.equal(
     extractParagraphBlock(WARROOM_UTILS),
@@ -40,6 +59,32 @@ test('war-room paragraph logic is identical to the web copy', () => {
     'apps/war-room/lib/utils.ts and apps/web/lib/utils.ts have diverged — ' +
     'change both or neither.',
   )
+})
+
+test('war-room source counting is identical to the web copy', () => {
+  assert.equal(
+    extractSourceCountBlock(WARROOM_UTILS),
+    extractSourceCountBlock(WEB_UTILS),
+    'canonicalUrl/uniqueSources have diverged between the two apps — the War ' +
+    'Room would show a different ⚡ count than the public page.',
+  )
+})
+
+test('duplicate spellings of one article count once', () => {
+  const urls = [
+    'https://stomp.straitstimes.com/a?ref=home-editors-picks',
+    'https://www.stomp.straitstimes.com/a',
+    'https://www.straitstimes.com/b',
+  ]
+  assert.equal(uniqueSources(urls).length, 2)
+  assert.equal(hypeFromSources(uniqueSources(urls).length), 1)
+})
+
+test('hype bolts are one fewer than the sources', () => {
+  assert.equal(hypeFromSources(0), 0)
+  assert.equal(hypeFromSources(1), 0)
+  assert.equal(hypeFromSources(3), 2)
+  assert.equal(hypeFromSources(null), 0)
 })
 
 test('author-supplied blank lines are honoured', () => {

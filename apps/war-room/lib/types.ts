@@ -146,6 +146,29 @@ export type RectifiableStatus = typeof RECTIFIABLE_STATUSES[number]
 export const RETRYABLE_STATUSES = [...RECTIFIABLE_STATUSES, 'ok'] as const
 
 /**
+ * Why a row the operator looked up by URL is not actionable in /rectify.
+ *
+ * The classification lives HERE rather than in the page, because this module
+ * owns the status vocabulary and the page must not: `test_rectify_guards.py`
+ * asserts the page's own code never names a status literal, so that no query
+ * there can ever be built around one. That guard is what keeps guardrail #5
+ * unreachable from the UI, and it is worth keeping blunt.
+ *
+ * `guardrail5` is a REASON, never a state the operator can leave: nothing that
+ * consumes it renders a control, only an explanation.
+ */
+export type RectifyBlockReason = 'no_match' | 'draft' | 'guardrail5' | 'not_actionable'
+
+export function rectifyBlockReason(
+  row: { is_published?: boolean | null; image_status?: string | null } | null | undefined,
+): RectifyBlockReason {
+  if (!row) return 'no_match'
+  if (!row.is_published) return 'draft'
+  if (row.image_status === 'suppressed') return 'guardrail5'
+  return 'not_actionable'
+}
+
+/**
  * Columns the /rectify server component selects.
  *
  * Lives here, NOT in RectifyCard.tsx, and that is load-bearing: RectifyCard is

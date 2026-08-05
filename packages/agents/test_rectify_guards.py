@@ -184,6 +184,31 @@ check("the page never names 'suppressed' as something it queries",
       "'suppressed'" not in code_only(page_tsx))
 check("the page lists only published incidents", ".eq('is_published', true)" in page_tsx)
 
+# The ?url= lookup (2026-08-05) added a SECOND way to reach a single row, for
+# an operator who spotted a hallucinated image on the page rather than in the
+# queue. It is the same surface with the same buttons, so it needs the same
+# allowlist — and "the queue is filtered" is no longer enough to say so.
+#
+# RECTIFY_COLUMNS is the tell: it is exactly the column set RectifyList (and
+# therefore every rectify control) is fed. Any select of it that is NOT status
+# -filtered is a path to the buttons that skipped the gate.
+_page_code = code_only(page_tsx)
+check("every select of the card's columns is status-filtered",
+      _page_code.count(".select(RECTIFY_COLUMNS)") == _page_code.count(".in('image_status'"),
+      f"-> {_page_code.count('.select(RECTIFY_COLUMNS)')} selects "
+      f"vs {_page_code.count(chr(46) + chr(105) + chr(110) + chr(40) + chr(39) + 'image_status')} filters")
+check("...and there is at least one of each",
+      _page_code.count(".select(RECTIFY_COLUMNS)") >= 1)
+# The lookup explains WHY a row is not actionable, which means classifying a
+# suppressed one. That classification belongs in lib/types with the rest of the
+# vocabulary; keeping it out of the page is what lets the guard above stay a
+# blunt "no status literals here at all".
+check("the block-reason classifier lives in lib/types, not the page",
+      "export function rectifyBlockReason" in types_ts
+      and "rectifyBlockReason" in _page_code)
+check("the page is read-only — it can never write a status back",
+      not any(w in _page_code for w in (".update(", ".insert(", ".upsert(", ".delete(")))
+
 # The card DECLARES image_status on its row type — it must never SEND one. Every
 # write it makes leaves through a fetch body, so that is what to inspect.
 _card_code = code_only(card_tsx)

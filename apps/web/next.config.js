@@ -53,6 +53,31 @@ const nextConfig = {
   async headers() {
     return [{ source: '/(.*)', headers: securityHeaders }]
   },
+  // Slugs of incidents that were merged into another row. The absorbed row is
+  // unpublished, so its page 404s — but it was live, shared and indexed, and a
+  // 404 loses that. Point it at the surviving incident instead.
+  // Permanent: the merge is an editorial judgement that these were always one
+  // event, not a temporary move.
+  // Add a line here in the same change that merges the rows.
+  async redirects() {
+    return [
+      {
+        source: '/incidents/yishun-group-knife-attack-block-243-carpark-jul-2026',
+        destination: '/incidents/yishun-ring-road-rioting-carpark-brawl-jul-2026',
+        permanent: true,
+      },
+      {
+        source: '/incidents/yishun-bus-staff-assault-fire-extinguisher-interchange',
+        destination: '/incidents/tower-transit-staff-restrain-fire-extinguisher-man-yishun-jan-2026',
+        permanent: true,
+      },
+      {
+        source: '/incidents/yishun-triple-murder-death-penalty-appeal-dismissed-nov-2014',
+        destination: '/incidents/yishun-triple-murder-wang-zhijian-block-349-2008',
+        permanent: true,
+      },
+    ]
+  },
 }
 
 module.exports = nextConfig
