@@ -83,14 +83,43 @@ def _normalise_tags(raw) -> set[str]:
     return out
 
 
+import re
+
+# A forensic "manner of death" enumeration. Pathology reports and cold-case
+# retrospectives routinely list suicide alongside homicide and accident while
+# ruling causes IN or OUT — "the case could not be conclusively ruled a
+# homicide, suicide, or accident" — which is a statement about investigative
+# uncertainty, not suicide content. It produced a real false positive:
+# yishun-schoolgirl-murder-industrial-park-oct-1989 (Liang Shan Shan, a
+# stranger homicide with no suicide/self-harm tag anywhere) was suppressed on
+# this exact sentence.
+#
+# Narrow and specific on purpose, matching the asymmetry the module already
+# documents: a match against this exemption must be unambiguous, because
+# failing to exempt costs nothing (a false-positive placeholder) while
+# over-exempting could let a genuine suicide story through. It only strips
+# this literal triad phrase — every other occurrence of "suicide" anywhere
+# else in the same text, including a second, real mention, is still caught.
+_MANNER_OF_DEATH_TRIAD = re.compile(
+    r"homicide,?\s*suicide,?\s*(?:or|and)\s*accident"
+    r"|accident,?\s*suicide,?\s*(?:or|and)\s*homicide",
+    re.IGNORECASE,
+)
+
+
 def _incident_text(incident: dict) -> str:
-    """Lowercased title + summary. Missing or non-string fields contribute ''."""
+    """Lowercased title + summary, with the manner-of-death triad stripped.
+
+    Missing or non-string fields contribute ''. See _MANNER_OF_DEATH_TRIAD for
+    why the strip happens here rather than in SUPPRESS_PHRASES.
+    """
     parts = []
     for key in ("title", "summary"):
         value = incident.get(key)
         if isinstance(value, str):
             parts.append(value)
-    return " ".join(parts).lower()
+    text = " ".join(parts).lower()
+    return _MANNER_OF_DEATH_TRIAD.sub(" ", text)
 
 
 def suppress_image(incident: dict) -> bool:

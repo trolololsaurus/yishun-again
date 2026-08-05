@@ -81,6 +81,56 @@ check("'self harm' unhyphenated in prose suppresses",
 check("phrase matching is case-insensitive",
       sup.suppress_image({"tags": [], "title": "SUICIDE AT YISHUN", "summary": ""}))
 
+print("\nmanner-of-death triad — forensic uncertainty is not suicide content:\n")
+
+# The real false positive, 2026-08-05: a stranger-homicide cold case
+# (Liang Shan Shan, 1989) got suppressed on "could not be conclusively ruled a
+# homicide, suicide, or accident" — a forensic classification, not a suicide
+# story. No suicide/self-harm tag anywhere on this incident.
+check("murder cold case with an undetermined-manner sentence is NOT suppressed",
+      sup.suppress_image({
+          "tags": ["homicide", "murder", "missing person", "decomposed body"],
+          "title": "Schoolgirl's body found decomposed at Yishun Industrial Park after two weeks missing",
+          "summary": ("The dismembered and highly decomposed remains of a 17-year-old were "
+                       "discovered in a forested vacant area. The case could not be conclusively "
+                       "ruled a homicide, suicide, or accident, though the condition of the "
+                       "victim's skirt suggested possible sexual assault."),
+      }) is False)
+check("the reordered triad (accident, suicide, or homicide) is also exempt",
+      sup.suppress_image({
+          "tags": [],
+          "title": "t",
+          "summary": "Investigators could not rule out accident, suicide, or homicide.",
+      }) is False)
+check("'and' instead of 'or' in the triad is also exempt",
+      sup.suppress_image({
+          "tags": [],
+          "title": "t",
+          "summary": "The pathologist listed homicide, suicide and accident as possibilities.",
+      }) is False)
+
+# The exemption must not become a loophole: a genuine suicide/self-harm story
+# is caught NORMALLY even when a manner-of-death triad also appears somewhere
+# in the same text — the triad only removes its own literal span.
+check("a real suicide mention alongside an unrelated triad still suppresses",
+      sup.suppress_image({
+          "tags": [],
+          "title": "t",
+          "summary": ("An earlier case nearby was ruled a homicide, suicide, or accident "
+                       "with no charges filed. In this incident, police confirmed the man "
+                       "took his own life at the same block."),
+      }))
+check("attempted-suicide rescue story (real, tagged) is still suppressed",
+      sup.suppress_image({
+          "tags": ["attempted suicide", "rescue", "overhead bridge", "mental health crisis"],
+          "title": "Woman caught mid-fall from overhead bridge roof on Yishun Ave 2",
+          "summary": ("A 30-year-old woman was rescued by SCDF officers after being spotted "
+                       "standing on the roof of an overhead bridge. She was later arrested "
+                       "for attempted suicide."),
+      }))
+check("bare 'suicide' with no triad wording still suppresses as before",
+      sup.suppress_image({"tags": [], "summary": "Police ruled it a suicide."}))
+
 print("\ntotality — never raises, fails closed:\n")
 
 check("tags=None does not raise and does not suppress",
