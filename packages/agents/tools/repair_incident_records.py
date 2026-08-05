@@ -136,6 +136,81 @@ BAD_DATE_URL   = "https://mothership.sg/2026/07/6-men-charged-yishun-rioting/"
 BAD_DATE_WAS   = "2026-07-06"
 BAD_DATE_IS    = "2026-07-29"
 
+# ── Step 5: published_at that is neither a publish date nor an article date ──
+#
+# 12 published rows carry a `published_at` that is not their Yishun Again
+# publish date (the other 152 are within a day of `created_at`). They came from
+# an early-June-2026 backfill that stored a SOURCE date instead — except most of
+# them are not real source dates either, but first-of-month/year placeholders:
+# 1989-01-01 for an October story, 1992-04-01, 2015-09-01, 2019-11-01,
+# 2022-07-01.
+#
+# EVERY DATE BELOW WAS READ OFF THE ARTICLE, and is quoted in its comment. This
+# is a hand-verified table on purpose: `scrapers.resolve_published_at()` was run
+# over all 12 rows first and cannot be trusted on this cohort —
+#   - coconuts.co (a Dec-2015 story) resolved to TODAY
+#   - two source URLs are dead 404s that still "resolved" to a date
+#   - en.wikipedia.org resolved to a revision date, which is not a publication
+#     date at all
+#   - and it is systematically a day out on articles filed in the SGT evening,
+#     because it reads the UTC date. This archive is Singaporean; the SGT date
+#     is the right one.
+# Writing its output would have replaced fake dates with different fake dates.
+#
+# The rule applied: `published_at` = the publication date of the EARLIEST source
+# article, i.e. when the story was first published anywhere we cite.
+PUB_DATE_FIXES = {
+    # Coconuts byline: "Dec 29, 2015 | 10:42am Singapore time". The earlier
+    # Mothership URL (mothership.sg/2015/12/alleged-yishun-cat-killer...) is a
+    # dead 404 and its day is unknowable, so the earliest VERIFIABLE date wins.
+    "yishun-cat-killings-serial-mutilation-2015-2016": "2015-12-29",
+    # CNA JSON-LD: "datePublished": "2021-07-02T14:12:51+08:00". Both the stored
+    # timeline entry and the resolver said 2022-07-13; the publisher's own
+    # structured data says otherwise. The only other sources are a Wikipedia
+    # page (undated) and 2022 sentencing coverage.
+    "yishun-infant-murder-mohamed-aliff-2019": "2021-07-02",
+    # eLitigation, PP v Wang Zhijian [2012] SGHC 238, Decision Date:
+    # "30 November 2012". The archive holds no 2008 reporting on this case —
+    # its earliest cited document is the High Court judgment.
+    "yishun-triple-murder-wang-zhijian-block-349-2008": "2012-11-30",
+    # Mothership byline: "July 06, 2022, 08:18 PM".
+    "kurt-tay-void-deck-fight-yishun-2022": "2022-07-06",
+    # Mothership byline: "October 03, 2018, 07:43 PM". The other source (Stomp)
+    # is a dead 404. Note the article says the events were Feb 2016, which does
+    # not match this row's incident_date of 2015-12-22 — flagged, not touched;
+    # that is a different column and a different question.
+    "yishun-kurt-tay-lewd-flyers-harassment-2015": "2018-10-03",
+    # malaymail stamps the date into the path: /news/singapore/2025/09/26/.
+    # A publisher-stamped path cannot be a timezone or Wayback artefact.
+    "yishun-noise-murder-koh-ah-hwee-block-323-2025": "2025-09-26",
+    # CNA JSON-LD: "datePublished": "2024-01-10T13:39:26+08:00".
+    "yishun-kurt-tay-intimate-image-conviction-2026": "2024-01-10",
+}
+
+# Left alone deliberately, with the reason. Printed by the step so the two
+# categories can never be confused with "not looked at".
+PUB_DATE_SKIPS = {
+    "yishun-schoolgirl-murder-industrial-park-oct-1989":
+        "sole source is a Wikipedia page — continuously revised, no publication date exists",
+    "yishun-taxi-driver-murders-1992":
+        "sole source is a Wikipedia page — continuously revised, no publication date exists",
+    "yishun-overhead-bridge-attempted-suicide-rescue-jun-2018":
+        "already the article date (Stomp, 2018-06-14) — verified, nothing to change",
+    "man-jumps-window-fire-yishun-street-51-dec-2021":
+        "already the article date (Straits Times, 2021-12-20) — verified, nothing to change",
+    "yishun-motorcyclist-coma-car-collision-yishun-ave1-jul-2023":
+        "already the article date (Straits Times, 2023-07-24) — verified, nothing to change",
+}
+
+# A source_timeline date the backfill resolver stamped with its own run date.
+# Coconuts' byline reads "Dec 29, 2015"; the row carried 2026-08-04, which the
+# public page printed beside the link.
+TIMELINE_DATE_FIXES = [
+    ("yishun-cat-killings-serial-mutilation-2015-2016",
+     "https://coconuts.co/singapore/news/alleged-yishun-cat-killer-charged-throwing-cat-13th-floor-now-remanded-imh/",
+     "2026-08-04", "2015-12-29"),
+]
+
 TITLE_SLUG = "yishun-mcdonalds-bomb-hoax-2023"
 TITLE_WAS  = "A false bomb report at a Yishun McDon's"
 TITLE_IS   = "A false bomb report at a Yishun McDonald's"
@@ -472,12 +547,87 @@ def _merge_one(keep_slug: str, drop_slug: str, apply: bool, opts: dict) -> dict:
             "orphan_links": len(orphans)}
 
 
+# ── Step 5: published_at / timeline dates read off the articles ──────────────
+
+def step_pub_dates(apply: bool) -> dict:
+    supabase = _client()
+    rows = (supabase.table("incidents")
+            .select("id,slug,published_at,created_at,source_timeline")
+            .eq("is_published", True).limit(400).execute().data or [])
+
+    # The cohort is DERIVED, not listed: any published row whose published_at is
+    # not its create date. If a future backfill adds another, this reports it as
+    # unaccounted rather than passing silently.
+    cohort = {r["slug"]: r for r in rows
+              if str(r["published_at"])[:10] != str(r["created_at"])[:10]}
+    print(f"  {len(cohort)} published row(s) whose published_at is not their publish date")
+
+    fixed = failed = 0
+    for slug, new_date in PUB_DATE_FIXES.items():
+        row = cohort.get(slug)
+        if not row:
+            # Already applied, or the row changed under us. Not a failure.
+            print(f"  SKIP  {slug[:58]:58} not in the cohort (already fixed?)")
+            continue
+        was = str(row["published_at"])[:10]
+        print(f"  SET   {slug[:58]:58} {was} -> {new_date}")
+        if apply:
+            res = (supabase.table("incidents")
+                   .update({"published_at": f"{new_date}T00:00:00+00:00"})
+                   .eq("id", row["id"]).execute())
+            if not res.data:
+                failed += 1
+                print("        !! update returned no rows")
+                continue
+        fixed += 1
+
+    for slug, reason in PUB_DATE_SKIPS.items():
+        if slug in cohort:
+            print(f"  KEEP  {slug[:58]:58} {str(cohort[slug]['published_at'])[:10]}")
+            print(f"        {reason}")
+
+    unaccounted = set(cohort) - set(PUB_DATE_FIXES) - set(PUB_DATE_SKIPS)
+    for slug in sorted(unaccounted):
+        failed += 1
+        print(f"  !! UNACCOUNTED {slug} — no verified date and no recorded reason")
+
+    # Fabricated timeline dates (the resolver stamping its own run date).
+    tl_fixed = 0
+    for slug, url, was, now in TIMELINE_DATE_FIXES:
+        row = next((r for r in rows if r["slug"] == slug), None)
+        if not row:
+            continue
+        timeline = list(row.get("source_timeline") or [])
+        hit = False
+        for entry in timeline:
+            if entry.get("source_url") == url and entry.get("date") == was:
+                entry["date"] = now
+                hit = True
+        if not hit:
+            continue
+        print(f"  TIMELINE {slug}")
+        print(f"        {url[:88]}")
+        print(f"        date {was} -> {now}")
+        if apply:
+            res = (supabase.table("incidents").update({"source_timeline": timeline})
+                   .eq("id", row["id"]).execute())
+            if not res.data:
+                failed += 1
+                print("        !! update returned no rows")
+                continue
+        tl_fixed += 1
+
+    return {"fixed": fixed, "timeline_fixed": tl_fixed, "failed": failed,
+            "cohort": len(cohort)}
+
+
 # Ordered: url_date must run before merge, which rewrites the same timeline.
 STEPS = {
     "published_at": ("1. missing published_at on live rows", step_published_at),
     "title":        ("2. truncated McDonald's title",        step_title),
     "url_date":     ("3. fabricated Mothership URL date",    step_url_date),
     "merge":        ("4. merge duplicate incident rows",     step_merge),
+    "pub_dates":    ("5. published_at read off the articles", step_pub_dates),
 }
 
 
