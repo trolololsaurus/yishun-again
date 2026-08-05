@@ -14,11 +14,19 @@ export const revalidate = 0
 // degrades to the placeholder — so everything listed here is already live and
 // readable; only the picture is missing.
 //
-// `suppressed` is excluded BY CONSTRUCTION via `.in(...)` on an allowlist, not
-// by filtering it out afterwards. Guardrail #5 is not operator-overridable and
-// there is deliberately no control anywhere in this view that could set or
-// clear it. Do not widen any query here to `.neq('image_status', 'ok')` —
-// INCLUDING the lookup path, which is the newest way to reach a single row.
+// `suppressed` is excluded from the ACTIONABLE queue BY CONSTRUCTION via
+// `.in(...)` on an allowlist, not by filtering it out afterwards. Guardrail #5
+// is not operator-overridable and there is deliberately no control anywhere in
+// this view that could set or clear it. Do not widen any query here to
+// `.neq('image_status', 'ok')` — INCLUDING the lookup path, which is the newest
+// way to reach a single row.
+//
+// Since 2026-08-05 those rows ARE listed, read-only, by NoImagePanel at the
+// bottom of the page. That is a separate query rendering no controls, so the
+// rule above is unchanged: they still cannot be retried, regenerated, or have
+// their status cleared. Listing them fixed a different problem — five incidents
+// had no picture and nothing in the UI said so or why, which is exactly the
+// silent state this codebase refuses to accept elsewhere.
 //
 // `pending` is also excluded, and that is worth saying out loud because it is
 // the LARGEST imageless cohort: migration 014 backfills every pre-existing
@@ -78,7 +86,8 @@ export default async function RectifyPage(
         {includeOk
           ? 'Published incidents whose image failed, plus those that already have one so you can replace it. Every incident here is live and readable regardless.'
           : 'Published incidents whose image failed. They are live and readable already — only the picture is missing.'}
-        {' '}Suppressed incidents (guardrail&nbsp;#5) never appear here.
+        {' '}Suppressed incidents (guardrail&nbsp;#5) are never actionable here — they are
+        listed read-only at the bottom so they are not invisible.
       </p>
 
       <p className="font-body text-sm mb-6">
@@ -106,7 +115,76 @@ export default async function RectifyPage(
           </p>
         )
         : <RectifyList initialItems={items} />}
+
+      <NoImagePanel />
     </div>
+  )
+}
+
+// ── Incidents that have no image and are not getting one ─────────────────────
+//
+// Read-only, and a SEPARATE query from the queue above on purpose.
+//
+// The queue is an allowlist (`RECTIFIABLE_STATUSES`) and stays one — the note
+// at the top of this file says not to widen it, and this does not widen it.
+// This is an independent read that renders NO controls: no retry, no
+// regenerate, no button of any kind. Nothing here can set or clear
+// `suppressed`, so guardrail #5 remains exactly as non-overridable as before.
+//
+// It exists because "this incident has no picture, and nothing in the UI says
+// so or says why" is its own failure mode — the same silent-state problem this
+// codebase already refuses to tolerate for revalidation and for rectify
+// failures. Until now the only way to learn these rows existed was to query the
+// database by hand, which is how they were found in the first place.
+//
+// `pending` is deliberately NOT listed: it is a backfill job, not an editorial
+// outcome, and after the 2026-08-05 backfill there are none left.
+async function NoImagePanel() {
+  const { data } = await supabase
+    .from('incidents')
+    .select('slug, title, image_status')
+    .eq('is_published', true)
+    .in('image_status', ['suppressed', 'no_image_final'])
+    .order('published_at', { ascending: false })
+    .limit(200)
+
+  const rows = data ?? []
+  if (rows.length === 0) return null
+
+  return (
+    <section className="mt-10 border-t border-border pt-6">
+      <h2 className="font-body font-bold text-text-secondary uppercase tracking-widest mb-2"
+          style={{ fontSize: '12px' }}>
+        No image, and not getting one ({rows.length})
+      </h2>
+      <p className="font-body text-text-secondary text-sm mb-4">
+        Listed so they are not invisible. These are live and readable like every other
+        incident — only the picture is withheld. There are deliberately no controls here:
+        guardrail&nbsp;#5 is not operator-overridable, and{' '}
+        <code>no_image_final</code> is a terminal choice already made.
+      </p>
+      <ul className="space-y-1">
+        {rows.map(row => (
+          <li key={row.slug} className="font-body text-sm flex flex-wrap gap-2 items-baseline">
+            <span
+              className="uppercase tracking-widest flex-none text-text-secondary"
+              style={{ fontSize: '10px', minWidth: '8rem' }}
+              title={row.image_status === 'suppressed'
+                ? 'Guardrail #5 — suicide or self-harm content'
+                : 'An operator chose to publish this without an image'}
+            >
+              {row.image_status === 'suppressed' ? 'guardrail #5' : 'no image (final)'}
+            </span>
+            <Link
+              href={`/incidents/${row.slug}`}
+              className="text-text-primary hover:text-yellow"
+            >
+              {row.title}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 
