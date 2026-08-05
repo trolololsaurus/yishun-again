@@ -33,7 +33,7 @@ from ingestion.contracts import (
     SourceUnavailableError,
 )
 from classifiers.source_allowlist import canonical_source_type
-from scrapers import ScraperBlocked, ScraperError
+from scrapers import ScraperBlocked, ScraperError, enrich_thin_content
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,14 @@ class LegacyScraperSource:
             url = (item.get("url") or "").strip()
             if not url:
                 continue
+            # Straits Times, CNA and Yahoo put only a standfirst in their RSS
+            # description (67-175 chars; Yahoo, none at all), and Stage 2 writes
+            # the incident summary from this text. Enrich HERE, at the adapter
+            # boundary, so all twelve scrapers are covered by one call rather
+            # than twelve near-identical edits. The scraper has already applied
+            # the Yishun keyword filter, so this costs one request per candidate
+            # that is genuinely going to be processed.
+            item = enrich_thin_content(item)
             candidates.append(Candidate(
                 title=item.get("title", ""),
                 content=item.get("content", ""),

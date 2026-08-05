@@ -55,6 +55,19 @@ ZERO_STREAK_WARNING = 30
 # usually a site that started serving a bot-check page slowly rather than 403ing.
 SLOW_RUN_FACTOR = 3
 
+# ...but only once the run is slow in ABSOLUTE terms too.
+#
+# A ratio alone is meaningless at these magnitudes: on 2026-08-05 every single
+# amber source in the War Room was a duration warning, and the worst offender
+# was "165ms is >3x the 7d avg (53ms)". Nothing was wrong with any of them —
+# 165ms is a fast fetch. The panel was entirely noise, which is how an operator
+# learns to ignore it.
+#
+# Content enrichment (scrapers.enrich_thin_content) makes this worse on purpose:
+# a source that now fetches article bodies legitimately takes seconds longer
+# than its own pre-enrichment baseline.
+SLOW_RUN_MIN_MS = 15_000
+
 BASELINE_DAYS = 7
 
 
@@ -81,7 +94,9 @@ def classify(*, items_found, duration_ms, errors, last_consecutive_zeros=0,
                 f"0 items for {consecutive_zeros} consecutive runs",
                 consecutive_zeros)
 
-    if avg_duration_7d and duration_ms and duration_ms > SLOW_RUN_FACTOR * avg_duration_7d:
+    if (avg_duration_7d and duration_ms
+            and duration_ms >= SLOW_RUN_MIN_MS
+            and duration_ms > SLOW_RUN_FACTOR * avg_duration_7d):
         return ("warning",
                 f"duration {duration_ms}ms is >{SLOW_RUN_FACTOR}x the 7d avg "
                 f"({avg_duration_7d}ms)",

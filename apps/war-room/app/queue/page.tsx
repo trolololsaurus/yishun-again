@@ -17,7 +17,11 @@ export default async function QueuePage() {
       .order('created_at', { ascending: false }),
     supabase
       .from('scraper_health')
-      .select('source_name, status, items_found, items_passed_s1, scraped_at')
+      // status_reason is why the row is amber/red ("0 items for 30 consecutive
+      // runs", "HTTP 403"). It was written by ingestion/health.py from the very
+      // start but never selected, so the panel showed "WARNING" with no way to
+      // tell a dead scraper from a quiet one without opening the database.
+      .select('source_name, status, status_reason, items_found, items_passed_s1, scraped_at')
       .gte('scraped_at', since24h)
       .order('scraped_at', { ascending: false })
       .limit(500),
@@ -120,8 +124,11 @@ export default async function QueuePage() {
       latestPerSource.push(r)
     }
   }
-  const errorSources   = latestPerSource.filter(r => r.status === 'error').map(r => r.source_name)
-  const warningSources = latestPerSource.filter(r => r.status === 'warning').map(r => r.source_name)
+  // Carry the reason through, not just the name — an alert you cannot act on
+  // is noise, and "WARNING" alone reads identically whether a source is broken
+  // or simply had no Yishun news this month.
+  const errorSources   = latestPerSource.filter(r => r.status === 'error')
+  const warningSources = latestPerSource.filter(r => r.status === 'warning')
   const hasAlerts      = errorSources.length > 0 || warningSources.length > 0
 
   // ── Backfill banner data ───────────────────────────────────────────────────
@@ -150,35 +157,56 @@ export default async function QueuePage() {
 
       {hasHealthData && (
         <div className="mb-6 border border-border bg-surface p-4">
-          <div className="font-body text-text-secondary mb-3 uppercase tracking-widest" style={{ fontSize: '10px' }}>
+          <div className="font-body text-text-secondary mb-3 uppercase tracking-widest" style={{ fontSize: '13px' }}>
             Last 24h
           </div>
 
           {hasAlerts && (
-            <div className="mb-3 font-body space-y-1" style={{ fontSize: '11px' }}>
-              {errorSources.map(src => (
-                <div key={src} className="text-red">🔴 {src} — ERROR</div>
+            <div className="mb-3 font-body space-y-1.5" style={{ fontSize: '13px' }}>
+              {errorSources.map(r => (
+                <div key={r.source_name} className="text-red">
+                  🔴 {r.source_name} — ERROR
+                  {r.status_reason && (
+                    <span className="text-text-secondary"> · {r.status_reason}</span>
+                  )}
+                </div>
               ))}
-              {warningSources.map(src => (
-                <div key={src} className="text-yellow">🟡 {src} — WARNING</div>
+              {warningSources.map(r => (
+                <div key={r.source_name} className="text-yellow">
+                  🟡 {r.source_name} — WARNING
+                  {r.status_reason ? (
+                    <span className="text-text-secondary"> · {r.status_reason}</span>
+                  ) : (
+                    <span className="text-text-secondary"> · no reason recorded</span>
+                  )}
+                </div>
               ))}
+              {/* A zero-item run is the NORMAL case: items_found counts
+                  candidates that survived the Yishun keyword filter, not
+                  articles served, so one outlet can go a month without a
+                  Yishun story. Say so, rather than leaving the operator to
+                  read a quiet source as a broken one. */}
+              <div className="text-text-secondary pt-1" style={{ fontSize: '12px' }}>
+                A long zero streak usually means no Yishun news from that outlet,
+                not a broken scraper. Real failures show as ERROR.
+              </div>
             </div>
           )}
 
           <div className="flex gap-10 font-body">
             <div>
-              <div className="text-text-secondary mb-1" style={{ fontSize: '10px' }}>SCRAPED</div>
-              <div className="text-text-primary font-bold text-base">{scraped24h}</div>
+              <div className="text-text-secondary mb-1" style={{ fontSize: '13px' }}>SCRAPED</div>
+              <div className="text-text-primary font-bold text-lg">{scraped24h}</div>
             </div>
             <div>
-              <div className="text-text-secondary mb-1" style={{ fontSize: '10px' }}>PASSED S1</div>
-              <div className="text-text-primary font-bold text-base">
+              <div className="text-text-secondary mb-1" style={{ fontSize: '13px' }}>PASSED S1</div>
+              <div className="text-text-primary font-bold text-lg">
                 {passedS1_24h > 0 ? passedS1_24h : '—'}
               </div>
             </div>
             <div>
-              <div className="text-text-secondary mb-1" style={{ fontSize: '10px' }}>QUEUED</div>
-              <div className="text-text-primary font-bold text-base">{queued24h}</div>
+              <div className="text-text-secondary mb-1" style={{ fontSize: '13px' }}>QUEUED</div>
+              <div className="text-text-primary font-bold text-lg">{queued24h}</div>
             </div>
           </div>
         </div>

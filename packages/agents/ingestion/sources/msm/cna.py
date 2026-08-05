@@ -23,7 +23,7 @@ from ingestion.contracts import (
     SourceBlockedError,
     SourceUnavailableError,
 )
-from scrapers import ScraperBlocked, ScraperError
+from scrapers import ScraperBlocked, ScraperError, enrich_thin_content
 from scrapers import scrape_cna
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,12 @@ class CNASource:
             raise SourceUnavailableError(f"cna: {exc}") from exc
         except Exception as exc:
             raise SourceUnavailableError(f"cna: {type(exc).__name__}: {exc}") from exc
+
+        # CNA's RSS description is a standfirst, 64-175 chars (measured
+        # 2026-08-05) — Stage 2 cannot write an incident from that. Enriched
+        # here for the same reason as LegacyScraperSource; see
+        # scrapers.enrich_thin_content.
+        items = [enrich_thin_content(item) for item in items]
 
         return [
             Candidate(

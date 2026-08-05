@@ -258,6 +258,91 @@ def _date_from_text(html: str) -> date | None:
     return None
 
 
+# ── Article body enrichment ──────────────────────────────────────────────────
+#
+# Several publishers put only a STANDFIRST in their RSS `<description>`, not the
+# article. Measured live on 2026-08-05 over the first 6 entries of each feed:
+#
+#     straits_times     67-110 chars      <- one line
+#     cna               64-175 chars      <- one line
+#     yahoo             0 chars           <- nothing at all
+#     mothership        1372-4910 chars   <- full body
+#     mustsharenews     3031-7939 chars   <- full body
+#     the_independent   2396-4482 chars   <- full body
+#
+# Stage 2 writes the incident summary from this text, so an ST/CNA/Yahoo story
+# reached the queue with a headline and one sentence to work from. That is what
+# produced the thin PMD-impound card: 108 characters of source for the whole
+# incident. It also drags confidence down (0.30) and invites the model to invent
+# specifics the groundedness check then has to catch.
+#
+# Fetching is deliberately conditional. The scrapers have ALREADY applied the
+# Yishun keyword filter by the time this runs, so it costs one request for each
+# candidate that is actually going to be processed — a handful a day across the
+# whole fleet, not one per feed entry.
+MIN_BODY_CHARS = 600
+
+_BODY_CAP = 400_000
+
+
+def article_body(url: str) -> str:
+    """Fetch `url` and return its readable body text, or '' on any failure.
+
+    Uses the same fallback ladder as date resolution (direct, then the Wayback
+    snapshot), so a publisher that blocks the datacenter IP still yields text.
+    """
+    if not url:
+        return ""
+    try:
+        from .fetch_strategy import fetch_with_fallback
+        result = fetch_with_fallback(url)
+        if not result or not result.html:
+            return ""
+        soup = BeautifulSoup(result.html, "lxml")
+        for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form"]):
+            tag.decompose()
+        paras = [p.get_text(" ", strip=True) for p in soup.find_all("p")]
+        return " ".join(p for p in paras if len(p) > 30)[:_BODY_CAP]
+    except Exception as exc:                      # noqa: BLE001 — enrichment is best-effort
+        logger.debug("article_body: failed for %s: %s", url[:90], exc)
+        return ""
+
+
+def enrich_thin_content(item: dict, *, minimum: int = MIN_BODY_CHARS) -> dict:
+    """Return `item` with its `content` replaced by the article body when the
+    feed supplied less than `minimum` characters.
+
+    NEVER shrinks: if the fetch fails, or returns less text than the feed gave,
+    the original content is kept. Degrading to a thin summary is bad; degrading
+    to an empty one would be worse.
+    """
+    content = (item.get("content") or "").strip()
+    if len(content) >= minimum:
+        return item
+
+    url = (item.get("url") or "").strip()
+    if not url:
+        return item
+
+    # article_body() guards itself, but this call is wrapped too: enrichment is
+    # an optimisation, and nothing about it may ever fail an ingestion pass.
+    try:
+        body = article_body(url)
+    except Exception as exc:                      # noqa: BLE001
+        logger.warning("enrich_thin_content: fetch raised for %s: %s", url[:90], exc)
+        return item
+
+    if len(body) > len(content):
+        logger.info("enriched %s: %d -> %d chars",
+                    (item.get("url") or "")[:80], len(content), len(body))
+        return {**item, "content": body}
+    logger.warning(
+        "thin content kept for %s: feed gave %d chars and the article fetch "
+        "added nothing — the draft will be written from very little",
+        (item.get("url") or "")[:80], len(content))
+    return item
+
+
 def _date_from_html(html: str) -> date | None:
     """Extract a publication date from article HTML.
 

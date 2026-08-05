@@ -92,12 +92,36 @@ check("a failed run still advances the zero streak",
       health.classify(items_found=0, duration_ms=1, errors=["boom"],
                       last_consecutive_zeros=7)[2] == 8)
 
-check("3x the 7d baseline -> slow warning",
-      health.classify(items_found=2, duration_ms=3100, errors=None,
-                      avg_duration_7d=1000)[0] == "warning")
+# A ratio alone is not a signal at small magnitudes. Every amber source in the
+# War Room on 2026-08-05 was a duration warning, worst being "165ms is >3x the
+# 7d avg (53ms)" — nothing was wrong with any of them, and a panel that is all
+# noise is a panel the operator stops reading.
+check("a fast run is NOT flagged just for being 3x its own tiny baseline",
+      health.classify(items_found=2, duration_ms=165, errors=None,
+                      avg_duration_7d=53)[0] == "ok")
+check("...nor is a sub-second run",
+      health.classify(items_found=2, duration_ms=900, errors=None,
+                      avg_duration_7d=100)[0] == "ok")
+check("a genuinely slow run IS still flagged",
+      health.classify(items_found=2, duration_ms=60_000, errors=None,
+                      avg_duration_7d=2_000)[0] == "warning")
+check("slow-but-in-line-with-baseline is not flagged",
+      health.classify(items_found=2, duration_ms=60_000, errors=None,
+                      avg_duration_7d=40_000)[0] == "ok")
+check("the absolute floor is seconds, not milliseconds",
+      health.SLOW_RUN_MIN_MS >= 5_000)
+
+# The ratio rule still applies — but only above SLOW_RUN_MIN_MS, so these use
+# durations that are slow in absolute terms. They previously used 3100ms vs a
+# 1000ms baseline, which stopped warning when the absolute floor was added; that
+# was the intended change, not a regression.
+_floor = health.SLOW_RUN_MIN_MS
+check("3x the 7d baseline -> slow warning (above the absolute floor)",
+      health.classify(items_found=2, duration_ms=_floor * 4, errors=None,
+                      avg_duration_7d=_floor)[0] == "warning")
 check("just under 3x the baseline -> ok",
-      health.classify(items_found=2, duration_ms=2900, errors=None,
-                      avg_duration_7d=1000)[0] == "ok")
+      health.classify(items_found=2, duration_ms=int(_floor * 2.9), errors=None,
+                      avg_duration_7d=_floor)[0] == "ok")
 check("no baseline yet -> never slow-warns (first run must not be a warning)",
       health.classify(items_found=2, duration_ms=999_999, errors=None,
                       avg_duration_7d=None)[0] == "ok")
