@@ -821,6 +821,120 @@ def step_republish(apply: bool) -> dict:
     return {"fixed": 1, "failed": 0}
 
 
+# ── Step 7: chaos_contribution ───────────────────────────────────────────────
+
+def step_chaos(apply: bool) -> dict:
+    """Recompute `chaos_contribution` on every published incident.
+
+    28 published rows carry NULL and 7 disagree with the formula — a sign flip
+    on a heart (stored +3.0 where the weight is -1.0), and several that are
+    simply wrong arithmetic.
+
+    The value comes from `filters.stage2_writer._compute_chaos_contribution`,
+    the function that writes this column in the pipeline, rather than from a
+    weight table re-typed here. A second copy of the formula is exactly how the
+    7 disagreements would come back.
+
+    NOTE, and it is not fixed here: that function defaults an unknown
+    classification to a multiplier of 1.0, while the frontend's
+    `computeChaosScore` (apps/web/lib/utils.ts) uses 0 for anything that is not
+    dagger/clown/heart. So a `custom` row's stored contribution and its real
+    effect on the published index disagree by severity x 1.0. Nothing reads the
+    column today — `publicColumns.ts` excludes it and the index is computed live
+    from classification+severity — so this changes no score. Picking a side
+    would change pipeline behaviour and is an operator call.
+    """
+    from filters.stage2_writer import _compute_chaos_contribution
+
+    supabase = _client()
+    rows = (supabase.table("incidents")
+            .select("id,slug,classification,custom_label,severity,chaos_contribution")
+            .eq("is_published", True).limit(400).execute().data or [])
+
+    fixed = failed = 0
+    for row in rows:
+        want = _compute_chaos_contribution(row.get("classification") or "",
+                                           row.get("severity") or 0)
+        have = row.get("chaos_contribution")
+        if have is not None and abs(float(have) - want) < 0.01:
+            continue
+        label = f"{row.get('classification')}/{row.get('custom_label') or '-'} sev={row.get('severity')}"
+        print(f"  {'NULL ' if have is None else 'WRONG'} {row['slug'][:48]:48} "
+              f"{'-' if have is None else have} -> {want}   ({label})")
+        if apply:
+            res = (supabase.table("incidents")
+                   .update({"chaos_contribution": want})
+                   .eq("id", row["id"]).execute())
+            if not res.data:
+                failed += 1
+                print("        !! update returned no rows")
+                continue
+        fixed += 1
+
+    print(f"  {fixed} row(s) {'updated' if apply else 'would be updated'} of {len(rows)} published")
+    return {"fixed": fixed, "failed": failed}
+
+
+# ── Step 8: map pins ─────────────────────────────────────────────────────────
+
+def step_pins(apply: bool) -> dict:
+    """Geocode published incidents that have no coordinates.
+
+    Uses `classifiers.geocoding`, which reads block/street from the
+    block_number and area_name COLUMNS first, then mines the title (POI and
+    address) and the summary (address only). The asymmetry is deliberate and
+    must stay: every dagger story mentions Khoo Teck Puat Hospital, and mining
+    POIs from prose would pin them all there.
+
+    A row that resolves to nothing keeps NO pin. It is never given the Yishun
+    centroid — a missing pin is honest, a wrong one is a false claim about
+    where somebody died. Most of this cohort is in that state: they name no
+    location anywhere in their own text.
+
+    Rate-limited to one OneMap call per 0.5 s by the geocoder itself.
+    """
+    from classifiers.geocoding import build_geocode_queries, geocode_incident_with_method
+
+    supabase = _client()
+    rows = (supabase.table("incidents")
+            .select("id,slug,title,summary,block_number,area_name,latitude,longitude")
+            .eq("is_published", True).limit(400).execute().data or [])
+    pinless = [r for r in rows if r.get("latitude") is None or r.get("longitude") is None]
+    print(f"  {len(pinless)} of {len(rows)} published incidents have no pin")
+
+    fixed = failed = no_query = missed = 0
+    for row in pinless:
+        args = (row.get("block_number"), row.get("area_name"),
+                row.get("title"), row.get("summary"))
+        if not build_geocode_queries(*args):
+            no_query += 1
+            continue
+        try:
+            coords, method = geocode_incident_with_method(*args)
+        except Exception as exc:                              # noqa: BLE001
+            failed += 1
+            print(f"  !! {row['slug'][:52]} geocoder raised: {exc}")
+            continue
+        if not coords:
+            missed += 1
+            continue
+        print(f"  PIN   {row['slug'][:52]:52} {coords[0]:.6f}, {coords[1]:.6f}  ({method})")
+        if apply:
+            res = (supabase.table("incidents")
+                   .update({"latitude": coords[0], "longitude": coords[1]})
+                   .eq("id", row["id"]).execute())
+            if not res.data:
+                failed += 1
+                print("        !! update returned no rows")
+                continue
+        fixed += 1
+
+    print(f"  {fixed} pinned{'' if apply else ' (would be)'}; "
+          f"{no_query} name no location at all; {missed} built a query that OneMap could not place")
+    return {"fixed": fixed, "failed": failed,
+            "no_location": no_query, "unresolved": missed}
+
+
 # Ordered: url_date must run before merge, which rewrites the same timeline.
 STEPS = {
     "published_at": ("1. missing published_at on live rows", step_published_at),
@@ -829,6 +943,8 @@ STEPS = {
     "merge":        ("4. merge duplicate incident rows",     step_merge),
     "pub_dates":    ("5. published_at read off the articles", step_pub_dates),
     "republish":    ("6. republish a draft never meant to be one", step_republish),
+    "chaos":        ("7. recompute chaos_contribution",       step_chaos),
+    "pins":         ("8. geocode incidents with no map pin",  step_pins),
 }
 
 

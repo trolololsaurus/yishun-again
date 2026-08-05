@@ -180,25 +180,36 @@ check("...and every status list it can query excludes 'suppressed'",
       all("'suppressed'" not in m for m in
           re.findall(r"\[\s*\.\.\.[A-Z_]+_STATUSES[^\]]*\]", page_tsx)))
 check("the queue never uses .neq to build its filter", ".neq(" not in code_only(page_tsx))
-check("the page never names 'suppressed' as something it queries",
-      "'suppressed'" not in code_only(page_tsx))
 check("the page lists only published incidents", ".eq('is_published', true)" in page_tsx)
 
-# The ?url= lookup (2026-08-05) added a SECOND way to reach a single row, for
-# an operator who spotted a hallucinated image on the page rather than in the
-# queue. It is the same surface with the same buttons, so it needs the same
-# allowlist — and "the queue is filtered" is no longer enough to say so.
+# The page grew two more ways to reach a row after the original guards were
+# written — the ?url= lookup (an operator who spotted a hallucinated image on
+# the page rather than in the queue) and a read-only panel listing incidents
+# that have no image and are not getting one. So "the page never mentions
+# 'suppressed'" stopped being the right question: the panel names it precisely
+# in order to SHOW those rows, and renders not one control.
 #
-# RECTIFY_COLUMNS is the tell: it is exactly the column set RectifyList (and
-# therefore every rectify control) is fed. Any select of it that is NOT status
-# -filtered is a path to the buttons that skipped the gate.
+# The invariant that actually protects guardrail #5 is narrower and stronger:
+# RECTIFY_COLUMNS is exactly the column set RectifyList — and therefore every
+# rectify button — is fed. So every query selecting it must gate on a
+# *_STATUSES constant. A query that selects scalars and renders text cannot
+# reach a button no matter what it names.
 _page_code = code_only(page_tsx)
-check("every select of the card's columns is status-filtered",
-      _page_code.count(".select(RECTIFY_COLUMNS)") == _page_code.count(".in('image_status'"),
-      f"-> {_page_code.count('.select(RECTIFY_COLUMNS)')} selects "
-      f"vs {_page_code.count(chr(46) + chr(105) + chr(110) + chr(40) + chr(39) + 'image_status')} filters")
-check("...and there is at least one of each",
-      _page_code.count(".select(RECTIFY_COLUMNS)") >= 1)
+_blocks = _page_code.split(".from('incidents')")[1:]
+check("the page issues at least one card query and one plain read",
+      len(_blocks) >= 2, f"-> {len(_blocks)} queries")
+
+_card_queries = [b for b in _blocks if "RECTIFY_COLUMNS" in b]
+check("more than zero queries feed the rectify card", len(_card_queries) >= 1)
+for i, block in enumerate(_card_queries):
+    check(f"card query {i} gates image_status on a *_STATUSES constant",
+          re.search(r"\.in\(\s*'image_status'\s*,\s*(\[\s*\.\.\.)?[A-Za-z_]*statuses|"
+                    r"\.in\(\s*'image_status'\s*,\s*\[\s*\.\.\.[A-Z_]+_STATUSES",
+                    block, re.IGNORECASE) is not None,
+          f"-> {block[:160]!r}")
+    check(f"card query {i} never names a status literal inline",
+          "'suppressed'" not in block and "'no_image_final'" not in block,
+          f"-> {block[:160]!r}")
 # The lookup explains WHY a row is not actionable, which means classifying a
 # suppressed one. That classification belongs in lib/types with the rest of the
 # vocabulary; keeping it out of the page is what lets the guard above stay a
