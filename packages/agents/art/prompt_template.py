@@ -80,6 +80,30 @@ PHYSICAL_COHERENCE = (
     "reacting to."
 )
 
+# Locale anchor. Added 2026-08-02 on operator direction, after renders drifted to
+# Hong Kong.
+#
+# The drift was earned, not random. Both this template and the scene writer used
+# to describe Singaporean housing WITHOUT naming it — "a tower face of repeating
+# grid windows", laundry poles, dense low-rise shopfronts. That description fits
+# a Hong Kong tenement at least as well as an HDB block, and the model went with
+# the more heavily represented one. The fix is to name the place: "HDB" and
+# "Singapore Police Force" are specific enough to pull the whole frame with them,
+# where a paragraph of generic description was not.
+#
+# Kept deliberately short. Every added sentence competes with the scene for the
+# model's attention, and the operator's standing note is that over-specification
+# makes frames emptier and more hallucinated, not more accurate. Three anchors,
+# one line of negation, nothing else.
+LOCAL_SETTING = (
+    "The setting is Singapore. Residential towers are HDB public housing: pale "
+    "rendered slab blocks with open-air common corridors behind low parapets, "
+    "laundry poles angled out from the window sills, and an open pillared void "
+    "deck at ground level. Any police are Singapore Police Force officers in "
+    "dark navy blue with a chequered cap band. Singapore, not Hong Kong — no "
+    "neon sign canyons, no caged balconies, no vertical hanging shop boards."
+)
+
 # ART_PIPELINE.md §3.5 — always present. Earlier attempts filled frames with
 # garbled pseudo-signage, and a recognisable storefront in an image depicting an
 # incident is a defamation exposure. Both are cheaper to prevent here than to
@@ -163,15 +187,18 @@ def assemble_prompt(scene: str, classification) -> str:
 
     Order matters. Style, composition and physical coherence lead, so framing
     and the rules of the world are established before the model reads any scene
-    content; the scene sits in the middle; palette and exclusions land last,
-    where they are least likely to be forgotten. Nothing inside the scene text
-    can displace any of the five.
+    content; the locale anchor sits immediately before the scene, so "Singapore"
+    and "HDB" are the freshest thing in context when the scene names a place;
+    the scene sits in the middle; palette and exclusions land last, where they
+    are least likely to be forgotten. Nothing inside the scene text can displace
+    any of the six.
     """
     scene_text = scene.strip() if isinstance(scene, str) else ""
     return "\n\n".join((
         STYLE_PREAMBLE,
         COMPOSITION,
         PHYSICAL_COHERENCE,
+        LOCAL_SETTING,
         scene_text,
         palette_for(classification),
         CONTENT_EXCLUSIONS,

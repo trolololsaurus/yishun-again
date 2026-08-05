@@ -291,13 +291,18 @@ expression reads clearly.
 features", or "small in frame". Those are workarounds for an older model and \
 they destroy this one's output.
 
-LOCAL VOCABULARY - this model does not know Singaporean public housing. Never \
-write "HDB" or "void deck" directly. Translate:
-- void deck        -> colonnaded open ground-floor undercroft, thick pillars in rows
-- HDB block face   -> a tower face of repeating grid windows
-- bamboo laundry   -> laundry poles jutting from each window like banner staves
-- common corridor  -> open-air corridor with a low parapet running its full length
-- coffeeshop       -> neighbourhood coffeeshop, formica tables, stacked plastic stools
+LOCAL VOCABULARY - name Singaporean things BY NAME, then add the detail. The \
+old rule here said this model does not know HDB and to translate it away; that \
+was an older model's workaround and it backfired. "A tower face of repeating \
+grid windows" with laundry poles is Hong Kong tenement imagery, so that is what \
+came back. Naming the place is what anchors it.
+- HDB block   -> "HDB block", pale rendered slab, open-air common corridor behind a low parapet
+- void deck   -> "void deck", the open pillared ground floor beneath an HDB block
+- laundry     -> laundry poles angled out from the window sills
+- coffeeshop  -> neighbourhood coffeeshop (kopitiam), formica tables, stacked plastic stools
+- police      -> Singapore Police Force officers, dark navy blue uniform, chequered cap band
+Singapore, never Hong Kong: no neon sign canyons, no caged balconies, no \
+vertical hanging shop boards.
 
 WHAT YOU MAY INVENT
 You may add generic setting and atmosphere consistent with the incident: time \
