@@ -127,6 +127,36 @@ MERGE_PAIRS = [
      {"absorbed_role": "appeal_dismissed",
       "patch": {"latest_source_role": "appeal_dismissed"},
       "take_image": True}),
+    # Same death: Jethro Puah Xin Yang, 15, fell from the high-element course at
+    # SAFRA Yishun on 3 Feb 2021. The absorbed row is the day-one ST report
+    # alone; the survivor carries the whole story through the Jan-2024 verdict
+    # on seven sources. The absorbed row brings the one thing the survivor
+    # lacks — the EARLIEST report (ST, 4 Feb 2021, verified live) — which also
+    # gives the survivor a first_reported_at it did not have, so the page can
+    # finally show "from first report to verdict".
+    #
+    # take_image: the survivor's own render shows the boy dangling from the
+    # harness with paramedics kneeling below and his classmates watching. That
+    # is a fifteen-year-old's death drawn almost literally. The absorbed row's
+    # is the aftermath — the course empty, gear laid out for inspection, nobody
+    # depicted in danger. Guardrail #5 does not cover this (it is neither
+    # suicide nor self-harm, so nothing suppressed it) and that is exactly why
+    # the choice has to be made by hand.
+    #
+    # concluded_at was NULL while conclusion_type already read 'verdict' — a
+    # half-filled conclusion. The verdict entry is 2024-01-15 (ST, resolved
+    # against the article). Nothing renders concluded_at today; the public
+    # "time to verdict" line reads first_reported_at plus the timeline's own
+    # verdict entry, and the merge is what supplies the missing half of THAT.
+    #
+    # take_image was applied and then REVERTED at the operator's instruction on
+    # 2026-08-06 — see step 9. It is removed here rather than left set, so a
+    # re-run cannot quietly undo that decision and so this list keeps describing
+    # what the archive actually holds.
+    ("safra-yishun-student-death-jethro-puah-2021",
+     "acsi-student-death-high-element-safra-yishun-feb-2021",
+     {"absorbed_role": "initial",
+      "patch": {"concluded_at": "2024-01-15T00:00:00+00:00"}}),
 ]
 
 # The row step 4 repairs, and the row step 3's first pair keeps.
@@ -212,6 +242,14 @@ PUB_DATE_SKIPS = {
         "already the article date (Straits Times, 2021-12-20) — verified, nothing to change",
     "yishun-motorcyclist-coma-car-collision-yishun-ave1-jul-2023":
         "already the article date (Straits Times, 2023-07-24) — verified, nothing to change",
+    # NOT a backfill anomaly. This cohort is defined as "published_at is not the
+    # create date", which is a heuristic for finding the June-2026 rows — and it
+    # cannot tell them apart from a draft that was simply published later. This
+    # row sat unpublished from 2026-06-12 until step 6 published it on
+    # 2026-08-05, so the two dates differ for the most ordinary reason there is.
+    # published_at is correct exactly as it stands.
+    "yishun-ring-road-murder-fiqri-choo-2024":
+        "published later than it was drafted (step 6, 2026-08-05) — not a backfill row",
 }
 
 # A source_timeline date the backfill resolver stamped with its own run date.
@@ -238,6 +276,14 @@ TIMELINE_DATE_FIXES = [
     ("yishun-ring-road-murder-fiqri-choo-2024",
      "https://www.theonlinecitizen.com/2024/07/29/49-year-old-man-charged-with-murder-at-yishun-ring-road/",
      "2024-07-28", "2024-07-29"),
+    # Dated to the fall (3 Feb 2021) rather than to the article. Malay Mail
+    # stamps the date into the path — /2021/02/05/ — so the report ran two days
+    # later. Left uncorrected it would print "03 Feb 2021" beside a link
+    # published on the 5th, and would sit AHEAD of the Straits Times report of
+    # the 4th that this row gains in the same pass.
+    ("safra-yishun-student-death-jethro-puah-2021",
+     "https://www.malaymail.com/news/singapore/2021/02/05/singapore-moe-suspends-outdoor-high-element-activities-after-death-of-boy-w/1947113",
+     "2021-02-03", "2021-02-05"),
 ]
 
 # ── Step 6: republish a draft that was never meant to be one ─────────────────
@@ -935,6 +981,79 @@ def step_pins(apply: bool) -> dict:
             "no_location": no_query, "unresolved": missed}
 
 
+# ── Step 9: put the SAFRA render back ────────────────────────────────────────
+
+REVERT_ART_SLUG = "safra-yishun-student-death-jethro-puah-2021"
+REVERT_ART_URL = ("https://assets.yishunagain.com/pixel-art/"
+                  "safra-yishun-student-death-jethro-puah-2021.png?v=cae4cd65")
+
+
+def step_revert_art(apply: bool) -> dict:
+    """Restore this row's ORIGINAL render at the operator's instruction.
+
+    Step 4 swapped in the absorbed row's picture because the survivor's own
+    depicts the death closely — the boy suspended in the harness, instructors
+    hauling on ropes, paramedics below, classmates watching. I said so; the
+    operator has looked at both and chosen the original. It is their archive
+    and their editorial call, and this restores it.
+
+    The prompt is recovered from `image_attempts[0]`, not re-derived — that is
+    the exact text that produced `?v=cae4cd65`, so /rectify's "Retry as-is"
+    reproduces THIS scene rather than the aftermath one it would otherwise
+    inherit. Recovering it is only possible because the attempt log is
+    append-only; had step 4 replaced the log instead of appending to it, the
+    original prompt would be gone and this revert would be guesswork.
+
+    The log is likewise appended to here, never rewritten: attempts 2-4 really
+    did happen.
+    """
+    supabase = _client()
+    rows = (supabase.table("incidents")
+            .select("id,slug,pixel_art_url,image_prompt,image_status,image_attempts")
+            .eq("slug", REVERT_ART_SLUG).execute().data or [])
+    if not rows:
+        print(f"  SKIP  {REVERT_ART_SLUG} not found")
+        return {"fixed": 0, "failed": 1}
+    row = rows[0]
+
+    if row.get("pixel_art_url") == REVERT_ART_URL:
+        print("  OK    already showing the original render")
+        return {"fixed": 0, "failed": 0}
+
+    attempts = list(row.get("image_attempts") or [])
+    original = next((a for a in attempts if a.get("n") == 1), None)
+    if not original or not original.get("prompt"):
+        print("  !! attempt 1 carries no prompt — cannot restore without guessing")
+        return {"fixed": 0, "failed": 1}
+
+    print(f"  was  {row.get('pixel_art_url')}")
+    print(f"  now  {REVERT_ART_URL}")
+    print(f"  prompt {len(row.get('image_prompt') or '')} -> {len(original['prompt'])} chars "
+          f"(recovered from attempt 1)")
+
+    attempts.append({
+        "n":       len(attempts) + 1,
+        "prompt":  original["prompt"],
+        "outcome": "ok",
+        "reason":  "reverted to the original render at operator instruction",
+    })
+
+    if not apply:
+        return {"fixed": 0, "failed": 0}
+
+    res = (supabase.table("incidents").update({
+        "pixel_art_url":  REVERT_ART_URL,
+        "image_prompt":   original["prompt"],
+        "image_status":   "ok",
+        "image_attempts": attempts,
+    }).eq("id", row["id"]).execute())
+    if not res.data:
+        print("        !! update returned no rows")
+        return {"fixed": 0, "failed": 1}
+    print("  reverted.")
+    return {"fixed": 1, "failed": 0}
+
+
 # Ordered: url_date must run before merge, which rewrites the same timeline.
 STEPS = {
     "published_at": ("1. missing published_at on live rows", step_published_at),
@@ -945,6 +1064,7 @@ STEPS = {
     "republish":    ("6. republish a draft never meant to be one", step_republish),
     "chaos":        ("7. recompute chaos_contribution",       step_chaos),
     "pins":         ("8. geocode incidents with no map pin",  step_pins),
+    "revert_art":   ("9. restore the SAFRA original render",  step_revert_art),
 }
 
 
