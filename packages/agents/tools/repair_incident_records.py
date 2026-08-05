@@ -221,6 +221,16 @@ TIMELINE_DATE_FIXES = [
     ("yishun-cat-killings-serial-mutilation-2015-2016",
      "https://coconuts.co/singapore/news/alleged-yishun-cat-killer-charged-throwing-cat-13th-floor-now-remanded-imh/",
      "2026-08-04", "2015-12-29"),
+    # berita.mediacorp.sg carries no datePublished, and a VideoObject uploadDate
+    # for a re-run clip that the resolver matched instead — so a report on a 2016
+    # killing was dated the day the tool ran. The page's own
+    # cXenseParse:recs:publishtime reads 2016-08-15T20:35:48+08:00, which agrees
+    # with the six other sources on this row that date the charging at 15-16 Aug
+    # 2016. The resolver is fixed too (scrapers._PUB_META_PATTERNS) and now
+    # returns 2016-08-15 for this URL; guard: test_url_date_extraction.py.
+    ("yishun-ring-road-killing-sri-idayu-2016",
+     "https://berita.mediacorp.sg/tonton/ehwal-semasa/mohamad-jonit-adnan-dituduh-bunuh-bekas-isteri-di-yishun-ring-road-563766",
+     "2026-08-05", "2016-08-15"),
 ]
 
 TITLE_SLUG = "yishun-mcdonalds-bomb-hoax-2023"

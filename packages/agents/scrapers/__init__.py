@@ -179,6 +179,10 @@ def strip_html(text: str) -> str:
 _PUB_META_KEYS = [
     "article:published_time",
     "og:published_time",
+    # Mediacorp (CNA, Berita) ships this on pages that carry NO
+    # article:published_time and no JSON-LD datePublished. It is the article's
+    # own publish time, in SGT.
+    "cXenseParse:recs:publishtime",
     "datePublished",
     "publishdate",
     "pubdate",
@@ -188,7 +192,6 @@ _PUB_META_KEYS = [
 _PUB_META_PATTERNS = [
     # JSON-LD / any inline JSON — order-independent by construction.
     r'"datePublished"\s*:\s*"([^"]+)"',
-    r'"uploadDate"\s*:\s*"([^"]+)"',
     r'<time[^>]+datetime=["\']([^"\']+)',
 ] + [
     p
@@ -197,6 +200,17 @@ _PUB_META_PATTERNS = [
         rf'(?:property|name|itemprop)=["\']{re.escape(key)}["\'][^>]*?content=["\']([^"\']+)',
         rf'content=["\']([^"\']+)["\'][^>]*?(?:property|name|itemprop)=["\']{re.escape(key)}["\']',
     )
+] + [
+    # LAST RESORT, and it used to be second. `uploadDate` belongs to a
+    # schema.org VideoObject — it dates the VIDEO FILE, not the article, and a
+    # newsroom re-running an old clip stamps it with today.
+    #
+    # berita.mediacorp.sg's report on the 2016 Yishun Ring Road killing carries
+    # no datePublished at all, two `"uploadDate": "2026-08-0*"` blocks for a
+    # 30-minute clip, and the real date only in cXenseParse:recs:publishtime
+    # (2016-08-15T20:35:48+08:00). Matching uploadDate first dated a ten-year-old
+    # murder report TODAY, and the incident page printed that beside the link.
+    r'"uploadDate"\s*:\s*"([^"]+)"',
 ]
 # The day segment must be the WHOLE segment — `/2018/07/13/`, not the leading
 # digits of a slug. This ended in `(?:/|\b)`, and `\b` is satisfied by the
