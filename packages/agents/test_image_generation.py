@@ -14,6 +14,7 @@ Load-bearing properties:
 """
 import importlib
 import io
+import re
 from unittest import mock
 
 from PIL import Image
@@ -289,10 +290,32 @@ check("blank walls are ruled out",
       "blank and bare" in gi._SCENE_SYSTEM_PROMPT)
 check("the exclusion no longer bans text outright",
       "No text, no lettering" not in tmpl.CONTENT_EXCLUSIONS)
-check("the LEGAL half of the exclusion is retained",
-      "No logos, no brand names, no identifiable real business" in tmpl.CONTENT_EXCLUSIONS)
+# Asserted by INTENT, not by literal wording. These used to pin the exact string
+# "No logos, no brand names, no identifiable real business", which made the guard
+# fail the moment the phrasing was fixed rather than the meaning changed.
+check("the defamation control survives — businesses are invented, not real",
+      "invented" in tmpl.CONTENT_EXCLUSIONS
+      and "made-up" in tmpl.CONTENT_EXCLUSIONS)
 check("setting-appropriate lettering is permitted as set dressing",
-      "genuinely belongs to this setting" in tmpl.CONTENT_EXCLUSIONS)
+      "belongs to this setting" in tmpl.CONTENT_EXCLUSIONS)
+
+# The blocks that the IMAGE MODEL can mistake for content must not be phrased as
+# negations. CONTENT_EXCLUSIONS is the only part of the prompt that talks about
+# signage and lettering, and while it was phrased "no identifiable real
+# business... naming no real establishment" a render came back with "NAMING NO
+# REAL BUSINESS" painted across an awning — the model was choosing sign text at
+# that moment and used the instruction as the text. LOCAL_SETTING is held to the
+# same rule because it is adjacent and describes the scene.
+#
+# COMPOSITION and PHYSICAL_COHERENCE deliberately KEEP their negations: they
+# describe framing and physics, not writing, so there is nothing for the model to
+# letter, and each one fixes a defect that was observed and corrected (floating
+# diorama, water from mid-hose, figures standing on nothing).
+_NEG = re.compile(r"\b(?:no|never|nothing|nobody|not)\b", re.I)
+for _name in ("CONTENT_EXCLUSIONS", "LOCAL_SETTING"):
+    _val = getattr(tmpl, _name)
+    check(f"{_name} is phrased positively (it can be rendered as signage)",
+          not _NEG.search(_val), f"-> {_val!r}")
 
 # ── Setting generalisation ───────────────────────────────────────────────────
 #
@@ -315,8 +338,15 @@ check("the framing names the incident's own subject, not a seated figure",
       "The person at the centre of the incident" in tmpl.COMPOSITION)
 check("filler people are ruled out by name",
       "never add a seated diner" in tmpl.COMPOSITION)
-check("signage the setting would not have is ruled out",
-      "Do not add signage the setting would not have" in tmpl.CONTENT_EXCLUSIONS)
+# Was: 'check("signage the setting would not have is ruled out", "Do not add
+# signage the setting would not have" in CONTENT_EXCLUSIONS)'. That sentence was
+# a negation and is gone — see the leak note above. Positively phrased there is
+# one clause, not two, and it is already asserted where lettering is permitted
+# ("belongs to this setting"), so a second check here would only re-test the
+# same string. What is worth pinning instead is that the block still SAYS
+# something about lettering at all, rather than being emptied.
+check("the exclusion still governs lettering",
+      "lettering" in tmpl.CONTENT_EXCLUSIONS.lower())
 check("the scene writer furnishes from the story's own setting",
       "the place this story actually names" in gi._SCENE_SYSTEM_PROMPT)
 # The per-setting prop lists were deleted: they fixed cross-setting bleed but

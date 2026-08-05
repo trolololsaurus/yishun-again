@@ -100,8 +100,7 @@ LOCAL_SETTING = (
     "rendered slab blocks with open-air common corridors behind low parapets, "
     "laundry poles angled out from the window sills, and an open pillared void "
     "deck at ground level. Any police are Singapore Police Force officers in "
-    "dark navy blue. Singapore, not Hong Kong — no neon sign canyons, no caged "
-    "balconies, no vertical hanging shop boards."
+    "dark navy blue."
 )
 
 # ART_PIPELINE.md §3.5 — always present. Earlier attempts filled frames with
@@ -122,12 +121,25 @@ LOCAL_SETTING = (
 # image depicting an incident is a defamation exposure, and that has nothing to
 # do with whether a chalkboard has words on it. Garbled pseudo-lettering in the
 # background is a cosmetic issue and is now accepted deliberately.
+#
+# NEGATION REMOVED 2026-08-02 on operator direction, after it rendered ITSELF.
+# A render came back with "NAMING NO REAL BUSINESS" painted across a shop awning
+# and repeated on a pillar notice: this block is the only part of the prompt that
+# talks ABOUT signage and lettering, and the image model — which is deciding what
+# to write on signs at that moment — took its words as the content to write.
+# Intermittent (two earlier renders were clean) but unmistakable when it fires.
+#
+# The wording is now positive and describes only what signage IS. The defamation
+# control is not weakened by this, because it was never the primary one: the
+# scene writer is forbidden to invent business names at all, so the image model
+# is never handed a real brand to draw. This block is the second layer, and a
+# second layer that paints itself into the frame is worse than one phrased as a
+# description.
 CONTENT_EXCLUSIONS = (
-    "No logos, no brand names, no identifiable real business, no real company "
-    "signage. Incidental lettering that genuinely belongs to this setting — a "
-    "hand-written board, a notice, a painted marking — is welcome as ordinary "
-    "set dressing, in English, naming no real establishment. Do not add signage "
-    "the setting would not have."
+    "All businesses in frame are invented and generic. Any lettering is "
+    "incidental set dressing that belongs to this setting — a hand-written "
+    "board, a notice, a painted marking — in English, naming only made-up "
+    "places."
 )
 
 # ART_PIPELINE.md §3.4. Every palette shares the same bones — amber-dominant
