@@ -76,6 +76,11 @@ const nextConfig = {
         destination: '/incidents/yishun-triple-murder-wang-zhijian-block-349-2008',
         permanent: true,
       },
+      {
+        source: '/incidents/acsi-student-death-high-element-safra-yishun-feb-2021',
+        destination: '/incidents/safra-yishun-student-death-jethro-puah-2021',
+        permanent: true,
+      },
     ]
   },
 }
