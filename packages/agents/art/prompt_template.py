@@ -100,8 +100,8 @@ LOCAL_SETTING = (
     "rendered slab blocks with open-air common corridors behind low parapets, "
     "laundry poles angled out from the window sills, and an open pillared void "
     "deck at ground level. Any police are Singapore Police Force officers in "
-    "dark navy blue with a chequered cap band. Singapore, not Hong Kong — no "
-    "neon sign canyons, no caged balconies, no vertical hanging shop boards."
+    "dark navy blue. Singapore, not Hong Kong — no neon sign canyons, no caged "
+    "balconies, no vertical hanging shop boards."
 )
 
 # ART_PIPELINE.md §3.5 — always present. Earlier attempts filled frames with

@@ -300,7 +300,7 @@ came back. Naming the place is what anchors it.
 - void deck   -> "void deck", the open pillared ground floor beneath an HDB block
 - laundry     -> laundry poles angled out from the window sills
 - coffeeshop  -> neighbourhood coffeeshop (kopitiam), formica tables, stacked plastic stools
-- police      -> Singapore Police Force officers, dark navy blue uniform, chequered cap band
+- police      -> Singapore Police Force officers, dark navy blue uniform
 Singapore, never Hong Kong: no neon sign canyons, no caged balconies, no \
 vertical hanging shop boards.
 
