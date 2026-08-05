@@ -187,13 +187,25 @@ PUB_DATE_FIXES = {
     "yishun-kurt-tay-intimate-image-conviction-2026": "2024-01-10",
 }
 
+# Rows whose only source is a Wikipedia page. Wikipedia is continuously revised
+# and has no publication date to read, so there is no article date to use and
+# the backfill's placeholder (1989-01-01, 1992-04-01) sat BEFORE the event it
+# described. Operator decision, 2026-08-05: fall back to `incident_date`.
+#
+# Taken from the row, never written as a literal — a hardcoded date here could
+# drift from the incident_date it is supposed to mirror. Note this is
+# deliberately NOT `first_reported_at`, which differs on both rows (1989-10-02
+# / 1992-04-18) and is a claim about reporting these rows cannot support.
+PUB_DATE_FROM_INCIDENT = {
+    "yishun-schoolgirl-murder-industrial-park-oct-1989":
+        "Wikipedia-only source — no publication date exists; using incident_date",
+    "yishun-taxi-driver-murders-1992":
+        "Wikipedia-only source — no publication date exists; using incident_date",
+}
+
 # Left alone deliberately, with the reason. Printed by the step so the two
 # categories can never be confused with "not looked at".
 PUB_DATE_SKIPS = {
-    "yishun-schoolgirl-murder-industrial-park-oct-1989":
-        "sole source is a Wikipedia page — continuously revised, no publication date exists",
-    "yishun-taxi-driver-murders-1992":
-        "sole source is a Wikipedia page — continuously revised, no publication date exists",
     "yishun-overhead-bridge-attempted-suicide-rescue-jun-2018":
         "already the article date (Stomp, 2018-06-14) — verified, nothing to change",
     "man-jumps-window-fire-yishun-street-51-dec-2021":
@@ -552,7 +564,7 @@ def _merge_one(keep_slug: str, drop_slug: str, apply: bool, opts: dict) -> dict:
 def step_pub_dates(apply: bool) -> dict:
     supabase = _client()
     rows = (supabase.table("incidents")
-            .select("id,slug,published_at,created_at,source_timeline")
+            .select("id,slug,published_at,created_at,incident_date,source_timeline")
             .eq("is_published", True).limit(400).execute().data or [])
 
     # The cohort is DERIVED, not listed: any published row whose published_at is
@@ -562,14 +574,34 @@ def step_pub_dates(apply: bool) -> dict:
               if str(r["published_at"])[:10] != str(r["created_at"])[:10]}
     print(f"  {len(cohort)} published row(s) whose published_at is not their publish date")
 
+    # incident_date is per-row, so this builds the same {slug: date} shape the
+    # verified table has and the write path below stays single.
+    targets = dict(PUB_DATE_FIXES)
+    for slug, reason in PUB_DATE_FROM_INCIDENT.items():
+        row = cohort.get(slug)
+        if not row:
+            continue
+        event = str(row.get("incident_date") or "")[:10]
+        if not event:
+            print(f"  SKIP  {slug[:58]:58} no incident_date to fall back to")
+            continue
+        print(f"  ({reason})")
+        targets[slug] = event
+
     fixed = failed = 0
-    for slug, new_date in PUB_DATE_FIXES.items():
+    for slug, new_date in targets.items():
         row = cohort.get(slug)
         if not row:
             # Already applied, or the row changed under us. Not a failure.
             print(f"  SKIP  {slug[:58]:58} not in the cohort (already fixed?)")
             continue
         was = str(row["published_at"])[:10]
+        if was == new_date:
+            # Already at the verified value — re-running must not re-report it
+            # as a change, or the next operator cannot tell a fresh run from a
+            # repeat one.
+            print(f"  OK    {slug[:58]:58} {was} (already correct)")
+            continue
         print(f"  SET   {slug[:58]:58} {was} -> {new_date}")
         if apply:
             res = (supabase.table("incidents")
@@ -586,7 +618,8 @@ def step_pub_dates(apply: bool) -> dict:
             print(f"  KEEP  {slug[:58]:58} {str(cohort[slug]['published_at'])[:10]}")
             print(f"        {reason}")
 
-    unaccounted = set(cohort) - set(PUB_DATE_FIXES) - set(PUB_DATE_SKIPS)
+    unaccounted = (set(cohort) - set(PUB_DATE_FIXES)
+                   - set(PUB_DATE_FROM_INCIDENT) - set(PUB_DATE_SKIPS))
     for slug in sorted(unaccounted):
         failed += 1
         print(f"  !! UNACCOUNTED {slug} — no verified date and no recorded reason")
