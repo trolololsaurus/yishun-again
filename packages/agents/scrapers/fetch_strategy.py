@@ -102,11 +102,76 @@ def _host_of(url: str) -> str:
         return ""
 
 
+# One pass fetches the SAME article more than once: the news-sitemap adapter
+# pulls a body, enrich_thin_content may pull it again for a thin candidate, and
+# resolve_published_at pulls it a third time for the date. Three requests, one
+# document, and every one of them counted toward the burst that got the
+# datacenter IP throttled.
+#
+# Memoised per process, which is exactly one pass. Bounded so a cold start with
+# an enormous sitemap cannot grow it without limit.
+_FETCH_CACHE: dict[str, tuple[int, bytes]] = {}
+_FETCH_CACHE_MAX = 400
+
+
 def reset_host_throttle() -> None:
-    """Clear the per-host state. For tests, and for a long-lived process that
-    wants each pass to start with a clean slate."""
+    """Clear the per-host state and the fetch cache. For tests, and for a
+    long-lived process that wants each pass to start with a clean slate."""
     _HOST_LAST_REQUEST.clear()
     _HOST_TRIPPED.clear()
+    _FETCH_CACHE.clear()
+
+
+def polite_get(url: str, *, timeout: float = 25.0, cap: int = 4_000_000) -> tuple[int, bytes]:
+    """
+    Fetch `url` once per pass, spaced per host, backing off from refusals.
+
+    Returns `(status, body)`. A tripped host answers `(429, b"")` without a
+    request, which callers already treat as blocked. Transport failures answer
+    `(0, b"")`. NEVER raises — callers own their own error vocabulary.
+
+    This is the single door every publisher request should go through. Three
+    call sites used to fetch directly with urllib and so were invisible to the
+    throttle: resolve_published_at, NewsSitemapSource._get and
+    WordPressSearchSource.fetch.
+    """
+    if not url:
+        return 0, b""
+
+    cached = _FETCH_CACHE.get(url)
+    if cached is not None:
+        logger.debug("polite_get: cache hit %s", url[:80])
+        return cached
+
+    host = _host_of(url)
+    if host and host in _HOST_TRIPPED:
+        logger.debug("polite_get: %s tripped this pass, not requesting %s", host, url[:70])
+        return 429, b""
+
+    if host:
+        elapsed = time.monotonic() - _HOST_LAST_REQUEST.get(host, 0.0)
+        if elapsed < _HOST_MIN_INTERVAL:
+            time.sleep(_HOST_MIN_INTERVAL - elapsed)
+        _HOST_LAST_REQUEST[host] = time.monotonic()
+
+    try:
+        resp = httpx.get(url, headers=BROWSER_HEADERS,
+                         follow_redirects=True, timeout=timeout)
+        body = resp.content[:cap]
+        status = resp.status_code
+    except Exception as exc:
+        logger.debug("polite_get: transport failure for %s: %s", url[:80], exc)
+        return 0, b""
+
+    if host and status in (403, 429):
+        _HOST_TRIPPED.add(host)
+        logger.warning("polite_get: %s returned %s — no further requests to that "
+                       "host this pass", host, status)
+        return status, b""
+
+    if status == 200 and len(_FETCH_CACHE) < _FETCH_CACHE_MAX:
+        _FETCH_CACHE[url] = (status, body)
+    return status, body
 
 
 class DirectHttpx(FetchStrategy):

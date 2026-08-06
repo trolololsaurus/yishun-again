@@ -79,17 +79,16 @@ class WordPressSearchSource:
         covers. Dateless entries are never dropped (INGESTION_DESIGN §5.1).
         """
         url = self.feed_url
-        req = urllib.request.Request(url, headers=BROWSER_HEADERS)
-        try:
-            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-                raw = resp.read(_READ_CAP)
-        except urllib.error.HTTPError as exc:
-            if exc.code in (403, 429):
-                raise SourceBlockedError(f"{self.name}: HTTP {exc.code}") from exc
-            raise SourceUnavailableError(f"{self.name}: HTTP {exc.code}") from exc
-        except Exception as exc:
-            raise SourceUnavailableError(
-                f"{self.name}: {type(exc).__name__}: {exc}") from exc
+        # Shares the per-host spacing, 403 back-off and per-pass cache with
+        # every other publisher request — see scrapers.fetch_strategy.polite_get.
+        from scrapers.fetch_strategy import polite_get
+        status, raw = polite_get(url, timeout=REQUEST_TIMEOUT, cap=_READ_CAP)
+        if status in (403, 429):
+            raise SourceBlockedError(f"{self.name}: HTTP {status}")
+        if status == 0:
+            raise SourceUnavailableError(f"{self.name}: fetch failed")
+        if status != 200:
+            raise SourceUnavailableError(f"{self.name}: HTTP {status}")
 
         snippet = raw[:4000].decode("utf-8", errors="ignore").lower()
         for marker in _BLOCK_MARKERS:

@@ -175,16 +175,24 @@ import scrapers as scrapers_pkg  # noqa: E402
 
 @contextmanager
 def fake_html(body: str | None):
-    """Patch urlopen to serve `body`, or raise when body is None."""
-    class _Resp:
-        def read(self, *_a): return body.encode("utf-8")
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-    def _open(*_a, **_k):
+    """Serve `body` to resolve_published_at, or fail the fetch when None.
+
+    Patches `fetch_strategy.polite_get`, NOT urlopen. resolve_published_at used
+    to fetch with its own urllib call; it now goes through polite_get so that it
+    shares the per-host throttle, the 403 back-off and the per-pass cache with
+    every other publisher request. Patching urlopen still "worked" — it simply
+    intercepted nothing, and these assertions failed while
+    "no date in page -> None" passed for the wrong reason.
+    """
+    import scrapers.fetch_strategy as _fs
+
+    def _get(url, *, timeout=None, cap=None):
         if body is None:
-            raise OSError("connection refused")
-        return _Resp()
-    with mock.patch.object(scrapers_pkg.urllib.request, "urlopen", _open):
+            return 0, b""
+        return 200, body.encode("utf-8")
+
+    _fs.reset_host_throttle()
+    with mock.patch.object(_fs, "polite_get", _get):
         yield
 
 from datetime import date as _d  # noqa: E402

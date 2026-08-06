@@ -411,12 +411,17 @@ def resolve_published_at(url: str, *, timeout: int = 10) -> date | None:
     if m and (found := _safe_date(*m.groups())):
         return found
 
-    # 2. The article's own metadata (direct fetch).
+    # 2. The article's own metadata. Routed through polite_get so it shares the
+    #    per-host spacing, the 403 back-off AND the per-pass cache with every
+    #    other publisher request. It used to fetch with its own urllib call and
+    #    was therefore invisible to the throttle — and it commonly re-fetched an
+    #    article the sitemap adapter had already pulled seconds earlier.
     html = None
     try:
-        req = urllib.request.Request(url, headers=BROWSER_HEADERS)
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            html = resp.read(_HTML_READ_CAP).decode("utf-8", errors="ignore")
+        from .fetch_strategy import polite_get
+        status, body = polite_get(url, timeout=timeout, cap=_HTML_READ_CAP)
+        if status == 200 and body:
+            html = body.decode("utf-8", errors="ignore")
     except Exception as exc:
         logger.debug("resolve_published_at: direct fetch failed for %s: %s", url[:80], exc)
 

@@ -209,17 +209,20 @@ class NewsSitemapSource:
         self.enabled = enabled
 
     def _get(self, url: str, cap: int) -> bytes:
-        req = urllib.request.Request(url, headers=BROWSER_HEADERS)
-        try:
-            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-                body = resp.read(cap)
-        except urllib.error.HTTPError as exc:
-            if exc.code in (403, 429):
-                raise SourceBlockedError(f"{self.name}: HTTP {exc.code} for {url}") from exc
-            raise SourceUnavailableError(f"{self.name}: HTTP {exc.code} for {url}") from exc
-        except Exception as exc:
-            raise SourceUnavailableError(
-                f"{self.name}: {type(exc).__name__}: {exc} ({url})") from exc
+        # polite_get shares the per-host spacing, the 403 back-off and the
+        # per-pass cache with every other publisher request. This adapter is the
+        # heaviest fetcher in the pass — one sitemap plus one request per
+        # keyword match — and fetching directly made it invisible to the
+        # throttle, which is how a burst got the datacenter IP refused by every
+        # SPH property at once on 2026-08-05.
+        from scrapers.fetch_strategy import polite_get
+        status, body = polite_get(url, timeout=REQUEST_TIMEOUT, cap=cap)
+        if status in (403, 429):
+            raise SourceBlockedError(f"{self.name}: HTTP {status} for {url}")
+        if status == 0:
+            raise SourceUnavailableError(f"{self.name}: fetch failed for {url}")
+        if status != 200:
+            raise SourceUnavailableError(f"{self.name}: HTTP {status} for {url}")
 
         # Some publishers (Yahoo) serve the sitemap as a gzipped FILE rather
         # than with Content-Encoding: gzip, so urllib hands back the raw

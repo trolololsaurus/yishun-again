@@ -36,8 +36,12 @@ def check(name, cond):
 
 
 class _Resp:
+    """httpx-shaped double. `.content` matters as much as `.text`: DirectHttpx
+    reads the decoded body, polite_get reads the raw bytes."""
+
     def __init__(self, status=200, text="<html>ok</html>", url="https://x/1"):
         self.status_code, self.text, self.url = status, text, url
+        self.content = text.encode("utf-8")
 
 
 print("fetch throttle tests:")
@@ -106,6 +110,61 @@ with mock.patch.object(fs.httpx, "get", side_effect=RuntimeError("boom")), \
     check("a transport error still degrades to None, never raises",
           fs.DirectHttpx().fetch("https://c.example/1") is None)
 check("empty url is a no-op", fs.DirectHttpx().fetch("") is None)
+
+# ── polite_get: one door for every publisher request ────────────────────────
+# Three call sites used to fetch with their own urllib call and were invisible
+# to the throttle: resolve_published_at, NewsSitemapSource._get and
+# WordPressSearchSource.fetch. Between them they are most of a pass's traffic.
+print("\npolite_get:")
+
+fs.reset_host_throttle()
+n = []
+with mock.patch.object(fs.httpx, "get",
+                       side_effect=lambda u, **k: (n.append(u), _Resp(200, "body"))[1]),      mock.patch.object(fs.time, "sleep"):
+    s1, b1 = fs.polite_get("https://www.straitstimes.com/a")
+    s2, b2 = fs.polite_get("https://www.straitstimes.com/a")
+check("first call fetches", s1 == 200 and b1)
+check("second call is served from cache", s2 == 200 and b2 == b1)
+check("...and issues NO second request", len(n) == 1)
+
+fs.reset_host_throttle()
+with mock.patch.object(fs.httpx, "get", return_value=_Resp(403)),      mock.patch.object(fs.time, "sleep"):
+    st, _ = fs.polite_get("https://www.stomp.sg/a")
+check("a 403 is reported to the caller", st == 403)
+n2 = []
+with mock.patch.object(fs.httpx, "get",
+                       side_effect=lambda u, **k: (n2.append(u), _Resp(200))[1]),      mock.patch.object(fs.time, "sleep"):
+    st2, _ = fs.polite_get("https://www.stomp.sg/b")
+check("a tripped host answers 429 without requesting", st2 == 429 and not n2)
+
+fs.reset_host_throttle()
+with mock.patch.object(fs.httpx, "get", side_effect=RuntimeError("boom")),      mock.patch.object(fs.time, "sleep"):
+    st3, b3 = fs.polite_get("https://x.example/a")
+check("a transport failure answers (0, b'') and never raises", st3 == 0 and b3 == b"")
+
+check("empty url is a no-op", fs.polite_get("") == (0, b""))
+
+fs.reset_host_throttle()
+with mock.patch.object(fs.httpx, "get", return_value=_Resp(404)),      mock.patch.object(fs.time, "sleep"):
+    st4, _ = fs.polite_get("https://y.example/a")
+check("a 404 is passed through, not cached, not tripped",
+      st4 == 404 and "y.example" not in fs._HOST_TRIPPED
+      and "https://y.example/a" not in fs._FETCH_CACHE)
+
+fs.reset_host_throttle()
+check("reset clears the fetch cache too", not fs._FETCH_CACHE)
+
+# The three call sites must actually use it, or none of the above matters.
+import inspect
+import scrapers as sc
+import ingestion.sources.news_sitemap as nsm
+import ingestion.sources.wp_search as wps
+check("resolve_published_at routes through polite_get",
+      "polite_get" in inspect.getsource(sc.resolve_published_at))
+check("NewsSitemapSource routes through polite_get",
+      "polite_get" in inspect.getsource(nsm.NewsSitemapSource))
+check("WordPressSearchSource routes through polite_get",
+      "polite_get" in inspect.getsource(wps.WordPressSearchSource))
 
 print()
 print(f"{passed} passed, {failed} failed")
