@@ -21,6 +21,7 @@ on-demand browser service slots into the chain without touching call sites.
 from __future__ import annotations
 
 import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -64,6 +65,50 @@ class FetchStrategy(ABC):
         ...
 
 
+# ── Per-host politeness ──────────────────────────────────────────────────────
+#
+# Article fetching used to be rare. It is not any more: the news-sitemap
+# adapters fetch every keyword-matching article, and enrich_thin_content fetches
+# one per thin candidate. A single pass can therefore issue a dozen requests to
+# one publisher within a couple of seconds, from one datacenter IP.
+#
+# On 2026-08-05 that is exactly what happened. The 14:58 pass — the first to run
+# with enrichment — came back with EVERY SPH Media property 403ing at once
+# (Straits Times, Stomp, Zaobao, Shin Min, Berita Harian, Tamil Murasu) plus
+# HWZ, while the same URLs answered 200 from a residential IP minutes later. Not
+# an outage and not a ban: one operator's bot defence throttling a burst. It had
+# cleared by the next pass.
+#
+# Two rules, both per-HOST rather than global, so a slow publisher cannot
+# starve the others:
+#
+#   1. Minimum interval between requests to the same host. Spreads the burst.
+#   2. A 403/429 marks the host tripped for the rest of the process. Continuing
+#      to hammer a host that just refused is how a throttle becomes a ban, and
+#      the caller has a Wayback rung to fall back on anyway.
+#
+# Deliberately in-process and not persisted: a pass is a single process, and
+# state that outlived it would silently disable a source after one bad day.
+_HOST_MIN_INTERVAL = 1.5          # seconds between requests to one host
+_HOST_LAST_REQUEST: dict[str, float] = {}
+_HOST_TRIPPED: set[str] = set()
+
+
+def _host_of(url: str) -> str:
+    try:
+        from urllib.parse import urlsplit
+        return (urlsplit(url).netloc or "").lower()
+    except Exception:
+        return ""
+
+
+def reset_host_throttle() -> None:
+    """Clear the per-host state. For tests, and for a long-lived process that
+    wants each pass to start with a clean slate."""
+    _HOST_LAST_REQUEST.clear()
+    _HOST_TRIPPED.clear()
+
+
 class DirectHttpx(FetchStrategy):
     """Plain httpx GET with the browser UA the scrapers already use. This is the
     happy path — when it returns a result the caller sees identical behaviour to
@@ -72,6 +117,20 @@ class DirectHttpx(FetchStrategy):
     def fetch(self, url: str, *, timeout: float | None = None) -> FetchResult | None:
         if not url:
             return None
+        host = _host_of(url)
+
+        # Already refused by this host — do not push a throttle toward a ban.
+        if host and host in _HOST_TRIPPED:
+            logger.debug("DirectHttpx: %s tripped earlier this pass, skipping %s",
+                         host, url[:70])
+            return None
+
+        if host:
+            elapsed = time.monotonic() - _HOST_LAST_REQUEST.get(host, 0.0)
+            if elapsed < _HOST_MIN_INTERVAL:
+                time.sleep(_HOST_MIN_INTERVAL - elapsed)
+            _HOST_LAST_REQUEST[host] = time.monotonic()
+
         timeout = _DIRECT_TIMEOUT if timeout is None else timeout
         try:
             resp = httpx.get(
@@ -80,6 +139,15 @@ class DirectHttpx(FetchStrategy):
         except Exception as exc:  # transport error, timeout, bad TLS, …
             logger.debug("DirectHttpx: fetch failed for %s: %s", url[:80], exc)
             return None
+
+        if host and resp.status_code in (403, 429):
+            _HOST_TRIPPED.add(host)
+            logger.warning(
+                "DirectHttpx: %s returned %s — no further direct fetches to that "
+                "host this pass; falling back to the archive",
+                host, resp.status_code)
+            return None
+
         # A 403/429/5xx is exactly the "blocked" case we want to fall through to
         # Wayback on, so treat any non-200 or empty body as a miss, not a result.
         if resp.status_code != 200 or not resp.text:

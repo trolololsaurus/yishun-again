@@ -109,6 +109,12 @@ with mock.patch.object(fs.WaybackSnapshot, "_resolve_snapshot", return_value=Non
 with mock.patch.object(fs.httpx, "get", side_effect=lambda url, **kw: FakeResp(429, "", ART)):
     check("DirectHttpx non-200 -> None (falls through)", fs.DirectHttpx().fetch(ART) is None)
 
+# The 429 above TRIPS that host for the rest of the process — a host that just
+# refused is not asked again (see test_fetch_throttle.py for why). Reset before
+# asserting the happy path, or this reads as a mysterious failure rather than
+# the throttle doing its job.
+fs.reset_host_throttle()
+
 with mock.patch.object(fs.httpx, "get", side_effect=lambda url, **kw: FakeResp(200, "<html>ok</html>", ART)):
     r = fs.DirectHttpx().fetch(ART)
     check("DirectHttpx 200 -> via='direct'", r is not None and r.via == "direct")
