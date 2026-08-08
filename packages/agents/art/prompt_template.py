@@ -100,7 +100,9 @@ LOCAL_SETTING = (
     "rendered slab blocks with open-air common corridors behind low parapets, "
     "laundry poles angled out from the window sills, and an open pillared void "
     "deck at ground level. Any police are Singapore Police Force officers in "
-    "dark navy blue."
+    "dark navy blue. The people are Singaporean: a natural mix of Chinese, "
+    "Malay and Indian faces in everyday local dress, some Malay women in a "
+    "tudung headscarf. Clothing and uniforms are contemporary Singaporean."
 )
 
 # ART_PIPELINE.md §3.5 — always present. Earlier attempts filled frames with

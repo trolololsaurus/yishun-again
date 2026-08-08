@@ -287,6 +287,16 @@ CHARACTERS - this rule is load-bearing, getting it wrong produces blobs
 large defined eyes, readable mouth and brow, hair rendered as distinct strands, \
 clothing with visible fold shading. Size them large enough in frame that the \
 expression reads clearly.
+- The people are SINGAPOREAN, not Japanese. The sprite manner is only how they \
+are drawn, never who they are. Everyday Singaporean clothing and real local \
+uniforms — never a kimono, a school seifuku, or a Japanese-style police uniform \
+or cap.
+- Reflect Singapore's population. Across the figures in a scene, show a natural \
+mix of Chinese, Malay and Indian people — varied skin tones and features — the \
+way a Yishun coffeeshop, void deck or corridor actually looks: a Malay woman may \
+wear a tudung headscarf, an older Chinese man a singlet, an Indian uncle a \
+collared shirt. Where the story does not fix a person's race, vary it; do not \
+draw everyone the same race.
 - NEVER write "faceless", "silhouette", "stylised figure", "no detailed facial \
 features", or "small in frame". Those are workarounds for an older model and \
 they destroy this one's output.
