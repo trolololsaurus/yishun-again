@@ -28,7 +28,7 @@ export async function GET(req: Request) {
       'id,slug,title,classification,custom_label,severity,corroboration_count,published_at,incident_date,' +
       'area_name,is_milestone,milestone_type,milestone_value,' +
       'is_developing,update_count,first_reported_at,' +
-      'source_urls,source_timeline,latest_source_role'
+      'source_urls,source_timeline,latest_source_role,pixel_art_url'
     )
     .eq('is_published', true)
     // Latest incident always on top — sort purely by event date (newest first),

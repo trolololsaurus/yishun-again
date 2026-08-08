@@ -172,6 +172,22 @@ ISR intact.
 **Checkpoint:** year change updates the URL; both surfaces react on their own; a
 reload of `/?year=2024` shows 2024.
 
+> **DONE (2026-08-07) — delivered inside Phase 1, no separate commit.** The route
+> split cannot function without shared year state, and the chosen mechanism is
+> the URL, so `ChaosSidebar` had to be built in Phase 1: it reads `?year=`,
+> writes it via `router.replace` (dropping the param at the current year), owns
+> the `/api/chaos` fetch + loading/error/stats, takes `availableYears` as an SSR
+> prop from `(hud)/layout.tsx`, and leaves `ChaosPanel` untouched. Feed and Map
+> read the param themselves — the prop-drilling spine is gone. Checkpoint met
+> per the Phase 1 verification (deep-link updates every surface; nav carries the
+> param). Nothing remained to build here.
+>
+> One edge case noted and deliberately NOT handled (out of scope, degrades
+> gracefully): a hand-typed out-of-range `?year=1850` — valid 4-digit but absent
+> from `availableYears` — leaves the `<select>` showing its first option while
+> the fetches run for 1850 (empty results). Revisit only if it ever matters;
+> fixing it cleanly means threading `availableYears` into the Feed/Map bodies.
+
 ## Phase 3 — Feed route: images + infinite scroll
 
 - **New `hooks/useIncidentPages.ts`:** extract the identical
@@ -196,6 +212,35 @@ reload of `/?year=2024` shows 2024.
 
 **Verify:** thumbs lazy-load, infinite scroll appends, filter/year drive it,
 suppressed rows show the neutral state.
+
+> **DONE (2026-08-07).** Landed as: `hooks/useIncidentPages.ts` (shared paging,
+> adopted by both `IncidentFeed` and `TimelineClient`); `IncidentFeed` rewritten
+> off the hook + an IntersectionObserver sentinel (react-window gone);
+> `IncidentCard` gains a 112×63 `next/image` thumbnail; `pixel_art_url` added to
+> the feed SSR + `/api/incidents` selects; `next.config.js` gains the
+> `assets.yishunagain.com` remote pattern; `react-window` + `@types/react-window`
+> removed from `package.json` (4 packages pruned). Build clean (routes unchanged,
+> `/` + `/map` still Static/ISR), lint clean, 35 web tests + 10 war-room parity
+> green. Verified in-browser: feed renders 20 cards, 18 with thumbnails routed
+> through `/_next/image` (optimizer returns `200 image/png` from R2), `srcset` +
+> `sizes="112px"` downscale to ~128px, `loading="lazy"`; `/api/incidents` page 0
+> vs page 1 return disjoint 20-row sets carrying `pixel_art_url`; `/timeline`
+> adopts the hook with no errors. Not verifiable in the non-compositing preview
+> pane (needs a real browser): thumbnail pixels, the observer-driven scroll
+> (layout isn't computed here — but it's the pattern `TimelineClient` already
+> ran in prod), and the placeholder box visual.
+>
+> **Deviation from the plan above — `image_status` NOT added, allowlist
+> untouched.** The plan wanted `image_status` in the feed selects and in
+> `PUBLIC_INCIDENT_COLUMNS` so the card could tell "suppressed" from "not
+> generated". At thumbnail scale those render as the SAME neutral box (a
+> classification icon on `bg-surface`, no "coming soon"), so the distinction
+> buys nothing — and exposing `image_status` publicly would leak the guardrail-#5
+> suicide/self-harm inference (a `suppressed` value implies the content class).
+> So the card keys off `pixel_art_url` presence alone, `image_status` stays out
+> of every public response, and the security-reviewed `PUBLIC_INCIDENT_COLUMNS`
+> is not touched. The "coming soon" wording problem the plan cited exists only on
+> the large detail-page placeholder, which is out of Phase 3 scope.
 
 ## Phase 4 — Map route: emoji markers + rich preview
 

@@ -60,7 +60,7 @@ export default async function FeedPage() {
     // crawlers see linked incidents.
     supabase
       .from('incidents')
-      .select('id,slug,title,classification,custom_label,severity,corroboration_count,published_at,incident_date,area_name,is_milestone,milestone_type,milestone_value,is_developing,update_count,first_reported_at,source_urls,source_timeline,latest_source_role')
+      .select('id,slug,title,classification,custom_label,severity,corroboration_count,published_at,incident_date,area_name,is_milestone,milestone_type,milestone_value,is_developing,update_count,first_reported_at,source_urls,source_timeline,latest_source_role,pixel_art_url')
       .eq('is_published', true)
       .order('incident_date', { ascending: false, nullsFirst: false })
       .order('id',            { ascending: false })

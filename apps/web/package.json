@@ -15,14 +15,12 @@
     "maplibre-gl": "^3.6.2",
     "next": "^16.2.12",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "react-window": "^1.8.11"
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@types/node": "^20.12.12",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@types/react-window": "^1.8.8",
     "autoprefixer": "^10.4.19",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.2.12",
