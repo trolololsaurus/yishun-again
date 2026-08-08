@@ -405,13 +405,20 @@ Set by `SENSITIVE_INCIDENT_ART` (default `respectful`, rollback `suppress`; any
 other value resolves to `suppress` — fail toward the guardrail). Added 2026-08-09
 on operator direction; before it, a detected incident was always suppressed.
 
-**`respectful`** renders a fixed, non-graphic **police-response tableau** —
-`art/sensitive_scene.py`, guard `test_sensitive_art.py`. A shut blue fast-deploy
-privacy tent is the focal point, ringed by police officers (men and women,
-Chinese/Malay/Indian; labelled POLICE, standard police caps — never a tudung on
-an officer), blue-and-white police tape, and a patrol car where the setting has
-road access. The block's real number is painted on the facade (never invented).
-What makes it safe rather than sensational:
+**`respectful`** renders a fixed, non-graphic **police/SCDF-response scene** —
+`art/sensitive_scene.py`, guard `test_sensitive_art.py`. `incident_kind()` picks
+one of three so the picture matches the outcome:
+
+- **fatal** (default) — a shut blue fast-deploy police privacy tent as the focal,
+  police officers, tape, a patrol car.
+- **indoor** — a death inside a unit (person conveyed to hospital): an SCDF
+  ambulance response at the block, **no** ground body tent.
+- **rescue** — a rescue where nobody died: an SCDF inflatable air cushion and
+  responders, **no** body tent (a tent there would be plain wrong).
+
+All three: police labelled POLICE (never "SPF"), officers in the standard cap
+(never a tudung — that cue is for residents), and the block's real number painted
+on the facade (never invented). What makes it safe rather than sensational:
 
 - **Fully deterministic.** Haiku never writes it, so the scraped summary never
   becomes picture content. Only a place-TYPE (HDB block / void deck / carpark /

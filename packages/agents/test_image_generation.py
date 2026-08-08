@@ -418,7 +418,15 @@ check("physical logic is established before the prop lists",
 print("\nguardrail #5 — respectful police-response tableau (default):\n")
 
 # Default mode renders the fixed tableau: NO Haiku scene writer, one image call.
-sup_incident = dict(INCIDENT, tags=["suicide"], classification="dagger")
+# A genuine fatal fall (the tent variant) — INCIDENT itself is a cat rescue, so
+# its title would trip incident_kind's rescue branch.
+sup_incident = {
+    "slug": "yishun-fatal-fall-2026", "classification": "dagger", "severity": 5,
+    "area_name": "Yishun Ring Road", "block_number": 257, "deaths": 1,
+    "tags": ["suicide", "fall from height"],
+    "title": "Man found dead at foot of Yishun block",
+    "summary": "The death was an apparent suicide; no foul play is suspected.",
+}
 res, a, g, r2 = run(sup_incident)
 check("sensitive incident renders (status ok)", res.status == "ok", f"-> {res.status}")
 check("sensitive render uses NO Haiku scene writer", len(a.calls) == 0, f"-> {len(a.calls)}")
