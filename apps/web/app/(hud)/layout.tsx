@@ -1,0 +1,95 @@
+import { Suspense } from 'react'
+import { supabase } from '@/lib/supabase'
+import { ChaosSidebar } from '@/components/ChaosSidebar'
+import { computeChaosScore, chaosDescriptor } from '@/lib/utils'
+import type { ChaosData } from '@/lib/types'
+
+// ISR: the sidebar's SSR seed is the current-year snapshot, revalidated every
+// 60s. A different year is fetched client-side (Decision A) — reading
+// searchParams here would force dynamic rendering and lose this cache.
+export const revalidate = 60
+
+/**
+ * Shared HUD chrome for the Feed (`/`) and Map (`/map`) routes: the flex shell
+ * plus the Chaos Index sidebar, which persists across the two because this
+ * layout does not unmount between them.
+ *
+ * The shell is static server-rendered markup; only the sidebar is a client
+ * component (it reads `?year=` and re-fetches), so it sits behind a Suspense
+ * boundary. The desktop-only 280px column matches the pre-split layout; the
+ * mobile bottom sheet arrives in Phase 5.
+ */
+export default async function HudLayout({ children }: { children: React.ReactNode }) {
+  const currentYear = new Date().getFullYear()
+
+  const [{ data: yearRows }, { data: incidentDateRows }] = await Promise.all([
+    // Current-year stats for the sidebar (score + breakdown).
+    supabase
+      .from('incidents')
+      .select('classification,severity,deaths,injuries,published_at')
+      .eq('is_published', true)
+      .gte('incident_date', `${currentYear}-01-01`)
+      .lt( 'incident_date', `${currentYear + 1}-01-01`),
+    // Distinct incident years for the dropdown.
+    supabase
+      .from('incidents')
+      .select('incident_date')
+      .eq('is_published', true)
+      .not('incident_date', 'is', null),
+  ])
+
+  const rows  = yearRows ?? []
+  const score = computeChaosScore(rows)
+
+  const counts = rows.reduce(
+    (acc, r) => {
+      // Only the three real classes — a 'custom' row must not inflate total.
+      const cls = r.classification as 'heart' | 'clown' | 'dagger'
+      if (cls === 'heart' || cls === 'clown' || cls === 'dagger') {
+        acc[cls] += 1
+        acc.total += 1
+      }
+      return acc
+    },
+    { heart: 0, clown: 0, dagger: 0, total: 0 }
+  )
+
+  const deaths   = rows.reduce((s, r) => s + (r.deaths   ?? 0), 0)
+  const injuries = rows.reduce((s, r) => s + (r.injuries ?? 0), 0)
+
+  // Parse the year out of the YYYY-MM-DD string directly — new Date() would
+  // read it as UTC and roll a Jan-1 SGT date back a year.
+  const yearSet = new Set(
+    (incidentDateRows ?? [])
+      .map(r => parseInt(String(r.incident_date).slice(0, 4), 10))
+      .filter(y => !isNaN(y))
+  )
+  yearSet.add(currentYear)
+  const availableYears = [...yearSet].sort((a, b) => b - a)
+
+  const chaos: ChaosData = {
+    year:       currentYear,
+    score,
+    descriptor: chaosDescriptor(score),
+    counts,
+    deaths,
+    injuries,
+    availableYears,
+  }
+
+  return (
+    <div className="flex-1 min-h-0 flex overflow-hidden">
+      {/* Left column — the route's page (feed or map) fills the width. */}
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        {children}
+      </div>
+
+      {/* Right sidebar — fixed 280px, always visible, scrolls internally. */}
+      <aside className="flex-none h-full overflow-y-auto overflow-x-hidden" style={{ width: 280 }}>
+        <Suspense fallback={null}>
+          <ChaosSidebar chaos={chaos} />
+        </Suspense>
+      </aside>
+    </div>
+  )
+}

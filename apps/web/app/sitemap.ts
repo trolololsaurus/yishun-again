@@ -23,10 +23,16 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   return [
     {
-      url:             `${SITE_URL}/`,  // trailing slash — matches the homepage canonical
+      url:             `${SITE_URL}/`,  // trailing slash — matches the Feed canonical
       lastModified:    new Date(),
       changeFrequency: 'hourly',
       priority:        1.0,
+    },
+    {
+      url:             `${SITE_URL}/map`,
+      lastModified:    new Date(),
+      changeFrequency: 'hourly',
+      priority:        0.9,
     },
     {
       url:             `${SITE_URL}/timeline`,
