@@ -50,6 +50,10 @@ const nextConfig = {
   // optimizer, so the feed lazy-loads thumbnails instead of shipping full
   // 1200×630 files. This is the ONLY remote image host.
   images: {
+    // The optimizer defaults to `Content-Disposition: attachment` for remote
+    // images, which makes "open image in new tab" DOWNLOAD the file instead of
+    // previewing it. These are public incident art, not downloads — serve inline.
+    contentDispositionType: 'inline',
     remotePatterns: [
       { protocol: 'https', hostname: 'assets.yishunagain.com' },
     ],
