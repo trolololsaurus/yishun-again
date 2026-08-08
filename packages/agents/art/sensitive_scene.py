@@ -5,15 +5,22 @@ Guardrail #5 — respectful rendering for suicide / self-harm incidents.
 an incident is a suicide / self-harm story. What changed (2026-08-09, operator
 direction) is the POLICY once it is detected. It used to be "no image at all":
 `pixel_art_url` stayed null and the frontend showed the placeholder. It is now a
-single, fixed, deliberately non-graphic police-response tableau:
+fixed, deliberately non-graphic police/SCDF-response scene, chosen from three by
+`incident_kind()` so the picture matches the outcome:
 
-  * a low blue fast-deploy police privacy tent, panels shut, as the hero focal
-  * several police officers (labelled POLICE, never "SPF"), men and women,
-    Chinese/Malay/Indian; officers wear the standard police cap, never a tudung
-  * blue-and-white police tape cordoning the area
-  * a patrol car where the setting has road access ("if necessary")
-  * the surrounding environment (HDB block / void deck / carpark / corridor)
-    inferred ONLY as a place-type, never the act; the block's REAL number
+  * fatal  — a low blue fast-deploy police privacy tent (panels shut) as the
+             focal, police officers, tape and a patrol car. The default.
+  * indoor — a death inside a unit: an SCDF ambulance response at the block, no
+             ground body tent.
+  * rescue — a rescue where nobody died: an SCDF inflatable air cushion and
+             responders, no body tent (a tent here would be plain wrong).
+
+Common to all three:
+
+  * police are labelled POLICE, never "SPF"; officers wear the standard police
+    cap, never a tudung (the tudung/songkok cues are for residents)
+  * the surrounding environment (HDB block / void deck / carpark / corridor /
+    bridge) inferred ONLY as a place-type, never the act; the block's REAL number
     (`block_number`, else mined from the title/summary) painted on the facade —
     never an invented one
 
@@ -135,23 +142,82 @@ def block_label(incident) -> str:
     return m.group(1).upper() if m else ""
 
 
-def sensitive_scene(incident) -> str:
-    """
-    The fixed, non-graphic police-response scene paragraph.
+# ── Which respectful scene fits this incident ────────────────────────────────
+#
+# One tent does not fit every guardrail-#5 story. A body-privacy tent implies a
+# body was found on the ground — correct for an outdoor fall, WRONG for a rescue
+# where nobody died (offensive) and inaccurate for a death that happened indoors.
+# So the scene is chosen from three, on deterministic outcome/location signals
+# read from the incident (never rendered):
+#
+#   rescue : a rescue / attempt with NO death recorded -> SCDF air-cushion scene,
+#            never a body tent.
+#   indoor : a death inside a unit (person conveyed to hospital) -> an ambulance
+#            response at the block, never a ground body tent.
+#   fatal  : the default -> the blue privacy-tent cordon.
+#
+# The fatal/tent default is the safe fallback for anything ambiguous: it depicts
+# a cordon, no body. Only an explicit rescue signal (with no death) or a clear
+# indoor-death signal moves off it.
 
-    The blue privacy tent is the focal point and is described shut, so nothing
-    inside it is visible. Officers, tape and (where the setting has road access)
-    a patrol car surround it. The environment and the real block number are the
-    only things that vary — the block number is the incident's own, never
-    invented.
-    """
-    env, car_fits = infer_environment(incident)
+_DEATH_WORDS = ("died", "dead", "death", "deceased", "pronounced dead",
+                "found dead", "fatal", "killed", "passed away")
+_RESCUE_WORDS = ("rescue", "rescued", "attempted suicide", "to safety",
+                 "talked down", "brought down", "saved")
+_INDOOR_WORDS = ("hanging", "in the flat", "in her flat", "in his flat",
+                 "in the unit", "inside the flat", "at home", "in the bedroom",
+                 "in the living room", "in the kitchen", "in the toilet")
+_FALL_WORDS = ("fall from height", "from height", "foot of", "at the foot",
+               "jumped from", "fell from", "jump from", "jumping from")
+
+
+def _text(incident) -> str:
+    """Lowercased title + summary + tags, for outcome/location detection only."""
+    t = ""
+    if isinstance(incident, dict):
+        for key in ("title", "summary"):
+            v = incident.get(key)
+            if isinstance(v, str):
+                t += " " + v
+        tags = incident.get("tags")
+        if isinstance(tags, (list, tuple)):
+            t += " " + " ".join(str(x) for x in tags)
+        elif isinstance(tags, str):
+            t += " " + tags
+    return t.lower()
+
+
+def _has_death(incident, text) -> bool:
+    d = incident.get("deaths") if isinstance(incident, dict) else None
+    if isinstance(d, int) and d > 0:
+        return True
+    return any(w in text for w in _DEATH_WORDS)
+
+
+def incident_kind(incident) -> str:
+    """'rescue' | 'indoor' | 'fatal' — see the block comment above."""
+    text = _text(incident)
+    death = _has_death(incident, text)
+    if not death and any(w in text for w in _RESCUE_WORDS):
+        return "rescue"
+    if death and any(w in text for w in _INDOOR_WORDS) \
+            and not any(w in text for w in _FALL_WORDS):
+        return "indoor"
+    return "fatal"
+
+
+def _block_clause(incident) -> str:
     block = block_label(incident)
-    block_clause = (
+    return (
         f" The block's facade carries its large painted block number, {block}, "
         "high up and clearly legible."
         if block else ""
     )
+
+
+def _fatal_scene(incident) -> str:
+    """The blue privacy-tent cordon — an outdoor death found at the block."""
+    env, car_fits = infer_environment(incident)
     car = (
         " A white police patrol car marked POLICE is parked at the kerb at the "
         "edge of the frame, its doors shut."
@@ -161,8 +227,8 @@ def sensitive_scene(incident) -> str:
         f"At {env}, Singapore police officers have set up a low blue fast-deploy "
         "police privacy tent, marked POLICE, as the clear focal point at the "
         "centre of the scene, its panels fully zipped shut so nothing inside is "
-        f"visible.{block_clause} Several police officers in dark navy blue "
-        "uniforms and standard police caps stand around it — men and women "
+        f"visible.{_block_clause(incident)} Several police officers in dark navy "
+        "blue uniforms and standard police caps stand around it — men and women "
         "together, a natural mix of Chinese, Malay and Indian officers, one of "
         "them an Indian officer with darker brown skin — a couple speaking "
         "quietly, one writing on a clipboard, every one of them calm and "
@@ -172,6 +238,68 @@ def sensitive_scene(incident) -> str:
         "scene is still, subdued and respectful — an orderly police cordon, "
         "nothing dramatic taking place."
     )
+
+
+def _indoor_scene(incident) -> str:
+    """An ambulance response at the block — a death that happened indoors."""
+    return (
+        "At the open void deck and covered walkway at the foot of a mid-rise HDB "
+        "block, a white-and-red Singapore Civil Defence Force ambulance is "
+        "parked with its rear doors open as the focal point of the scene, its "
+        "crew of SCDF paramedics in navy and white standing beside an empty "
+        f"wheeled stretcher.{_block_clause(incident)} Two or three police "
+        "officers in dark navy blue uniforms and standard police caps, marked "
+        "POLICE, stand nearby — a mix of Chinese, Malay and Indian officers, one "
+        "an Indian officer with darker brown skin — one speaking with a resident, "
+        "one noting details on a clipboard. Blue-and-white police tape is strung "
+        "across the void-deck pillars to cordon off the lift lobby. A handful of "
+        "neighbourhood residents stand well back beyond the tape, their "
+        "expressions subdued. The whole scene is quiet, procedural and "
+        "respectful, an orderly emergency response outside the block."
+    )
+
+
+def _rescue_scene(incident) -> str:
+    """An SCDF air-cushion rescue — a rescue where nobody died. No body tent."""
+    text = _text(incident)
+    bridge = "bridge" in text
+    setting = (
+        "On a closed stretch of road beneath a covered pedestrian overhead bridge"
+        if bridge else
+        "On a closed stretch of road at the foot of a mid-rise HDB block"
+    )
+    look = "toward the walkway of the bridge above" if bridge else "up toward the block above"
+    return (
+        f"{setting}, a large bright-orange SCDF inflatable rescue air cushion "
+        "sits fully inflated across the tarmac as the clear focal point of the "
+        f"scene.{_block_clause(incident)} Several Singapore Civil Defence Force "
+        f"rescuers in red and navy stand around it looking {look}, a mix of "
+        "Chinese, Malay and Indian officers among them. A red SCDF fire engine "
+        "is parked at the edge of the frame, and police officers in dark navy "
+        "blue uniforms and standard police caps, marked POLICE, have set out "
+        "traffic cones and blue-and-white tape to close the road. A few onlookers "
+        "stand well back on the far pavement. The light is warm; the mood is "
+        "tense but controlled, a careful rescue operation in progress."
+    )
+
+
+def sensitive_scene(incident) -> str:
+    """
+    The respectful, non-graphic scene for a guardrail-#5 incident.
+
+    Dispatches on incident_kind(): a fatal incident gets the blue privacy-tent
+    cordon; an indoor death an ambulance response (no ground body tent); a rescue
+    where nobody died an SCDF air-cushion scene (no body tent). All three are
+    deterministic, POLICE-labelled (never "SPF"), put officers in the standard
+    police cap (never a tudung), paint the incident's real block number, and
+    depict nothing of the act.
+    """
+    kind = incident_kind(incident)
+    if kind == "rescue":
+        return _rescue_scene(incident)
+    if kind == "indoor":
+        return _indoor_scene(incident)
+    return _fatal_scene(incident)
 
 
 # ── Defensive clean check ────────────────────────────────────────────────────

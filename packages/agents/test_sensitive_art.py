@@ -80,6 +80,49 @@ for incident, fragment, _car in CASES:
     check(f"scene for {fragment!r} shows the three groups",
           "Chinese" in scene and "Malay" in scene and "Indian" in scene)
 
+print("\nincident_kind — fatal / indoor / rescue:\n")
+
+FATAL_FALL = {"deaths": 1, "title": "Woman falls from Yishun HDB block and dies",
+              "summary": "died after falling from height at Block 257; found at the foot of the block.",
+              "block_number": 257, "tags": ["fall from height", "fatal", "death"]}
+INDOOR = {"deaths": 1, "title": "Woman dies at Block 874 flat",
+          "summary": "found hanging in the flat on the 11th floor; conveyed to hospital where she died.",
+          "block_number": 874, "tags": ["death"]}
+RESCUE = {"deaths": None, "title": "Woman caught mid-fall from overhead bridge on Yishun Ave 2",
+          "summary": "rescued by SCDF; officers brought her down to safety. Arrested for attempted suicide.",
+          "tags": ["attempted suicide", "rescue", "overhead bridge"]}
+
+check("a fatal outdoor fall is 'fatal'", ss.incident_kind(FATAL_FALL) == "fatal",
+      f"-> {ss.incident_kind(FATAL_FALL)}")
+check("an indoor death is 'indoor'", ss.incident_kind(INDOOR) == "indoor",
+      f"-> {ss.incident_kind(INDOOR)}")
+check("a rescue with no death is 'rescue'", ss.incident_kind(RESCUE) == "rescue",
+      f"-> {ss.incident_kind(RESCUE)}")
+check("ambiguous (no death, no rescue signal) defaults to 'fatal'",
+      ss.incident_kind({"summary": "police attended a Yishun block"}) == "fatal")
+
+# The load-bearing safety property: a rescue NEVER gets a body tent.
+r = ss.sensitive_scene(RESCUE)
+check("rescue scene has NO privacy tent", "privacy tent" not in r, f"-> {r[:80]}")
+check("rescue scene shows the SCDF air cushion", "air cushion" in r)
+check("rescue scene is clean", ss.scene_is_clean(r))
+check("rescue scene labels police POLICE, not SPF", "POLICE" in r and "SPF" not in r)
+check("rescue scene puts no officer in a tudung", "tudung" not in r.lower())
+
+# Indoor death: ambulance response, no ground body tent.
+i = ss.sensitive_scene(INDOOR)
+check("indoor scene has NO privacy tent", "privacy tent" not in i)
+check("indoor scene shows an SCDF ambulance", "ambulance" in i)
+check("indoor scene paints the real block number", "874" in i)
+check("indoor scene is clean", ss.scene_is_clean(i))
+check("indoor scene puts no officer in a tudung", "tudung" not in i.lower())
+
+# Fatal outdoor fall: the tent, with the real block number.
+f = ss.sensitive_scene(FATAL_FALL)
+check("fatal scene has the privacy tent", "police privacy tent" in f)
+check("fatal scene paints the real block number", "257" in f)
+check("fatal scene is clean", ss.scene_is_clean(f))
+
 print("\nblock number — the incident's real one, never invented:\n")
 
 check("block_number column is used",

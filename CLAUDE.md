@@ -625,10 +625,12 @@ under-count by the number of unpublished drafts.
 4. If Stage 2 detects political content → set `confidence = 0`, flag `"[POLITICAL CONTENT DETECTED — REJECT]"`.
 5. A `suicide` / `self-harm` incident never gets a graphic image. Since
    2026-08-09 (operator direction) the DEFAULT is not "no image" but a fixed,
-   non-graphic **police-response tableau** — a shut blue privacy tent, police
-   officers, police tape, a patrol car — that never depicts the body, the act or
-   the method. `SENSITIVE_INCIDENT_ART=suppress` restores the original no-image
-   behaviour. Detection stays deliberately narrow — severity, death count and
+   non-graphic **police/SCDF-response scene** that never depicts the body, the
+   act or the method. `art/sensitive_scene.py::incident_kind` picks one of three
+   so it matches the outcome: a shut blue privacy-tent cordon (fatal, default),
+   an SCDF ambulance response (a death indoors — no ground tent), or an SCDF
+   air-cushion rescue (nobody died — no tent). `SENSITIVE_INCIDENT_ART=suppress`
+   restores the original no-image behaviour. Detection stays deliberately narrow — severity, death count and
    confidence are not consulted, and all other categories generate normally.
 
 > **Guardrail #5 splits into a DETECTOR and a POLICY, and the code makes that
