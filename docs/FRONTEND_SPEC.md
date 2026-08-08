@@ -10,16 +10,16 @@ MapLibre GL JS 3.6.2. Anything describing this app as Next.js 14 / React 18, or
 listing `react-window`, is stale — the feed dropped virtualisation for an
 IntersectionObserver in the 2026-08 restructure.
 
-> **⚠ Feed/Map restructure — `docs/WEB_RESTRUCTURE_2026-08-07.md` is the
-> authority.** Landed on the `web-restructure` branch (not yet merged/deployed at
-> the time of writing). It splits the single-page HUD into **two routes — Feed
-> (`/`) and Map (`/map`)** sharing one Chaos panel, moves the year+class filter
-> into **`?year=` / `?class=` URL params**, replaces the map's circle layer with
-> **HTML emoji markers**, makes the feed **image-first with infinite scroll**, and
-> adds a **mobile bottom sheet** (the first responsive layer). Where §0's
-> single-page framing, §3's layout, or §4's circle-pin table below disagree with
-> that doc, that doc wins; the sections here are updated inline but the restructure
-> doc carries the full record and the verification.
+> **⚠ Feed/Map restructure — MERGED to `main` (PR #50) + a post-review pass
+> (PR #52).** It split the single-page HUD into **two routes — Feed (`/`) and Map
+> (`/map`)** sharing one Chaos panel, moved the year+class filter into **`?year=`
+> / `?class=` URL params**, replaced the map's circle layer with **emoji-only
+> markers**, made the feed **banner news-article cards with an inline full-card
+> READ MORE**, relabelled TIMELINE→**HISTORY**, and added a **mobile bottom
+> sheet** (the first responsive layer). **§3 and §4 below are updated to that
+> shipped state and are the current authority**; `docs/WEB_RESTRUCTURE_2026-08-07.md`
+> is the historical plan with the per-phase verification. §0's single-page framing
+> is aesthetic history — the console aesthetic holds, but it's now two routes.
 
 > **Why this exists:** the frontend design was never captured in a spec — it lived
 > only in `apps/web/globals.css`, `tailwind.config.js`, and the components. The
@@ -95,16 +95,16 @@ label must fit a ~80px node without wrapping. Nothing else may go below 9px.
 **Press Start 2P (HUD/chrome):**
 | Element | Size |
 |---|---|
-| Logo (YISHUN / AGAIN) | 26px |
-| Nav links | 14px |
+| Logo (YISHUN / AGAIN) | 18px mobile / 26px desktop |
+| Nav links | 10px mobile / 14px desktop |
 | Chaos score number | 48px |
 | `/100` | 20px |
 | Chaos descriptor (QUIET…) | 13px |
 | Breakdown stat counts | 20px |
 | Section headers (CHAOS INDEX, INCIDENT BREAKDOWN) | 11px |
 | `MAP UNAVAILABLE` error heading | 11px |
-| Filter chip labels | 10px |
-| Year selector label (YEAR) | 10px |
+| Class filter labels (the Incident Breakdown rows ARE the filter) | 11px |
+| Year selector label (YEAR) | 12px mobile / 11px desktop |
 | `STORY TIMELINE` disclosure heading | 10px |
 | Badges (MILESTONE) | 9px |  <!-- DEVELOPING badge removed June-2026; see §5 -->
 | Story-timeline node role label | 8px (the exception above) |
@@ -112,14 +112,16 @@ label must fit a ~80px node without wrapping. Nothing else may go below 9px.
 **Courier Prime (content):**
 | Element | Size / weight |
 |---|---|
-| Feed-card incident titles | 16px bold |
+| News-card headline (`/`) | 23px bold |
+| History-card title (`/timeline`) | 16px bold |
 | Detail-page title (`<h1>`) | 20px bold |
 | Body / summaries | 16px |
-| Feed header | 14px |
+| Feed header ("Showing 2026 · N loaded") | 14px |
 | Map popup title | 16px / 700 |
 | Map popup metadata | 14px |
-| Feed-card metadata (date, area) | 13px |
-| Legal disclaimer | 10px |
+| Card metadata (date, area, sources) | 14px |
+| Year selector value | 18px mobile / 16px desktop |
+| Legal disclaimer | 12px |
 
 ---
 
@@ -137,7 +139,8 @@ outside the group and scroll normally.
 | `<main>` | `flex-1 min-h-0 flex flex-col overflow-y-auto` — the scroll region for the routes outside `(hud)` (detail, `/timeline`, `/about`) |
 | Desktop sidebar (Chaos Panel) | 280px, `hidden md:block flex-none`, `overflow-y-auto`. Hidden below `md`, where the bottom sheet takes over |
 | Mobile bottom sheet (`BottomSheet`) | `md:hidden`, `position: fixed` bottom-0 (escapes the shell's `overflow:hidden`); a slim bar taps/swipes up to the same `ChaosPanel` at 70vh. Content reserves `pb-[54px] md:pb-0` so it clears the collapsed bar |
-| Feed (`/`) | fills the left column; internal scroll via `overflow-y-auto` + an IntersectionObserver sentinel (infinite scroll). **No `react-window`** |
+| Feed (`/`) | **banner news-article cards** (`NewsCard`): full-width image on top (40:21), a meta row (class emoji + severity + lightning + sources + date + area + block), a **23px headline**, a 3–4 line teaser. **READ MORE expands the card in place** (several open at once) → full write-up + casualties (deaths/injuries) + dated sources + story timeline + a `Full page ↗` link. Internal scroll via an IntersectionObserver sentinel (infinite scroll). **No `react-window`**. The classification emoji is in the meta row, not on the image |
+| History (`/timeline`) | compact `IncidentCard` rows (thumbnail + info-row emoji, no image-overlay box); its own class/severity/year filters; same infinite-scroll hook (`useIncidentPages`) |
 | Map (`/map`) | fills the left column (no longer 45vh) |
 | Filter chips | **live in the Chaos panel** (the Incident Breakdown rows are the filter), not a content bar |
 | Main left column | `flex-1 min-w-0 flex flex-col overflow-hidden pb-[54px] md:pb-0` |
@@ -153,6 +156,17 @@ frame, now with a responsive twist below `md`.
 > Nav links carry both params forward, so the year and filter survive
 > `/ ↔ /map` navigation. The pages SSR the current year and read the params
 > client-side, which keeps both routes on ISR (`revalidate = 60`).
+
+> **Nav labels.** `FEED | MAP | HISTORY | ABOUT`, separated by a dim `|`
+> (`--color-text-dim`). `HISTORY` is a **label only** — the route stays
+> `/timeline` (its `<h1>` and `<title>` also read HISTORY). On the HUD roots the
+> logo doubles as the page `<h1>`; `/timeline` + `/about` carry their own.
+
+> **Incident images open as a preview, not a download.** `next.config.js` sets
+> `images.contentDispositionType: 'inline'` — the Next optimizer defaults to
+> `attachment` for remote images, which made "open image in new tab" download
+> the file. Applied by the runtime optimizer (Vercel), not the Turbopack dev
+> handler, so it isn't visible on `next dev`.
 
 ---
 
@@ -171,8 +185,8 @@ reintroduce them.
 | Max bounds | `[[103.80, 1.40], [103.87, 1.46]]` |
 | Center | `[103.8350, 1.4290]` |
 | Default zoom | 13.5 |
-| Pins | **HTML `maplibregl.Marker` elements** — the classification emoji (❤️🤡💀) in a 28px dark circular badge ringed 2px in the classification colour. NOT a circle layer: a MapLibre symbol layer renders the style's glyph set (no emoji → tofu), so pins are DOM elements |
-| Pin colors (ring) | heart `#4ECDC4` · clown `#FFE66D` · dagger `#FF6B6B` · culture `#A78BFA` |
+| Pins | **HTML `maplibregl.Marker` elements — emoji only** (❤️🤡💀 as the marker itself, 22px, with a drop-shadow for legibility on the light basemap). NO circle badge. Two reasons DOM elements, not a symbol layer: MapLibre's symbol glyph set has no emoji (→ tofu), AND centring a colour-emoji inside a circle is unreliable across platforms (baselines differ, so it reads as misaligned) — so the emoji IS the pin. The earlier circle-badge-with-emoji was dropped for this. |
+| Classification on the map | read from the emoji glyph itself; the locked class colours (§1) are used in the feed + panel, NOT as a pin ring |
 | Popup max-width | 260px |
 
 **Behavior:** hover (or, on touch, first tap) → preview popup with the incident's

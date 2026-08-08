@@ -684,17 +684,31 @@ under-count by the number of unpublished drafts.
 ## Frontend Theme
 
 > **The one-page HUD was split into two routes in the 2026-08 restructure
-> (`web-restructure` branch; `docs/WEB_RESTRUCTURE_2026-08-07.md` +
-> `docs/FRONTEND_SPEC.md` §3–4 are the authority).** `app/(hud)/` groups **Feed
-> (`/`)** and **Map (`/map`)** behind a shared Chaos panel. The year and class
-> filter are **`?year=` / `?class=` URL params** (`lib/params.ts`), so they
-> persist across `/↔/map`; the Incident Breakdown rows ARE the class filter (no
-> content chip bar). The map uses **HTML emoji markers** (`maplibregl.Marker`),
-> not a circle layer — a symbol layer can't render ❤️🤡💀. The feed is
-> **image-first with infinite scroll** (`react-window` removed) and cards carry a
-> `next/image` thumbnail from `pixel_art_url`. Below `md`, the sidebar becomes a
-> **bottom sheet** — the first responsive layer in the app. Nav (`MAP` link →
-> `/map`, `FEED` → `/`) and metadata moved accordingly.
+> (merged to `main`; `docs/FRONTEND_SPEC.md` §3–4 is the canonical authority,
+> `docs/WEB_RESTRUCTURE_2026-08-07.md` is the historical plan).** `app/(hud)/`
+> groups **Feed (`/`)** and **Map (`/map`)** behind a shared Chaos panel. The
+> year and class filter are **`?year=` / `?class=` URL params** (`lib/params.ts`),
+> so they persist across `/↔/map`; the **Incident Breakdown rows ARE the class
+> filter** (no content chip bar).
+>
+> - **Map** — **emoji-only** `maplibregl.Marker` pins (❤️🤡💀, no circle badge). A
+>   symbol layer can't render emoji, and centring an emoji in a circle is
+>   unreliable, so the emoji is the pin. Hover/tap → preview popup with an art
+>   thumbnail + summary teaser (`lib/teaser.ts`, escaped).
+> - **Feed (`/`)** — **banner news-article cards** (`NewsCard`): image on top, a
+>   23px headline, a teaser; **READ MORE expands in place** (several open) to the
+>   full write-up + casualties + dated sources + story timeline + a `Full page ↗`
+>   link. Infinite scroll (`react-window` removed). The class emoji is in the meta
+>   row, not on the image.
+> - **History (`/timeline`)** — compact `IncidentCard` rows keep the thumbnail
+>   layout (info-row emoji, no image box).
+> - **Nav** — `FEED | MAP | HISTORY | ABOUT` (dim `|` separators). `HISTORY` is a
+>   label only; the route stays `/timeline`.
+> - **Mobile** — the sidebar becomes a **bottom sheet** (first responsive layer);
+>   nav/chips/type are responsive.
+> - **Images** — served via `next/image`; `next.config.js` sets
+>   `images.contentDispositionType: 'inline'` so "open image in new tab" previews
+>   instead of downloading.
 
 Dark pixel art retro tabloid. Two fonts only: `Press Start 2P` (headers, scores, logo) and `Courier Prime` (all body text). Three sizes max: 24–28px, 11–12px, 8–10px. Two weights: 400 and 700.
 
