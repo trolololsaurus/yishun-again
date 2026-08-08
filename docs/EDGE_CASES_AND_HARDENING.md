@@ -91,7 +91,19 @@ severity-5 incidents all generate normally.
 
 `ART_PIPELINE.md` §4 and B1 are amended accordingly. Guard:
 `test_image_suppression.py`, including the case that is the whole point of the
-amendment — no suicide tag, "suicide" in the summary, suppressed.
+amendment — no suicide tag, "suicide" in the summary, detected.
+
+**Detector vs policy (2026-08-09).** `suppress_image()` above is now only the
+DETECTOR — its name is historical; read it as "is this a guardrail-#5 incident".
+What happens on a hit is a separate, switchable POLICY
+(`SENSITIVE_INCIDENT_ART`, `art/sensitive_scene.py`): by default a detected
+incident renders a fixed, non-graphic police-response tableau (a shut blue
+privacy tent, SPF officers, tape, patrol car — fully deterministic, never the
+body/act/method, `scene_is_clean()`-screened, falling back to no image if it
+can't be produced safely or the model refuses), and `SENSITIVE_INCIDENT_ART=suppress`
+restores the original no-image behaviour. Keeping the detector deterministic and
+total still matters exactly as much: the policy branch only ever runs on what the
+detector flags. See `ART_PIPELINE.md` §4b and `test_sensitive_art.py`.
 
 ## 1.3 Guardrail #4 was unreachable when the model returned a null category
 

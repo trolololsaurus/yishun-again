@@ -349,14 +349,18 @@ resolves that, and inverting it will reintroduce whichever failure sat below.
 
 ---
 
-## 4. Suppression gate
+## 4. Guardrail #5 — detector + policy
 
-Runs **before** the Haiku call — no point paying for a prompt on an incident
-that will not render.
+This is legal guardrail #5 (CLAUDE.md), and it splits in two: a **detector**
+(`art/suppression.py`) that decides whether an incident is a suicide / self-harm
+story, and a **policy** (`art/generate_image.py` + `art/sensitive_scene.py`) that
+decides what happens once it is. The detector runs **before** the Haiku call — no
+point paying for a scene the free writer must never write for these incidents.
 
-Implemented in `art/suppression.py`. Guard: `test_image_suppression.py`. This is
-legal guardrail #5 (CLAUDE.md), and it is enforced in the generator, not in the
-UI:
+### 4a. The detector
+
+Implemented in `art/suppression.py`. Guard: `test_image_suppression.py`.
+Enforced in the generator, not in the UI:
 
 | Call site | When it runs |
 |---|---|
@@ -395,8 +399,35 @@ Deliberately narrow. Severity, death count, and classifier confidence are **not*
 consulted. Fatalities, violence, fires, crime scenes and severity-5 incidents
 all generate normally.
 
-On suppression: `pixel_art_url` stays `null` and `image_status` is written as
-`suppressed`. The frontend already degrades gracefully to the
+### 4b. The policy — respectful tableau (default) or suppress (rollback)
+
+Set by `SENSITIVE_INCIDENT_ART` (default `respectful`, rollback `suppress`; any
+other value resolves to `suppress` — fail toward the guardrail). Added 2026-08-09
+on operator direction; before it, a detected incident was always suppressed.
+
+**`respectful`** renders a fixed, non-graphic **police-response tableau** —
+`art/sensitive_scene.py`, guard `test_sensitive_art.py`. A shut blue fast-deploy
+privacy tent is the focal point, ringed by police officers (men and women,
+Chinese/Malay/Indian; labelled POLICE, standard police caps — never a tudung on
+an officer), blue-and-white police tape, and a patrol car where the setting has
+road access. The block's real number is painted on the facade (never invented).
+What makes it safe rather than sensational:
+
+- **Fully deterministic.** Haiku never writes it, so the scraped summary never
+  becomes picture content. Only a place-TYPE (HDB block / void deck / carpark /
+  corridor) is inferred, and water settings fall through to a neutral default
+  rather than depict water.
+- **Never the act.** The tent is shut; the scene names no body, method, fall,
+  blood, weapon or distress. `scene_is_clean()` screens the assembled scene
+  against a forbidden-word set before it is used.
+- **Fails toward the guardrail.** An un-clean scene, an unreadable incident, or a
+  safety refusal from the image model all fall back to `suppressed` (no image).
+  The scene is never softened/mutated to get one past the filter, and the
+  operator rectify path re-renders the tableau rather than honouring a hand-typed
+  prompt. A successful render carries `image_status='ok'` like any other image.
+
+**`suppress`** is the original behaviour: `pixel_art_url` stays `null`,
+`image_status` is written as `suppressed`, and the frontend degrades to the
 `PIXEL ART · COMING SOON` placeholder and `og-default.jpg`. No error, no retry.
 
 `suppressed` is **terminal**. It is absent from `RECTIFIABLE_STATUSES`
