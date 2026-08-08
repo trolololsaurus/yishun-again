@@ -3,6 +3,7 @@ import { Suspense }        from 'react'
 import { supabase }        from '@/lib/supabase'
 import { MapBody }         from '@/components/MapBody'
 import { SITE_URL }        from '@/lib/site'
+import { mapTeaser }       from '@/lib/teaser'
 import type { MapFeature } from '@/lib/types'
 
 export const revalidate = 60  // 60-second ISR for production
@@ -36,7 +37,7 @@ export default async function MapPage() {
     // (the IncidentMap year effect also defaults to current year).
     supabase
       .from('incidents')
-      .select('id,slug,title,classification,custom_label,severity,corroboration_count,latitude,longitude')
+      .select('id,slug,title,classification,custom_label,severity,corroboration_count,latitude,longitude,summary,pixel_art_url')
       .eq('is_published', true)
       .not('latitude',  'is', null)
       .not('longitude', 'is', null)
@@ -64,6 +65,8 @@ export default async function MapPage() {
       custom_label:   inc.custom_label ?? null,
       severity:       inc.severity,
       corroboration_count: inc.corroboration_count ?? 1,
+      summary:        mapTeaser(inc.summary),
+      pixel_art_url:  inc.pixel_art_url ?? null,
     },
   }))
 

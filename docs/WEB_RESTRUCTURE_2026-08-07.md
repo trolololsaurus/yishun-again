@@ -267,6 +267,30 @@ suppressed rows show the neutral state.
 shows thumb+teaser, class filter hides/shows pins, year refetch swaps them, mobile
 tap is two-stage.
 
+> **DONE (2026-08-07).** Landed as: `lib/teaser.ts` (+ `teaser.test.ts`, 4 tests)
+> for the server-side 120-char teaser; `summary` (teased) + `pixel_art_url` added
+> to `/api/map` + the map SSR select + `MapFeature.properties`; `IncidentMap`
+> rewritten from the circle layer to managed HTML `maplibregl.Marker` emoji pins
+> in a dark circular badge ringed with the locked `PIN_COLOR`; hover/tap preview
+> popup (image thumb + escaped teaser + title); filter and year now show/hide and
+> rebuild the marker array instead of `setFilter`/`setData`. Build + lint clean,
+> 39 web tests + 10 war-room parity green.
+>
+> **Fully verified in a real browser (Playwright/Chromium, since the in-app pane
+> can't composite WebGL):** 25 pins render as ❤️🤡💀 (no tofu — Decision B holds),
+> ring borders are the exact locked hex (`#4ECDC4`/`#FFE66D`/`#FF6B6B`); the
+> class filter hides non-matching pins (DARK EVENTS → 12 💀 shown, 13 hidden);
+> hover builds the popup with the R2 image thumb + classification + severity +
+> teaser, `<script>`-free (escaping intact), and mouseleave removes it; a pin
+> click navigates to `/incidents/<slug>`. `/api/map` teaser is capped at 120.
+> Screenshot delivered to the operator.
+>
+> **Marker interaction model:** hover-capable devices (`matchMedia('(hover:
+> hover)')`) preview on mouseenter and navigate on click; touch devices preview
+> on first tap and navigate on a second tap of the same pin, with a map-background
+> tap dismissing. The touch two-stage path is coded but was NOT exercised in the
+> desktop Playwright run — verify on a real touch device.
+
 ## Phase 5 — Mobile bottom sheet + first responsive layer
 
 Largest net-new work — no breakpoint utility or `@media` query is used anywhere

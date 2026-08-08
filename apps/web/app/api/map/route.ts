@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase }    from '@/lib/supabase'
 import { sanitiseYear } from '@/lib/utils'
+import { mapTeaser }    from '@/lib/teaser'
 import { rateLimit, getIp } from '@/lib/rateLimit'
 
 // Returns published incidents with coordinates as a GeoJSON FeatureCollection,
@@ -16,7 +17,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabase
     .from('incidents')
-    .select('id,slug,title,classification,custom_label,severity,corroboration_count,latitude,longitude')
+    .select('id,slug,title,classification,custom_label,severity,corroboration_count,latitude,longitude,summary,pixel_art_url')
     .eq('is_published', true)
     .not('latitude', 'is', null)
     .not('longitude', 'is', null)
@@ -42,6 +43,9 @@ export async function GET(req: NextRequest) {
       custom_label:   inc.custom_label ?? null,
       severity:       inc.severity,
       corroboration_count: inc.corroboration_count ?? 1,
+      // Truncated server-side so this CDN-cached GeoJSON stays small.
+      summary:        mapTeaser(inc.summary),
+      pixel_art_url:  inc.pixel_art_url ?? null,
     },
   }))
 
