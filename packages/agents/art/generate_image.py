@@ -292,10 +292,14 @@ are drawn, never who they are. Everyday Singaporean clothing and real local \
 uniforms — never a kimono, a school seifuku, or a Japanese-style police uniform \
 or cap.
 - Reflect Singapore's population. Across the figures in a scene, show a natural \
-mix of Chinese, Malay and Indian people — varied skin tones and features — the \
-way a Yishun coffeeshop, void deck or corridor actually looks: a Malay woman may \
-wear a tudung headscarf, an older Chinese man a singlet, an Indian uncle a \
-collared shirt. Where the story does not fix a person's race, vary it; do not \
+mix of Chinese, Malay and Indian people — with the DISTINCT skin tones and \
+features of each, not one look tinted differently — the way a Yishun coffeeshop, \
+void deck or corridor actually looks. Give each group a legible cue: a Malay \
+woman in a tudung headscarf and a Malay man sometimes in a black songkok cap; an \
+Indian person with darker brown skin, an Indian woman perhaps in a sari or \
+salwar kameez; a Chinese uncle in a singlet. Make sure Indian men and women \
+actually appear — they are the ones most often dropped — not only Chinese and \
+Malay figures. Where the story does not fix a person's race, vary it; do not \
 draw everyone the same race.
 - NEVER write "faceless", "silhouette", "stylised figure", "no detailed facial \
 features", or "small in frame". Those are workarounds for an older model and \

@@ -100,9 +100,12 @@ LOCAL_SETTING = (
     "rendered slab blocks with open-air common corridors behind low parapets, "
     "laundry poles angled out from the window sills, and an open pillared void "
     "deck at ground level. Any police are Singapore Police Force officers in "
-    "dark navy blue. The people are Singaporean: a natural mix of Chinese, "
-    "Malay and Indian faces in everyday local dress, some Malay women in a "
-    "tudung headscarf. Clothing and uniforms are contemporary Singaporean."
+    "dark navy blue. The people are Singaporean, with the distinct skin tones "
+    "and features of all three major groups clearly present: Chinese, Malay and "
+    "Indian. Malay women often wear a tudung headscarf and Malay men sometimes "
+    "a black songkok cap; Indian residents have darker brown skin, an Indian "
+    "woman perhaps in a sari or salwar kameez. Show Indian faces as readily as "
+    "Chinese and Malay ones. Clothing and uniforms are contemporary Singaporean."
 )
 
 # ART_PIPELINE.md §3.5 — always present. Earlier attempts filled frames with
