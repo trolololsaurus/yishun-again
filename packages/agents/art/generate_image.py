@@ -310,7 +310,7 @@ old rule here said this model does not know HDB and to translate it away; that \
 was an older model's workaround and it backfired. "A tower face of repeating \
 grid windows" with laundry poles is Hong Kong tenement imagery, so that is what \
 came back. Naming the place is what anchors it.
-- HDB block   -> "HDB block", pale rendered slab, open-air common corridor behind a low parapet
+- HDB block   -> "HDB block", mid-rise slab in soft pastel colour bands with a big painted block number, generous grass and trees around well-spaced blocks, open-air common corridor behind a low painted parapet
 - void deck   -> "void deck", the open pillared ground floor beneath an HDB block
 - laundry     -> laundry poles angled out from the window sills
 - coffeeshop  -> neighbourhood coffeeshop (kopitiam), formica tables, stacked plastic stools

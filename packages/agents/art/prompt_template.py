@@ -96,11 +96,15 @@ PHYSICAL_COHERENCE = (
 # makes frames emptier and more hallucinated, not more accurate. Three anchors,
 # one line of negation, nothing else.
 LOCAL_SETTING = (
-    "The setting is Singapore. Residential towers are HDB public housing: pale "
-    "rendered slab blocks with open-air common corridors behind low parapets, "
-    "laundry poles angled out from the window sills, and an open pillared void "
-    "deck at ground level. Any police are Singapore Police Force officers in "
-    "dark navy blue. The people are Singaporean, with the distinct skin tones "
+    "The setting is Singapore. Residential towers are HDB public housing: "
+    "mid-rise slab blocks finished in soft pastel colour bands — mint, pale "
+    "blue, cream, peach — each with a large painted block number high on the "
+    "facade, standing well apart with grass, trees and a covered walkway "
+    "between them; open-air common corridors run behind low painted parapets, a "
+    "few laundry poles at the windows, above an open pillared void deck at "
+    "ground level. This is a bright, spacious Singapore housing estate. Any "
+    "police are Singapore Police Force officers in dark navy blue. The people "
+    "are Singaporean, with the distinct skin tones "
     "and features of all three major groups clearly present: Chinese, Malay and "
     "Indian. Malay women often wear a tudung headscarf and Malay men sometimes "
     "a black songkok cap; Indian residents have darker brown skin, an Indian "
