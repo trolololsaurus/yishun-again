@@ -93,8 +93,13 @@ PHYSICAL_COHERENCE = (
 #
 # Kept deliberately short. Every added sentence competes with the scene for the
 # model's attention, and the operator's standing note is that over-specification
-# makes frames emptier and more hallucinated, not more accurate. Three anchors,
-# one line of negation, nothing else.
+# makes frames emptier and more hallucinated, not more accurate. Stated
+# positively throughout — no negation clauses.
+#
+# Police depiction is pinned here on operator direction (2026-08-09): the label
+# reads POLICE, never "SPF", and Malay women OFFICERS wear the standard police
+# cap — the tudung/songkok cues are scoped to RESIDENTS so they cannot bleed onto
+# the uniform. See memory: art-prompt-singapore-police.
 LOCAL_SETTING = (
     "The setting is Singapore. Residential towers are HDB public housing: "
     "mid-rise slab blocks finished in soft pastel colour bands — mint, pale "
@@ -103,13 +108,14 @@ LOCAL_SETTING = (
     "between them; open-air common corridors run behind low painted parapets, a "
     "few laundry poles at the windows, above an open pillared void deck at "
     "ground level. This is a bright, spacious Singapore housing estate. Any "
-    "police are Singapore Police Force officers in dark navy blue. The people "
-    "are Singaporean, with the distinct skin tones "
-    "and features of all three major groups clearly present: Chinese, Malay and "
-    "Indian. Malay women often wear a tudung headscarf and Malay men sometimes "
-    "a black songkok cap; Indian residents have darker brown skin, an Indian "
-    "woman perhaps in a sari or salwar kameez. Show Indian faces as readily as "
-    "Chinese and Malay ones. Clothing and uniforms are contemporary Singaporean."
+    "police are Singapore Police Force officers in dark navy blue uniforms and "
+    "standard police caps, their vehicles and equipment marked POLICE. The "
+    "people are Singaporean, with the distinct skin tones and features of all "
+    "three major groups clearly present: Chinese, Malay and Indian. Malay women "
+    "residents often wear a tudung headscarf and Malay men residents sometimes a "
+    "black songkok cap; Indian residents have darker brown skin, an Indian woman "
+    "perhaps in a sari or salwar kameez. Show Indian faces as readily as Chinese "
+    "and Malay ones. Clothing and uniforms are contemporary Singaporean."
 )
 
 # ART_PIPELINE.md §3.5 — always present. Earlier attempts filled frames with

@@ -94,8 +94,8 @@ collection (the module-level `SystemExit` aborts the run). Run them directly:
 for f in test_*.py; do ./.venv/Scripts/python.exe "$f" || echo "FAIL $f"; done
 ```
 
-All are offline — no network, no API keys, no DB. There are **37 test files** and
-they all pass as of 2026-08-05; a red file is a real regression, not a flake.
+All are offline — no network, no API keys, no DB. There are **39 test files** and
+they all pass as of 2026-08-09; a red file is a real regression, not a flake.
 
 The web app has tests too, added 2026-08-04 — `apps/web/lib/utils.test.ts`, run
 with `npm test` from `apps/web`. There is no test framework installed: it uses
@@ -623,20 +623,37 @@ under-count by the number of unpublished drafts.
 2. Sources with `type = 'signal'` (EDMW/HWZ **and Reddit**) are never included in `source_urls`.
 3. No personal information beyond what appears in public source URLs.
 4. If Stage 2 detects political content → set `confidence = 0`, flag `"[POLITICAL CONTENT DETECTED — REJECT]"`.
-5. Image generation is suppressed when an incident carries a `suicide` or
-   `self-harm` tag. `pixel_art_url` stays null; the frontend placeholder
-   handles it. Deliberately narrow — severity, death count and confidence are
-   not consulted, and all other categories generate normally.
+5. A `suicide` / `self-harm` incident never gets a graphic image. Since
+   2026-08-09 (operator direction) the DEFAULT is not "no image" but a fixed,
+   non-graphic **police-response tableau** — a shut blue privacy tent, police
+   officers, police tape, a patrol car — that never depicts the body, the act or
+   the method. `SENSITIVE_INCIDENT_ART=suppress` restores the original no-image
+   behaviour. Detection stays deliberately narrow — severity, death count and
+   confidence are not consulted, and all other categories generate normally.
 
-> **Guardrail #5 is enforced by `art/suppression.py`, and it is not the
-> tag-only check the wording above describes.** `tags` is written by the Haiku
-> classifier, so a tag-only gate would make the one check that must not fail
-> depend on a model output — and the classifier does sometimes omit a `suicide`
-> tag on a suicide story. `suppress_image()` therefore ORs the tag check with a
-> deterministic phrase match over the incident's own title and summary, and
-> fails **closed** (an unreadable input suppresses). See
-> `docs/EDGE_CASES_AND_HARDENING.md` §1.2 and `test_image_suppression.py`.
-> Over-suppression costs a placeholder; under-suppression does not.
+> **Guardrail #5 splits into a DETECTOR and a POLICY, and the code makes that
+> split explicit.** `art/suppression.py::suppress_image()` is only the detector:
+> it answers "is this a suicide / self-harm story". `tags` is written by the
+> Haiku classifier, so a tag-only gate would make the one check that must not
+> fail depend on a model output — and the classifier does sometimes omit a
+> `suicide` tag on a suicide story. So the detector ORs the tag check with a
+> deterministic phrase match over the incident's own title and summary, and fails
+> **closed** (an unreadable input is treated as sensitive).
+>
+> The POLICY lives in `art/generate_image.py` + `art/sensitive_scene.py` and is
+> switched by `SENSITIVE_INCIDENT_ART` (default `respectful`, rollback
+> `suppress`; any other value resolves to `suppress`). Respectful mode renders a
+> **fully deterministic** scene — no Haiku, so the scraped summary never becomes
+> picture content; only a place-TYPE (HDB block / void deck / carpark / corridor)
+> is inferred, and water settings fall through to a neutral default rather than
+> depict water. The assembled scene is screened by `scene_is_clean()` against a
+> forbidden-word set, and **any** failure to produce it safely — an un-clean
+> scene, an unreadable incident, or a safety refusal from the image model — falls
+> back to suppression (no image). We never mutate a sensitive scene to get one
+> past the filter, and the operator rectify path re-renders the tableau rather
+> than honouring a hand-typed prompt. See `docs/EDGE_CASES_AND_HARDENING.md` §1.2,
+> `test_image_suppression.py` and `test_sensitive_art.py`. Over-suppression costs
+> a placeholder; under-suppression does not.
 
 > ✅ **Enforcement status (verified 2026-07-30 against the code — see
 > `docs/PIPELINE_CHANGES_2026-07-30.md`).** The June-2026 QA sweep found #1, #2

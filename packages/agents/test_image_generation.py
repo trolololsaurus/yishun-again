@@ -5,7 +5,8 @@ Pure and offline — every external call is stubbed. No network, no API keys, no
 Run: .venv/Scripts/python.exe test_image_generation.py
 
 Load-bearing properties:
-  - a suppressed incident costs ZERO calls and is never marked refused
+  - a guardrail-#5 incident renders the fixed police-response tableau by default
+    (no Haiku scene writer), and costs ZERO calls under SENSITIVE_INCIDENT_ART=suppress
   - a refusal softens the scene rather than resending it (the filter is
     deterministic; resending buys identical refusals and identical bills)
   - a wrong-aspect return is REJECTED, never squashed to fit
@@ -21,6 +22,7 @@ from PIL import Image
 
 tmpl = importlib.import_module("art.prompt_template")
 gi = importlib.import_module("art.generate_image")
+ss = importlib.import_module("art.sensitive_scene")
 
 passed = failed = 0
 
@@ -411,25 +413,39 @@ check("physical logic is established before the prop lists",
       gi._SCENE_SYSTEM_PROMPT.index("PHYSICAL LOGIC")
       < gi._SCENE_SYSTEM_PROMPT.index("A CROWDED, LIVED-IN PLACE"))
 
-# ── Suppression ──────────────────────────────────────────────────────────────
+# ── Guardrail #5 — respectful tableau by default, suppress on rollback ────────
 
-print("\nsuppression — terminal, and free:\n")
+print("\nguardrail #5 — respectful police-response tableau (default):\n")
 
-sup_incident = dict(INCIDENT, tags=["suicide"])
+# Default mode renders the fixed tableau: NO Haiku scene writer, one image call.
+sup_incident = dict(INCIDENT, tags=["suicide"], classification="dagger")
 res, a, g, r2 = run(sup_incident)
-check("suppressed status", res.status == "suppressed", f"-> {res.status}")
-check("suppressed url is None", res.url is None)
-check("ZERO Haiku calls", len(a.calls) == 0, f"-> {len(a.calls)}")
-check("ZERO image calls", len(g.calls) == 0, f"-> {len(g.calls)}")
-check("ZERO R2 writes", len(r2.puts) == 0)
-check("suppressed is never marked refused", res.status != "refused")
-check("suppressed records no attempts", res.attempts == [], f"-> {res.attempts}")
+check("sensitive incident renders (status ok)", res.status == "ok", f"-> {res.status}")
+check("sensitive render uses NO Haiku scene writer", len(a.calls) == 0, f"-> {len(a.calls)}")
+check("sensitive render makes exactly one image call", len(g.calls) == 1, f"-> {len(g.calls)}")
+check("sensitive render uploads exactly one object", len(r2.puts) == 1)
+check("the tableau is the blue police privacy tent",
+      "police privacy tent" in res.final_prompt, f"-> {res.final_prompt[:80]}")
+check("the deterministic scene names nothing of the act",
+      ss.scene_is_clean(ss.sensitive_scene(sup_incident)))
 
-# The amendment: no tag, but the summary says it.
-res, a, g, _ = run(dict(INCIDENT, tags=["police"],
+# The phrase-only case (no suicide tag) is detected and renders the same way.
+res, a, g, _ = run(dict(INCIDENT, tags=["police"], classification="dagger",
                         summary="Police said the death was an apparent suicide."))
-check("phrase-only suppression also costs zero calls",
-      res.status == "suppressed" and not a.calls and not g.calls)
+check("phrase-only sensitive incident also renders the tableau",
+      res.status == "ok" and not a.calls and len(g.calls) == 1)
+
+print("\nguardrail #5 — SENSITIVE_INCIDENT_ART=suppress restores no-image:\n")
+
+with mock.patch.dict("os.environ", {"SENSITIVE_INCIDENT_ART": "suppress"}, clear=False):
+    res, a, g, r2 = run(sup_incident)
+check("suppress rollback: suppressed status", res.status == "suppressed", f"-> {res.status}")
+check("suppress rollback: url is None", res.url is None)
+check("suppress rollback: ZERO Haiku calls", len(a.calls) == 0, f"-> {len(a.calls)}")
+check("suppress rollback: ZERO image calls", len(g.calls) == 0, f"-> {len(g.calls)}")
+check("suppress rollback: ZERO R2 writes", len(r2.puts) == 0)
+check("suppress rollback: never marked refused", res.status != "refused")
+check("suppress rollback: records no attempts", res.attempts == [], f"-> {res.attempts}")
 
 # ── Happy path ───────────────────────────────────────────────────────────────
 
@@ -589,18 +605,29 @@ check("a missing slug is rejected without any call",
       gi.render_prompt(PROMPT, "", genai_client=FakeGenai(), r2_client=FakeR2()).status == "invalid")
 
 # Guardrail #5 must hold HERE, not only in the War Room's queue filter. The
-# rectification UI excludes suppressed rows by construction, but the one check
-# that must not fail cannot rest on a list filter staying correct forever.
-SUICIDE = {"title": "Man found dead at Blk 737", "tags": ["police"],
-           "summary": "Police said the death was an apparent suicide."}
+# one check that must not fail cannot rest on a list filter staying correct
+# forever — and for a sensitive incident the ONLY sanctioned rendering is the
+# deterministic tableau, so the operator's free prompt is never honoured.
+SUICIDE = {"slug": "yishun-x", "title": "Man found dead at Blk 737", "tags": ["police"],
+           "summary": "Police said the death was an apparent suicide.", "classification": "dagger"}
+
+# Default 'respectful' mode: re-render the tableau, IGNORING the passed prompt.
 g = FakeGenai(("ok",))
-res = gi.render_prompt(PROMPT, "yishun-x", incident=SUICIDE,
-                       genai_client=g, r2_client=FakeR2())
-check("render_prompt suppresses a guardrail-#5 incident", res.status == "suppressed")
-check("suppression costs ZERO image calls", len(g.calls) == 0, f"-> {len(g.calls)}")
-check("a suppressed rectification yields no URL", res.url is None)
-check("suppression works via the PHRASE check, with no suicide tag",
-      "suicide" not in [t.lower() for t in SUICIDE["tags"]])
+with mock.patch.dict("os.environ", R2_ENV, clear=False):
+    res = gi.render_prompt(PROMPT, "yishun-x", incident=SUICIDE, genai_client=g, r2_client=FakeR2())
+check("respectful: guardrail-#5 rectify renders the tableau", res.status == "ok", f"-> {res.status}")
+check("respectful: exactly one image call", len(g.calls) == 1, f"-> {len(g.calls)}")
+check("respectful: the operator's free prompt is NOT honoured", res.final_prompt != PROMPT)
+check("respectful: the tableau is the blue police privacy tent",
+      "police privacy tent" in res.final_prompt)
+
+# Rollback: SENSITIVE_INCIDENT_ART=suppress → no image, zero calls.
+g = FakeGenai(("ok",))
+with mock.patch.dict("os.environ", dict(R2_ENV, SENSITIVE_INCIDENT_ART="suppress"), clear=False):
+    res = gi.render_prompt(PROMPT, "yishun-x", incident=SUICIDE, genai_client=g, r2_client=FakeR2())
+check("suppress rollback: guardrail-#5 rectify is suppressed", res.status == "suppressed")
+check("suppress rollback: ZERO image calls", len(g.calls) == 0, f"-> {len(g.calls)}")
+check("suppress rollback: a suppressed rectification yields no URL", res.url is None)
 
 g = FakeGenai(("ok",))
 with mock.patch.dict("os.environ", R2_ENV, clear=False):

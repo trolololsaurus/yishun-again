@@ -1,12 +1,22 @@
 """
-Guardrail #5 — image suppression.
+Guardrail #5 — the DETECTOR for suicide / self-harm incidents.
 
-An incident about suicide or self-harm must never get a generated image. The
-frontend already degrades to the `PIXEL ART · COMING SOON` placeholder and
-`og-default.jpg`, so suppression costs nothing: `pixel_art_url` stays null, no
-error, no retry.
+`suppress_image()` answers one question: is this a suicide or self-harm story?
+It does NOT decide what happens next — that policy moved to the caller
+(`art/generate_image.py`) and `art/sensitive_scene.py`:
 
-Pure, offline, no model call, no I/O. Callers are wired in B2.
+  * default ('respectful')  → a fixed, non-graphic police-response tableau,
+                              never the body, the method or the act
+  * SENSITIVE_INCIDENT_ART=suppress → the original behaviour: no image at all,
+                              `pixel_art_url` stays null and the frontend shows
+                              the `PIXEL ART · COMING SOON` placeholder
+
+Keeping the detector separate from the policy is the point: this module is the
+"one check that must not fail", so it stays pure, deterministic and total, and
+the (changeable) decision about suppress-vs-render lives elsewhere. The function
+name is historical; read it as "is this a guardrail-#5 incident".
+
+Pure, offline, no model call, no I/O.
 
 ## Why this is not the tag-only gate in the prompt
 

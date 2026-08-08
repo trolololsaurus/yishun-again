@@ -5,8 +5,13 @@ Replaces the removed SDXL/Modal/LoRA pipeline with a Gemini image call. Reads
 the FINISHED incident — title, summary, classification, severity, area_name —
 never the raw source articles, so the picture reflects what the card says.
 
-    suppression gate  →  Haiku writes the scene  →  template wrap  →  Gemini
-                      →  centre-crop  →  R2  →  URL
+    guardrail #5 gate  →  Haiku writes the scene  →  template wrap  →  Gemini
+                       →  centre-crop  →  R2  →  URL
+
+A guardrail-#5 (suicide / self-harm) incident does not take that path: in the
+default mode it renders a fixed, deterministic police-response tableau
+(art/sensitive_scene.py) with no Haiku and no softening ladder;
+SENSITIVE_INCIDENT_ART=suppress restores the original no-image behaviour.
 
 Spec: `docs/ART_PIPELINE.md`. Retry behaviour follows
 `docs/IMAGE_RETRY_AND_RECTIFY.md` §6, which explicitly supersedes the
@@ -52,6 +57,7 @@ import time
 from dataclasses import dataclass, field
 
 from art.prompt_template import assemble_prompt
+from art.sensitive_scene import block_label, scene_is_clean, sensitive_art_mode, sensitive_scene
 from art.suppression import suppress_image
 from filters.model_call import create_checked
 
@@ -131,8 +137,14 @@ class ImageResult:
     Outcome of one incident's image generation.
 
     status:
-        ok          url is set and the object is verified in R2
-        suppressed  guardrail #5 — terminal, never retried, never rectified
+        ok          url is set and the object is verified in R2 (this includes
+                    a guardrail-#5 sensitive incident rendered as the respectful
+                    police-response tableau — see art/sensitive_scene.py)
+        suppressed  guardrail #5 fell back to no image — either
+                    SENSITIVE_INCIDENT_ART=suppress (the rollback), or the
+                    respectful tableau could not be produced safely (unreadable
+                    incident, un-clean scene, or the model refused it). Terminal,
+                    never retried, never rectified.
         refused     safety filter refused every rung of the ladder
         transient   network/timeout/5xx exhausted its attempts
         invalid     the model returned unusable bytes or the wrong aspect
@@ -294,13 +306,15 @@ or cap.
 - Reflect Singapore's population. Across the figures in a scene, show a natural \
 mix of Chinese, Malay and Indian people — with the DISTINCT skin tones and \
 features of each, not one look tinted differently — the way a Yishun coffeeshop, \
-void deck or corridor actually looks. Give each group a legible cue: a Malay \
-woman in a tudung headscarf and a Malay man sometimes in a black songkok cap; an \
-Indian person with darker brown skin, an Indian woman perhaps in a sari or \
-salwar kameez; a Chinese uncle in a singlet. Make sure Indian men and women \
-actually appear — they are the ones most often dropped — not only Chinese and \
-Malay figures. Where the story does not fix a person's race, vary it; do not \
-draw everyone the same race.
+void deck or corridor actually looks. Give each group a legible cue AMONG THE \
+RESIDENTS: a Malay woman resident in a tudung headscarf and a Malay man resident \
+sometimes in a black songkok cap; an Indian person with darker brown skin, an \
+Indian woman perhaps in a sari or salwar kameez; a Chinese uncle in a singlet. \
+The tudung and songkok are civilian dress — a Malay woman POLICE officer wears \
+the standard police cap, not a tudung. Make sure Indian men and women actually \
+appear — they are the ones most often dropped — not only Chinese and Malay \
+figures. Where the story does not fix a person's race, vary it; do not draw \
+everyone the same race.
 - NEVER write "faceless", "silhouette", "stylised figure", "no detailed facial \
 features", or "small in frame". Those are workarounds for an older model and \
 they destroy this one's output.
@@ -314,7 +328,8 @@ came back. Naming the place is what anchors it.
 - void deck   -> "void deck", the open pillared ground floor beneath an HDB block
 - laundry     -> laundry poles angled out from the window sills
 - coffeeshop  -> neighbourhood coffeeshop (kopitiam), formica tables, stacked plastic stools
-- police      -> Singapore Police Force officers, dark navy blue uniform
+- police      -> Singapore Police Force officers in a dark navy blue uniform and the standard police cap, their vehicles and equipment marked POLICE (the word POLICE, never the acronym "SPF")
+- block number-> when the incident names a block (e.g. Block 257), paint THAT number large on the HDB block facade; never invent a different block number
 Singapore, never Hong Kong: no neon sign canyons, no caged balconies, no \
 vertical hanging shop boards.
 
@@ -341,6 +356,11 @@ def _scene_user_message(incident: dict, softening: str, refusal_reason: str | No
         f"CLASSIFICATION: {_incident_field(incident, 'classification', 'clown')}",
         f"SEVERITY: {severity if isinstance(severity, int) else 'unknown'} (1-5)",
         f"AREA: {_incident_field(incident, 'area_name', 'Yishun')}",
+    ]
+    block = block_label(incident)
+    if block:
+        lines.append(f"BLOCK NUMBER (paint this on the block, do not invent another): {block}")
+    lines += [
         "",
         "SUMMARY:",
         _incident_field(incident, "summary", "(no summary)"),
@@ -664,6 +684,76 @@ def _attempt(n: int, prompt: str, outcome: str, reason: str = "") -> dict:
     return {"n": n, "prompt": prompt, "outcome": outcome, "reason": reason}
 
 
+def _render_sensitive(incident: dict, slug: str, classification: str, *,
+                      genai_client=None, r2_client=None,
+                      budget: "AttemptBudget | None" = None) -> ImageResult:
+    """
+    Guardrail #5 respectful mode: render the fixed police-response tableau.
+
+    Deterministic scene, no Haiku, no softening ladder. Shared by the autonomous
+    generate path and the operator rectify path — for a sensitive incident the
+    ONLY sanctioned rendering is this tableau, so a hand-typed prompt is never
+    honoured.
+
+    Fails toward the guardrail, never away from it:
+    - an un-clean scene (should be impossible; the scene is deterministic) or an
+      unusable slug returns `suppressed` before anything is spent;
+    - a safety REFUSAL returns `suppressed` rather than softening — we do not
+      mutate a sensitive scene to get one past the filter;
+    - transient / invalid follow the same bounded caps as the normal path.
+    """
+    scene = sensitive_scene(incident)
+    if not scene_is_clean(scene):
+        logger.warning("art: sensitive scene failed the clean check — suppressing")
+        return ImageResult(status="suppressed")
+    prompt = assemble_prompt(scene, classification)
+
+    attempts: list[dict] = []
+    transients = invalids = 0
+    while True:
+        if budget is not None and not budget.available():
+            logger.warning("art: attempt ceiling %d reached on sensitive tableau", budget.limit)
+            attempts.append(_attempt(len(attempts) + 1, prompt, "skipped",
+                                     f"IMAGE_MAX_ATTEMPTS_PER_RUN={budget.limit} reached"))
+            return ImageResult(status="skipped", attempts=attempts, final_prompt=prompt)
+
+        n = len(attempts) + 1
+        if budget is not None:
+            budget.consume()
+
+        try:
+            if genai_client is None:
+                genai_client = _default_genai_client()
+            raw = _call_image_model(prompt, genai_client)
+            data = crop_to_target(raw)
+            if r2_client is None:
+                r2_client = _default_r2_client()
+            url = upload_to_r2(data, slug, r2_client)
+        except _Refusal as exc:
+            attempts.append(_attempt(n, prompt, "refused", exc.reason))
+            logger.warning("art: sensitive tableau refused — suppressing (%s)", exc.reason)
+            return ImageResult(status="suppressed", attempts=attempts, final_prompt=prompt)
+        except _Invalid as exc:
+            invalids += 1
+            attempts.append(_attempt(n, prompt, "invalid", str(exc)))
+            logger.warning("art: sensitive tableau invalid — %s", exc)
+            if invalids > VALIDATION_MAX_ATTEMPTS:
+                return ImageResult(status="invalid", attempts=attempts, final_prompt=prompt)
+            continue
+        except Exception as exc:  # noqa: BLE001 — network, R2, anything else
+            transients += 1
+            attempts.append(_attempt(n, prompt, "transient", f"{type(exc).__name__}: {exc}"))
+            logger.warning("art: sensitive tableau transient — %s", exc)
+            if transients >= TRANSIENT_MAX_ATTEMPTS:
+                return ImageResult(status="transient", attempts=attempts, final_prompt=prompt)
+            time.sleep(min(2 ** transients, 8))
+            continue
+
+        attempts.append(_attempt(n, prompt, "ok"))
+        logger.info("art: sensitive tableau generated %s on attempt %d", url, n)
+        return ImageResult(url=url, status="ok", attempts=attempts, final_prompt=prompt)
+
+
 def render_prompt(prompt: str, slug: str, *, incident: dict | None = None,
                   genai_client=None, r2_client=None) -> ImageResult:
     """
@@ -688,17 +778,31 @@ def render_prompt(prompt: str, slug: str, *, incident: dict | None = None,
 
     ## Guardrail #5 is enforced HERE, not only in the UI
 
-    Pass `incident` and the suppression gate runs before anything is spent. The
-    War Room's rectification queue already excludes suppressed rows by
-    construction, but "the one check that must not fail" must not depend on a
-    list filter staying correct through future edits — this is the same argument
-    that made `suppress_image` deterministic rather than tag-only. Omitting
-    `incident` skips the check, so callers that have the incident should pass it;
-    `suppress_image` fails closed, so a partial dict is safe.
+    Pass `incident` and the guardrail runs before anything is spent. What it does
+    depends on SENSITIVE_INCIDENT_ART: in 'suppress' mode a detected sensitive
+    incident returns `suppressed` with no calls; in the default 'respectful' mode
+    it re-renders the deterministic police-response tableau and the
+    operator-supplied `prompt` is deliberately IGNORED — a hand-typed prompt must
+    never render for a guardrail-#5 story. Either way the check must not depend on
+    the War Room's queue filter staying correct through future edits — the same
+    argument that made `suppress_image` deterministic rather than tag-only.
+    Omitting `incident` skips the check, so callers that have the incident should
+    pass it; `suppress_image` fails closed, so a partial dict is safe.
     """
     if incident is not None and suppress_image(incident):
-        logger.info("art.render_prompt: suppressed by guardrail #5 — no calls made")
-        return ImageResult(status="suppressed", final_prompt=prompt)
+        if sensitive_art_mode() != "respectful" or not isinstance(incident, dict):
+            logger.info("art.render_prompt: suppressed by guardrail #5 — no calls made")
+            return ImageResult(status="suppressed", final_prompt=prompt)
+        # Respectful mode: a guardrail-#5 incident re-renders the deterministic
+        # tableau, NOT the operator-supplied prompt. A hand-typed prompt must
+        # never render for a sensitive story, so "retry" regenerates the tableau.
+        key = slug if isinstance(slug, str) and slug.strip() else _incident_field(incident, "slug")
+        if not (isinstance(key, str) and key.strip()):
+            return ImageResult(status="suppressed", final_prompt=prompt)
+        classification = _incident_field(incident, "classification", "dagger")
+        logger.info("art.render_prompt: guardrail #5 sensitive incident — re-rendering respectful tableau")
+        return _render_sensitive(incident, key, classification,
+                                 genai_client=genai_client, r2_client=r2_client, budget=None)
 
     if not isinstance(prompt, str) or not prompt.strip():
         return ImageResult(status="invalid",
@@ -742,11 +846,25 @@ def generate_image(incident: dict, *, anthropic_client=None, genai_client=None,
     and publication is never blocked on the outcome — the frontend already
     degrades to the placeholder and og-default.jpg.
     """
-    # Guardrail #5 first: zero Haiku calls, zero image calls, and this never
-    # enters the retry path or the rectification queue.
+    # Guardrail #5 first. In the default 'respectful' mode a detected sensitive
+    # incident renders the fixed, non-graphic police-response tableau
+    # (art/sensitive_scene.py) instead of no image; SENSITIVE_INCIDENT_ART=suppress
+    # restores the original zero-call no-image behaviour. Either way the free
+    # Haiku scene writer and the softening ladder below are never reached for a
+    # sensitive incident.
     if suppress_image(incident):
-        logger.info("art: suppressed by guardrail #5 — no calls made")
-        return ImageResult(url=None, status="suppressed")
+        if sensitive_art_mode() != "respectful" or not isinstance(incident, dict):
+            logger.info("art: suppressed by guardrail #5 — no calls made")
+            return ImageResult(url=None, status="suppressed")
+        slug = _incident_field(incident, "slug")
+        if not slug:
+            logger.info("art: guardrail #5 sensitive incident has no slug — suppressing")
+            return ImageResult(status="suppressed")
+        classification = _incident_field(incident, "classification", "dagger")
+        logger.info("art: guardrail #5 sensitive incident — rendering respectful tableau")
+        return _render_sensitive(incident, slug, classification,
+                                 genai_client=genai_client, r2_client=r2_client,
+                                 budget=budget or AttemptBudget())
 
     slug = _incident_field(incident, "slug")
     if not slug:
