@@ -87,6 +87,10 @@ export interface MapFeature {
     custom_label:   string | null
     severity:       number
     corroboration_count: number
+    // Added for the Phase 4 hover/tap preview. `summary` is a server-truncated
+    // teaser (mapTeaser), not the full text.
+    summary:        string | null
+    pixel_art_url:  string | null
   }
 }
 

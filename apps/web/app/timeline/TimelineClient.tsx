@@ -1,41 +1,23 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { IncidentCard }   from '@/components/IncidentCard'
-import { classDisplay }   from '@/lib/utils'
+import { IncidentCard }     from '@/components/IncidentCard'
+import { useIncidentPages } from '@/hooks/useIncidentPages'
+import { classDisplay }     from '@/lib/utils'
 import type { FilterState, Incident } from '@/lib/types'
 
 type Row = Pick<Incident, 'id' | 'slug' | 'title' | 'classification' | 'custom_label' | 'severity'
   | 'corroboration_count' | 'published_at' | 'area_name' | 'is_milestone'
   | 'is_developing' | 'update_count' | 'first_reported_at'
-  | 'incident_date' | 'source_urls' | 'source_timeline' | 'latest_source_role'>
+  | 'incident_date' | 'source_urls' | 'source_timeline' | 'latest_source_role' | 'pixel_art_url'>
 
 const PAGE_SIZE = 20
 
 export function TimelineClient() {
-  const [items,      setItems]      = useState<Row[]>([])
-  const [page,       setPage]       = useState(0)
-  const [hasMore,    setHasMore]    = useState(true)
-  const [loading,    setLoading]    = useState(true)
-  const [filter,     setFilter]     = useState<FilterState>('all')
-  const [minSev,     setMinSev]     = useState(1)
-  const [year,       setYear]       = useState<string>('')
-  const sentinelRef                 = useRef<HTMLDivElement>(null)
-
-  const query = `${filter}|${minSev}|${year}`
-
-  // Reset for a new filter set *during render* rather than in an effect. React
-  // re-runs the component immediately and throws the discarded output away, so
-  // there is no cascading commit and no frame showing the old filter's rows.
-  // https://react.dev/learn/you-might-not-need-an-effect
-  const [renderedQuery, setRenderedQuery] = useState(query)
-  if (query !== renderedQuery) {
-    setRenderedQuery(query)
-    setItems([])
-    setPage(0)
-    setHasMore(true)
-    setLoading(true)
-  }
+  const [filter, setFilter] = useState<FilterState>('all')
+  const [minSev, setMinSev] = useState(1)
+  const [year,   setYear]   = useState<string>('')
+  const sentinelRef         = useRef<HTMLDivElement>(null)
 
   const buildUrl = useCallback((pageNum: number) => {
     const p = new URLSearchParams({ page: String(pageNum) })
@@ -45,64 +27,12 @@ export function TimelineClient() {
     return `/api/incidents?${p}`
   }, [filter, year, minSev])
 
-  // Only the newest request may write state — see IncidentFeed for the same guard.
-  const reqRef   = useRef(0)
-  const inFlight = useRef(false)
+  const queryKey = `${filter}|${minSev}|${year}`
+  const { items, loading, hasMore, loadMore } = useIncidentPages<Row>({
+    queryKey, buildUrl, pageSize: PAGE_SIZE,
+  })
 
-  // Page 0 for the current filter set. setState happens in the fetch
-  // continuation, never synchronously in the effect body
-  // (react-hooks/set-state-in-effect).
-  useEffect(() => {
-    const req = ++reqRef.current
-    inFlight.current = true
-
-    fetch(buildUrl(0))
-      .then(res => {
-        // 429/5xx returns {error} — don't spread it into the list.
-        if (!res.ok) throw new Error(String(res.status))
-        return res.json() as Promise<Row[]>
-      })
-      .then(data => {
-        if (req !== reqRef.current) return
-        setItems(data)
-        setPage(0)
-        setHasMore(data.length === PAGE_SIZE)
-      })
-      .catch(() => { if (req === reqRef.current) setHasMore(false) })
-      .finally(() => {
-        if (req !== reqRef.current) return
-        inFlight.current = false
-        setLoading(false)
-      })
-  }, [buildUrl])
-
-  const loadMore = useCallback(async () => {
-    if (inFlight.current) return
-    const next = page + 1
-    const req  = ++reqRef.current
-    inFlight.current = true
-    setLoading(true)
-    try {
-      const res  = await fetch(buildUrl(next))
-      if (req !== reqRef.current) return
-      // 429/5xx returns {error} — don't spread it into the list.
-      if (!res.ok) { setHasMore(false); return }
-      const data = (await res.json()) as Row[]
-      if (req !== reqRef.current) return
-      setItems(prev => [...prev, ...data])
-      setPage(next)
-      if (data.length < PAGE_SIZE) setHasMore(false)
-    } catch {
-      if (req === reqRef.current) setHasMore(false)
-    } finally {
-      if (req === reqRef.current) {
-        inFlight.current = false
-        setLoading(false)
-      }
-    }
-  }, [buildUrl, page])
-
-  // Intersection observer for infinite scroll
+  // Infinite scroll
   useEffect(() => {
     const el = sentinelRef.current
     if (!el) return

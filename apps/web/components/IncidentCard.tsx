@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import Image from 'next/image'
 import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, fmtDate, formatDuration, lastVerdictEntry, verdictNoun, uniqueSources } from '@/lib/utils'
 import type { Incident } from '@/lib/types'
 
@@ -7,16 +8,15 @@ interface Props {
     'slug' | 'title' | 'classification' | 'custom_label' | 'severity' | 'corroboration_count'
     | 'published_at' | 'incident_date' | 'area_name' | 'is_milestone'
     | 'is_developing' | 'update_count' | 'first_reported_at'
-    | 'source_urls' | 'source_timeline' | 'latest_source_role'
+    | 'source_urls' | 'source_timeline' | 'latest_source_role' | 'pixel_art_url'
   >
-  style?: React.CSSProperties  // passed from react-window
 }
 
-export function IncidentCard({ incident, style }: Props) {
+export function IncidentCard({ incident }: Props) {
   const {
     slug, title, classification, custom_label, severity, corroboration_count, published_at, incident_date,
     area_name, is_milestone, is_developing, first_reported_at,
-    source_urls, source_timeline, latest_source_role,
+    source_urls, source_timeline, latest_source_role, pixel_art_url,
   } = incident
 
   // Count the SAME array the detail page lists under "Sources", so the feed and
@@ -56,23 +56,35 @@ export function IncidentCard({ incident, style }: Props) {
   return (
     <Link
       href={`/incidents/${slug}`}
-      style={{ ...style, borderBottom: '1px solid var(--color-border)' }}
       className={[
-        'group flex gap-3 px-4 py-3 hover:bg-[#0F1A2E] transition-colors block',
-        'min-h-[48px]',
+        'group flex gap-3 px-4 py-3 hover:bg-[#0F1A2E] transition-colors',
+        'border-b border-border',
         is_developing ? 'border-l-2 border-l-amber' : '',
       ].join(' ')}
     >
-      {/* Classification icon */}
-      <span
-        className={`text-base flex-none mt-0.5 ${classColor(classification, custom_label)}`}
-        title={classTooltip(classification, custom_label)}
+      {/* Thumbnail — just the artwork; the classification emoji lives in the
+          info row now (no overlay box). A row with no art shows a plain neutral
+          box. next/image lazy-loads and reserves the box so a long list neither
+          janks nor ships full 1200×630 images at once. */}
+      <div
+        className="relative flex-none overflow-hidden border border-border bg-surface"
+        style={{ width: 112, height: 63 }}
       >
-        {classIcon(classification, custom_label)}
-      </span>
+        {pixel_art_url && (
+          <Image src={pixel_art_url} alt="" fill sizes="112px" className="object-cover" />
+        )}
+      </div>
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 mb-1 flex-wrap">
+          {/* Classification marker — inline, no image overlay box. */}
+          <span
+            className={classColor(classification, custom_label)}
+            style={{ fontSize: 14 }}
+            title={classTooltip(classification, custom_label)}
+          >
+            {classIcon(classification, custom_label)}
+          </span>
           {is_milestone && (
             <span className="font-display border border-amber-lt/50 px-1.5 py-0.5 text-amber-lt"
                   style={{ fontSize: 9, letterSpacing: '0.05em' }}>

@@ -683,6 +683,19 @@ under-count by the number of unpublished drafts.
 
 ## Frontend Theme
 
+> **The one-page HUD was split into two routes in the 2026-08 restructure
+> (`web-restructure` branch; `docs/WEB_RESTRUCTURE_2026-08-07.md` +
+> `docs/FRONTEND_SPEC.md` §3–4 are the authority).** `app/(hud)/` groups **Feed
+> (`/`)** and **Map (`/map`)** behind a shared Chaos panel. The year and class
+> filter are **`?year=` / `?class=` URL params** (`lib/params.ts`), so they
+> persist across `/↔/map`; the Incident Breakdown rows ARE the class filter (no
+> content chip bar). The map uses **HTML emoji markers** (`maplibregl.Marker`),
+> not a circle layer — a symbol layer can't render ❤️🤡💀. The feed is
+> **image-first with infinite scroll** (`react-window` removed) and cards carry a
+> `next/image` thumbnail from `pixel_art_url`. Below `md`, the sidebar becomes a
+> **bottom sheet** — the first responsive layer in the app. Nav (`MAP` link →
+> `/map`, `FEED` → `/`) and metadata moved accordingly.
+
 Dark pixel art retro tabloid. Two fonts only: `Press Start 2P` (headers, scores, logo) and `Courier Prime` (all body text). Three sizes max: 24–28px, 11–12px, 8–10px. Two weights: 400 and 700.
 
 CSS tokens are defined in spec §6.1. Key colours: bg `#0D0D0D`, accent red `#E74C3C`, accent yellow `#F1C40F`, dagger purple `#8E44AD`.

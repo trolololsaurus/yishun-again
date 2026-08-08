@@ -45,6 +45,15 @@ const securityHeaders = [
 const nextConfig = {
   poweredByHeader: false,
   transpilePackages: ['maplibre-gl'],  // ESM package — must transpile for Next.js
+  // Incident art lives on R2 behind assets.yishunagain.com (already allowed by
+  // the CSP img-src). next/image serves it through the same-origin /_next/image
+  // optimizer, so the feed lazy-loads thumbnails instead of shipping full
+  // 1200×630 files. This is the ONLY remote image host.
+  images: {
+    remotePatterns: [
+      { protocol: 'https', hostname: 'assets.yishunagain.com' },
+    ],
+  },
   // Turbopack (the default bundler as of Next 16) walks up looking for a
   // workspace root and picks the directory of the nearest lockfile. This app
   // is self-contained with its own package-lock.json, but the repo root has
