@@ -390,14 +390,35 @@ themes.
 
 ---
 
-## Restructure complete
+## Restructure complete — MERGED to `main` (PR #50), + post-review changes
 
-All six phases landed on `web-restructure` across six commits (Phase 2 folded
-into Phase 1). Not yet merged or deployed. `FRONTEND_SPEC.md` §3–4 + the stack
-line now describe the new architecture; this file is the historical record with
-the per-phase verification. Follow-ups noted but out of scope: the touch
-two-stage map tap and the sheet swipe want a real touch device; a fuller
-section-by-section `FRONTEND_SPEC` rewrite can happen as the branch nears deploy.
+All six phases landed and **merged to `main`** (PR #50; Phase 2 folded into
+Phase 1). This file is the historical plan; **`FRONTEND_SPEC.md` §3–4 + the
+`CLAUDE.md` Frontend Theme note are the canonical current-state authority.**
+
+> **Post-review changes shipped after the phases above (PR #52 + the
+> post-review pass). Where a Phase note above disagrees, these win:**
+> - **Map pins are emoji-ONLY** — the Phase 4 circle-badge-with-emoji was
+>   dropped. Centring a colour-emoji in a circle is unreliable across platforms,
+>   so the emoji is the marker (22px, drop-shadow, no badge).
+> - **Nav labels: `FEED | MAP | HISTORY | ABOUT`** with a dim `|` separator. An
+>   interim `NEWS FEED` was reverted (too long on mobile). `TIMELINE` is
+>   relabelled **HISTORY** (nav + the `/timeline` `<h1>`/`<title>`); route stays
+>   `/timeline`.
+> - **Feed = banner news-article cards** (`NewsCard`): big image on top, 23px
+>   headline, teaser. **READ MORE expands in place to the FULL card** — write-up
+>   + casualties (deaths/injuries) + dated sources + story timeline + `Full page
+>   ↗`. `source_timeline` was already in the feed row; `deaths`/`injuries`/
+>   `block_number` were added to the feed selects (no per-card fetch).
+> - **Classification emoji moved off card images into the meta/info row** (no
+>   translucent overlay box).
+> - **Fonts:** 2 families kept; mobile YEAR select 18px (was clipping); nav/logo
+>   responsive; separator colour bumped to `--color-text-dim`.
+> - **Images open as a preview, not a download** — `next.config.js`
+>   `images.contentDispositionType: 'inline'`.
+>
+> Follow-ups still open: the touch two-stage map tap + sheet swipe want a real
+> touch device; the pre-existing `favicon.ico` 404 is unrelated.
 
 ---
 
