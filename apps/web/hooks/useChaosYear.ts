@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { chaosDescriptor } from '@/lib/utils'
-import { parseYear, patchedParams, buildHref } from '@/lib/params'
-import type { ChaosData } from '@/lib/types'
+import { parseYear, parseClass, patchedParams, buildHref } from '@/lib/params'
+import type { ChaosData, FilterState } from '@/lib/types'
 
 interface Stats {
   score:      number
@@ -15,10 +15,12 @@ interface Stats {
 interface Result {
   selectedYear:   number
   availableYears: number[]
+  selectedClass:  FilterState
   stats:          Stats
   loading:        boolean
   error:          boolean
   onYearChange:   (y: number) => void
+  onClassChange:  (f: FilterState) => void
 }
 
 /**
@@ -90,5 +92,17 @@ export function useChaosYear(chaos: ChaosData): Result {
     router.replace(buildHref(pathname, next), { scroll: false })
   }
 
-  return { selectedYear, availableYears: chaos.availableYears, stats, loading, error, onYearChange }
+  const selectedClass = parseClass(searchParams)
+  const onClassChange = (f: FilterState) => {
+    // Drop the param for 'all' so the default view keeps a clean URL. The feed
+    // and map read ?class= straight off the URL, so this is all the wiring the
+    // filter needs — it persists across the /↔/map navigation for free.
+    const next = patchedParams(searchParams, { class: f === 'all' ? null : f })
+    router.replace(buildHref(pathname, next), { scroll: false })
+  }
+
+  return {
+    selectedYear, availableYears: chaos.availableYears, selectedClass,
+    stats, loading, error, onYearChange, onClassChange,
+  }
 }

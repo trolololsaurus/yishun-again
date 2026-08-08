@@ -14,7 +14,10 @@ interface Props {
  * useChaosYear (shared with the mobile BottomSheet); this just renders the panel.
  */
 export function ChaosSidebar({ chaos }: Props) {
-  const { selectedYear, availableYears, stats, loading, error, onYearChange } = useChaosYear(chaos)
+  const {
+    selectedYear, availableYears, selectedClass,
+    stats, loading, error, onYearChange, onClassChange,
+  } = useChaosYear(chaos)
 
   return (
     <ChaosPanel
@@ -26,6 +29,8 @@ export function ChaosSidebar({ chaos }: Props) {
       selectedYear={selectedYear}
       availableYears={availableYears}
       onYearChange={onYearChange}
+      activeFilter={selectedClass}
+      onFilterChange={onClassChange}
     />
   )
 }

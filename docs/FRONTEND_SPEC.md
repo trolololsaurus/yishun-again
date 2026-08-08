@@ -6,8 +6,20 @@ Where this document and any TechSpec section disagree, **this document wins.**
 **Stack (locked in `apps/web/package-lock.json`):** Next.js **16.2.12** App Router
 (Turbopack is the default bundler; `next.config.js` pins `turbopack.root` because
 the repo root also carries a lockfile) · React **19.2.8** · Tailwind CSS 3.4 ·
-MapLibre GL JS 3.6.2 · react-window 1.8.11. Anything describing this app as
-Next.js 14 / React 18 is stale.
+MapLibre GL JS 3.6.2. Anything describing this app as Next.js 14 / React 18, or
+listing `react-window`, is stale — the feed dropped virtualisation for an
+IntersectionObserver in the 2026-08 restructure.
+
+> **⚠ Feed/Map restructure — `docs/WEB_RESTRUCTURE_2026-08-07.md` is the
+> authority.** Landed on the `web-restructure` branch (not yet merged/deployed at
+> the time of writing). It splits the single-page HUD into **two routes — Feed
+> (`/`) and Map (`/map`)** sharing one Chaos panel, moves the year+class filter
+> into **`?year=` / `?class=` URL params**, replaces the map's circle layer with
+> **HTML emoji markers**, makes the feed **image-first with infinite scroll**, and
+> adds a **mobile bottom sheet** (the first responsive layer). Where §0's
+> single-page framing, §3's layout, or §4's circle-pin table below disagree with
+> that doc, that doc wins; the sections here are updated inline but the restructure
+> doc carries the full record and the verification.
 
 > **Why this exists:** the frontend design was never captured in a spec — it lived
 > only in `apps/web/globals.css`, `tailwind.config.js`, and the components. The
@@ -111,30 +123,36 @@ label must fit a ~80px node without wrapping. Nothing else may go below 9px.
 
 ---
 
-## 3. Layout — LOCKED (one-page, no page scroll)
+## 3. Layout — LOCKED (no page scroll; two HUD routes share one panel)
+
+The single-page HUD is split into a route group `app/(hud)/` with a shared
+`layout.tsx`: **Feed at `/`** and **Map at `/map`**, each filling the left column
+beside the shared Chaos panel. `/timeline`, `/about`, `/incidents/[slug]` sit
+outside the group and scroll normally.
 
 | Element | Value |
 |---|---|
 | `html, body` | `height: 100%; overflow: hidden` — **no page-level scroll, ever** |
-| Header (`Nav`) | 72px fixed top, `flex-none` |
-| `<main>` | `flex-1 min-h-0 flex flex-col overflow-y-auto` — the scroll region for the non-homepage routes (detail, `/timeline`, `/about`) |
-| Right sidebar (Chaos Panel) | 280px fixed, `flex-none` — **never collapses**; `overflow-y-auto` so a short viewport can still reach the disclaimer |
-| Map | 45vh |
-| Filter chips bar | 48px fixed, `flex-none` |
-| Incident feed | wrapper `flex-1 min-h-0 overflow-hidden`; the scroll region is react-window's `FixedSizeList`, measured by a callback ref |
-| Main left column | `flex-1 min-w-0 flex flex-col overflow-hidden` |
+| Header (`Nav`) | 72px fixed top, `flex-none`. Logo + links shrink on mobile (`px-3 md:px-4`, `text-[18px] md:text-[26px]`, link `text-[10px] md:text-[14px]`) so a 375px header doesn't overflow |
+| `<main>` | `flex-1 min-h-0 flex flex-col overflow-y-auto` — the scroll region for the routes outside `(hud)` (detail, `/timeline`, `/about`) |
+| Desktop sidebar (Chaos Panel) | 280px, `hidden md:block flex-none`, `overflow-y-auto`. Hidden below `md`, where the bottom sheet takes over |
+| Mobile bottom sheet (`BottomSheet`) | `md:hidden`, `position: fixed` bottom-0 (escapes the shell's `overflow:hidden`); a slim bar taps/swipes up to the same `ChaosPanel` at 70vh. Content reserves `pb-[54px] md:pb-0` so it clears the collapsed bar |
+| Feed (`/`) | fills the left column; internal scroll via `overflow-y-auto` + an IntersectionObserver sentinel (infinite scroll). **No `react-window`** |
+| Map (`/map`) | fills the left column (no longer 45vh) |
+| Filter chips | **live in the Chaos panel** (the Incident Breakdown rows are the filter), not a content bar |
+| Main left column | `flex-1 min-w-0 flex flex-col overflow-hidden pb-[54px] md:pb-0` |
 | Scrollbar | 6px width, `height: 0` (never a horizontal bar), no border-radius |
 
-The page itself never scrolls. On the homepage the only internal scroll regions
-are the feed and the sidebar; the map and chip bar are fixed. This is the
-command-console frame.
+The page itself never scrolls. On desktop the only internal scroll regions are
+the feed (or nothing, on the map) and the sidebar. This is the command-console
+frame, now with a responsive twist below `md`.
 
-> The feed's list height is measured by a **callback ref**, not a
-> `useRef` + effect, so the first commit already has the real height instead of
-> the 600px SSR fallback. The earlier ResizeObserver-only version dropped its
-> first callback whenever `contentRect.height` was still 0 and never got a
-> second one — the list stayed 600px tall inside a ~235px box and clipped its own
-> scroll region. Don't revert it.
+> **State lives in the URL.** `?year=` (Chaos panel year) and `?class=` (class
+> filter) are the single source of truth, read via `useSearchParams`
+> (`lib/params.ts`) and written via `router.replace(..., { scroll: false })`.
+> Nav links carry both params forward, so the year and filter survive
+> `/ ↔ /map` navigation. The pages SSR the current year and read the params
+> client-side, which keeps both routes on ISR (`revalidate = 60`).
 
 ---
 
@@ -153,14 +171,18 @@ reintroduce them.
 | Max bounds | `[[103.80, 1.40], [103.87, 1.46]]` |
 | Center | `[103.8350, 1.4290]` |
 | Default zoom | 13.5 |
-| Pin radius | interpolate 7px (zoom 12) → 11px (zoom 15) |
-| Pin opacity | 0.92 |
-| Pin stroke | 1.5px, `#070B14` |
-| Pin colors | heart `#4ECDC4` · clown `#FFE66D` · dagger `#FF6B6B` · culture `#A78BFA` |
+| Pins | **HTML `maplibregl.Marker` elements** — the classification emoji (❤️🤡💀) in a 28px dark circular badge ringed 2px in the classification colour. NOT a circle layer: a MapLibre symbol layer renders the style's glyph set (no emoji → tofu), so pins are DOM elements |
+| Pin colors (ring) | heart `#4ECDC4` · clown `#FFE66D` · dagger `#FF6B6B` · culture `#A78BFA` |
 | Popup max-width | 260px |
 
-**Behavior:** hover → teaser popup; click → navigate to incident page;
-mouse-leave → dismiss popup.
+**Behavior:** hover (or, on touch, first tap) → preview popup with the incident's
+R2 art thumbnail, a server-truncated summary teaser (`lib/teaser.ts`, ≤120 chars),
+classification/severity/lightning and the title — every interpolated field
+`escapeHtml`'d (auto-published, LLM-derived → stored-XSS sink otherwise); click
+(or a second tap on the same pin) → navigate; mouse-leave / map-background tap →
+dismiss. The class filter and year rebuild/show-hide the marker array (there is
+no `setFilter`/`setData` — those were circle-layer operations). `/api/map` and
+the map SSR select `summary` + `pixel_art_url` for the preview.
 
 **Resilience (implemented in `IncidentMap.tsx`):**
 - Hardcoded fallback (`FALLBACK_MAP_STYLE`) equals the Liberty URL, so the map

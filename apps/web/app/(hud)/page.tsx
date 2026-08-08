@@ -52,43 +52,19 @@ const siteJsonLd = [
 export default async function FeedPage() {
   const currentYear = new Date().getFullYear()
 
-  const [{ data: feedRows }, { data: countRows }] = await Promise.all([
-    // Feed page 0. Latest incident always on top: sort by event date (newest
-    // first), id as a stable tiebreaker. MUST match /api/incidents so SSR page 0
-    // and the load-more pages stay consistent. All-time (no year filter) — the
-    // client re-fetches page 0 with the selected year; these SSR rows exist so
-    // crawlers see linked incidents.
-    supabase
-      .from('incidents')
-      .select('id,slug,title,classification,custom_label,severity,corroboration_count,published_at,incident_date,area_name,is_milestone,milestone_type,milestone_value,is_developing,update_count,first_reported_at,source_urls,source_timeline,latest_source_role,pixel_art_url')
-      .eq('is_published', true)
-      .order('incident_date', { ascending: false, nullsFirst: false })
-      .order('id',            { ascending: false })
-      .limit(20),
-
-    // Current-year rows for the filter-chip counts. Phase 6: dedupe this with
-    // the sidebar's identical current-year query once the class filter moves to
-    // ?class= and counts can be shared. Both derive from the same deterministic
-    // query, so they cannot disagree in the meantime.
-    supabase
-      .from('incidents')
-      .select('classification')
-      .eq('is_published', true)
-      .gte('incident_date', `${currentYear}-01-01`)
-      .lt( 'incident_date', `${currentYear + 1}-01-01`),
-  ])
-
-  const initialCounts = (countRows ?? []).reduce(
-    (acc, r) => {
-      const cls = r.classification as 'heart' | 'clown' | 'dagger'
-      if (cls === 'heart' || cls === 'clown' || cls === 'dagger') {
-        acc[cls] += 1
-        acc.total += 1
-      }
-      return acc
-    },
-    { heart: 0, clown: 0, dagger: 0, total: 0 }
-  )
+  // Feed page 0. Latest incident always on top: sort by event date (newest
+  // first), id as a stable tiebreaker. MUST match /api/incidents so SSR page 0
+  // and the load-more pages stay consistent. All-time (no year filter) — the
+  // client re-fetches page 0 with the selected year; these SSR rows exist so
+  // crawlers see linked incidents. Chip counts come from the Chaos panel now, so
+  // this page no longer queries them.
+  const { data: feedRows } = await supabase
+    .from('incidents')
+    .select('id,slug,title,classification,custom_label,severity,corroboration_count,published_at,incident_date,area_name,is_milestone,milestone_type,milestone_value,is_developing,update_count,first_reported_at,source_urls,source_timeline,latest_source_role,pixel_art_url')
+    .eq('is_published', true)
+    .order('incident_date', { ascending: false, nullsFirst: false })
+    .order('id',            { ascending: false })
+    .limit(20)
 
   return (
     <>
@@ -100,7 +76,6 @@ export default async function FeedPage() {
       <Suspense fallback={null}>
         <FeedBody
           initialFeed={(feedRows ?? []) as any}
-          initialCounts={initialCounts}
           currentYear={currentYear}
         />
       </Suspense>

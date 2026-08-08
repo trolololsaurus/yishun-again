@@ -361,6 +361,44 @@ themes.
   sidebar / mobile bottom sheet, the map uses HTML markers, the feed is
   image-first with infinite scroll. Delete stale claims rather than softening.
 
+> **DONE (2026-08-07).** Landed as: `parseClass` added to `lib/params.ts`
+> (+ 2 tests, 41 web total); `useChaosYear` gains `selectedClass` + `onClassChange`
+> (writes `?class=`, dropping it for 'all'); **`ChaosPanel`'s Incident Breakdown
+> rows became the filter** — tap a class to filter, tap it again for ALL, active
+> = coloured ring; `FeedBody`/`MapBody` stripped to read `parseYear`+`parseClass`
+> off the URL (no chips, no local state, **no counts fetch**); the Feed/Map SSR
+> pages dropped their `countRows` query; `FilterChips.tsx` deleted. Docs synced:
+> `FRONTEND_SPEC.md` §3/§4 + banner + stack line, `CLAUDE.md` Frontend Theme note.
+> Build + lint clean, 41 web tests + 19 war-room parity green.
+>
+> **Verified in real Chromium (Playwright) at 1280 and 375:** the breakdown rows
+> are filter buttons (`aria-pressed`); clicking DARK EVENTS writes `?class=dagger`
+> and the feed re-renders 💀-only; the active row shows a coloured ring; the MAP
+> nav link carries `?class=dagger`; deep-linking `/map?class=dagger` shows 12 💀
+> pins (13 hidden) with the panel active; on mobile the sheet's expanded view
+> carries the same 4 filter buttons and filters the feed; no content chip bar on
+> either breakpoint (the 4 non-sheet buttons on mobile are the `display:none`
+> desktop sidebar). Screenshot delivered.
+>
+> **Chip placement was the operator's call (asked mid-phase): "move into the
+> Chaos panel."** So the chips became the breakdown rows rather than a separate
+> bar — which is what lets the feed/map bodies drop the counts fetch entirely.
+> The remaining `/api/chaos` duplication is only the sidebar+sheet responsive
+> pair (both mounted, both run `useChaosYear`); on the current year neither
+> fetches, so the cost is one cached call on a year change — inherent to the
+> responsive split, not the old display-component-fetches-stats smell.
+
+---
+
+## Restructure complete
+
+All six phases landed on `web-restructure` across six commits (Phase 2 folded
+into Phase 1). Not yet merged or deployed. `FRONTEND_SPEC.md` §3–4 + the stack
+line now describe the new architecture; this file is the historical record with
+the per-phase verification. Follow-ups noted but out of scope: the touch
+two-stage map tap and the sheet swipe want a real touch device; a fuller
+section-by-section `FRONTEND_SPEC` rewrite can happen as the branch nears deploy.
+
 ---
 
 ## Risk register

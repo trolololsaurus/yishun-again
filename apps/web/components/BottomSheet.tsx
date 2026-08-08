@@ -20,7 +20,10 @@ interface Props {
  * hidden at this width, so exactly one of the two is visible.
  */
 export function BottomSheet({ chaos }: Props) {
-  const { selectedYear, availableYears, stats, loading, error, onYearChange } = useChaosYear(chaos)
+  const {
+    selectedYear, availableYears, selectedClass,
+    stats, loading, error, onYearChange, onClassChange,
+  } = useChaosYear(chaos)
   const [expanded, setExpanded] = useState(false)
 
   // Tap toggles; a vertical swipe on the bar opens/closes. `moved` suppresses the
@@ -64,6 +67,8 @@ export function BottomSheet({ chaos }: Props) {
           selectedYear={selectedYear}
           availableYears={availableYears}
           onYearChange={onYearChange}
+          activeFilter={selectedClass}
+          onFilterChange={onClassChange}
         />
       </div>
 

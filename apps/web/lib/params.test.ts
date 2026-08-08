@@ -4,7 +4,7 @@
 // dependency-free, so nothing here needs the Next resolver.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseYear, patchedParams, buildHref } from './params.ts'
+import { parseYear, parseClass, patchedParams, buildHref } from './params.ts'
 
 // Helper: build a params object from a query string.
 const sp = (q: string) => new URLSearchParams(q)
@@ -21,6 +21,20 @@ test('parseYear: missing / malformed → null', () => {
   assert.equal(parseYear(sp('year=24')), null)      // too short
   assert.equal(parseYear(sp('year=20260')), null)   // too long
   assert.equal(parseYear(sp('year=-202')), null)
+})
+
+test('parseClass: valid classes pass through', () => {
+  assert.equal(parseClass(sp('class=heart')), 'heart')
+  assert.equal(parseClass(sp('class=clown')), 'clown')
+  assert.equal(parseClass(sp('class=dagger&year=2024')), 'dagger')
+})
+
+test('parseClass: absent / unknown → "all"', () => {
+  assert.equal(parseClass(sp('')), 'all')
+  assert.equal(parseClass(sp('class=')), 'all')
+  assert.equal(parseClass(sp('class=all')), 'all')
+  assert.equal(parseClass(sp('class=bogus')), 'all')
+  assert.equal(parseClass(sp('class=custom')), 'all')  // 'custom' is not a filter state
 })
 
 test('patchedParams: sets a new key', () => {

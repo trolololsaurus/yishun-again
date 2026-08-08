@@ -31,28 +31,18 @@ export const metadata: Metadata = {
 export default async function MapPage() {
   const currentYear = new Date().getFullYear()
 
-  const [{ data: mapRows }, { data: countRows }] = await Promise.all([
-    // Map markers — current-year incidents with coordinates. Scope to the
-    // current year so the SSR pins match the default year shown by the sidebar
-    // (the IncidentMap year effect also defaults to current year).
-    supabase
-      .from('incidents')
-      .select('id,slug,title,classification,custom_label,severity,corroboration_count,latitude,longitude,summary,pixel_art_url')
-      .eq('is_published', true)
-      .not('latitude',  'is', null)
-      .not('longitude', 'is', null)
-      .gte('incident_date', `${currentYear}-01-01`)
-      .lt( 'incident_date', `${currentYear + 1}-01-01`),
-
-    // Current-year rows for the filter-chip counts (see FeedPage for the Phase 6
-    // dedupe note).
-    supabase
-      .from('incidents')
-      .select('classification')
-      .eq('is_published', true)
-      .gte('incident_date', `${currentYear}-01-01`)
-      .lt( 'incident_date', `${currentYear + 1}-01-01`),
-  ])
+  // Map markers — current-year incidents with coordinates. Scope to the current
+  // year so the SSR pins match the default year shown by the panel (the
+  // IncidentMap year effect also defaults to current year). Chip counts come
+  // from the Chaos panel now, so this page no longer queries them.
+  const { data: mapRows } = await supabase
+    .from('incidents')
+    .select('id,slug,title,classification,custom_label,severity,corroboration_count,latitude,longitude,summary,pixel_art_url')
+    .eq('is_published', true)
+    .not('latitude',  'is', null)
+    .not('longitude', 'is', null)
+    .gte('incident_date', `${currentYear}-01-01`)
+    .lt( 'incident_date', `${currentYear + 1}-01-01`)
 
   const mapFeatures: MapFeature[] = (mapRows ?? []).map(inc => ({
     type:     'Feature',
@@ -70,25 +60,12 @@ export default async function MapPage() {
     },
   }))
 
-  const initialCounts = (countRows ?? []).reduce(
-    (acc, r) => {
-      const cls = r.classification as 'heart' | 'clown' | 'dagger'
-      if (cls === 'heart' || cls === 'clown' || cls === 'dagger') {
-        acc[cls] += 1
-        acc.total += 1
-      }
-      return acc
-    },
-    { heart: 0, clown: 0, dagger: 0, total: 0 }
-  )
-
   return (
     <>
       {/* The page <h1> is the logo in <Nav>, rendered on the HUD roots. */}
       <Suspense fallback={null}>
         <MapBody
           mapFeatures={mapFeatures}
-          initialCounts={initialCounts}
           currentYear={currentYear}
         />
       </Suspense>
