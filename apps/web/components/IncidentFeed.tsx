@@ -1,13 +1,13 @@
 'use client'
 
 import { useCallback, useEffect, useRef } from 'react'
-import { IncidentCard } from './IncidentCard'
+import { NewsCard } from './NewsCard'
 import { useIncidentPages } from '@/hooks/useIncidentPages'
 import type { FilterState, Incident } from '@/lib/types'
 
 const PAGE_SIZE = 20
 
-type Row = Pick<Incident, 'id' | 'slug' | 'title' | 'classification' | 'custom_label' | 'severity'
+type Row = Pick<Incident, 'id' | 'slug' | 'title' | 'summary' | 'classification' | 'custom_label' | 'severity'
   | 'corroboration_count' | 'published_at' | 'incident_date' | 'area_name' | 'is_milestone'
   | 'is_developing' | 'update_count' | 'first_reported_at'
   | 'source_urls' | 'source_timeline' | 'latest_source_role' | 'pixel_art_url'>
@@ -59,7 +59,7 @@ export function IncidentFeed({ initialItems, activeFilter, selectedYear }: Props
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {items.map(inc => <IncidentCard key={inc.id} incident={inc} />)}
+        {items.map(inc => <NewsCard key={inc.id} incident={inc} />)}
 
         {loading && (
           <div className="px-4 py-6 text-center font-body text-text-secondary" style={{ fontSize: '14px' }}>

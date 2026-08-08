@@ -103,13 +103,16 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
 
     for (const f of list) {
       const { classification, custom_label, title, slug, id } = f.properties
-      const color = pinColor(classification, custom_label)
 
+      // Emoji-only pin: no circle badge. Centering an emoji inside a circle is
+      // unreliable across platforms (colour-emoji glyph baselines differ, so it
+      // reads as misaligned), so the emoji IS the marker — anchored at its centre
+      // with a drop-shadow for legibility on the light basemap. Classification
+      // reads from the glyph itself (❤️🤡💀).
       const el = document.createElement('div')
       el.style.cssText =
-        'width:28px;height:28px;display:flex;align-items:center;justify-content:center;' +
-        `font-size:16px;cursor:pointer;background:rgba(10,14,26,0.85);border:2px solid ${color};` +
-        'border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.5);line-height:1'
+        'cursor:pointer;font-size:22px;line-height:1;' +
+        'filter:drop-shadow(0 1px 1.5px rgba(0,0,0,0.55))'
       el.textContent = classIcon(classification, custom_label)
       el.setAttribute('role', 'button')
       el.setAttribute('aria-label', title)

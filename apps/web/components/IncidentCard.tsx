@@ -62,43 +62,29 @@ export function IncidentCard({ incident }: Props) {
         is_developing ? 'border-l-2 border-l-amber' : '',
       ].join(' ')}
     >
-      {/* Thumbnail. ~96% of published incidents carry pixel_art_url; the rest
-          (never generated, or guardrail-#5 suppressed) fall back to a neutral
-          box with the classification icon — no "coming soon", which would read
-          wrong for a suppressed suicide/self-harm story. next/image lazy-loads
-          and reserves the box, so a long feed neither janks nor ships 20 full
-          1200×630 images at once. */}
+      {/* Thumbnail — just the artwork; the classification emoji lives in the
+          info row now (no overlay box). A row with no art shows a plain neutral
+          box. next/image lazy-loads and reserves the box so a long list neither
+          janks nor ships full 1200×630 images at once. */}
       <div
         className="relative flex-none overflow-hidden border border-border bg-surface"
         style={{ width: 112, height: 63 }}
       >
-        {pixel_art_url ? (
-          <>
-            <Image src={pixel_art_url} alt="" fill sizes="112px" className="object-cover" />
-            {/* Keep classification legible over the artwork. */}
-            <span
-              className="absolute top-0 left-0 leading-none"
-              style={{ fontSize: 13, padding: '2px 3px', background: 'rgba(10,14,26,0.72)' }}
-              title={classTooltip(classification, custom_label)}
-            >
-              {classIcon(classification, custom_label)}
-            </span>
-          </>
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <span
-              className={classColor(classification, custom_label)}
-              style={{ fontSize: 22 }}
-              title={classTooltip(classification, custom_label)}
-            >
-              {classIcon(classification, custom_label)}
-            </span>
-          </div>
+        {pixel_art_url && (
+          <Image src={pixel_art_url} alt="" fill sizes="112px" className="object-cover" />
         )}
       </div>
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 mb-1 flex-wrap">
+          {/* Classification marker — inline, no image overlay box. */}
+          <span
+            className={classColor(classification, custom_label)}
+            style={{ fontSize: 14 }}
+            title={classTooltip(classification, custom_label)}
+          >
+            {classIcon(classification, custom_label)}
+          </span>
           {is_milestone && (
             <span className="font-display border border-amber-lt/50 px-1.5 py-0.5 text-amber-lt"
                   style={{ fontSize: 9, letterSpacing: '0.05em' }}>

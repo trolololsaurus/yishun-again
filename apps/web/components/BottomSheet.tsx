@@ -88,13 +88,13 @@ export function BottomSheet({ chaos }: Props) {
         </div>
         <div className="flex items-center justify-between px-4 pb-2">
           <div className="flex items-baseline gap-2 min-w-0">
-            <span className="font-display flex-none" style={{ fontSize: 10, color: 'var(--color-amber)', letterSpacing: '0.1em' }}>CHAOS</span>
+            <span className="font-display flex-none" style={{ fontSize: 11, color: 'var(--color-amber)', letterSpacing: '0.1em' }}>CHAOS</span>
             <span className="font-display flex-none" style={{ fontSize: 22, color: 'var(--color-amber)' }}>{stats.score}</span>
             <span className="font-display truncate" style={{ fontSize: 11, color: 'var(--color-good-vibes)', letterSpacing: '0.1em' }}>
               {stats.descriptor.toUpperCase()}
             </span>
           </div>
-          <span className="font-body flex items-center gap-1 flex-none" style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+          <span className="font-body flex items-center gap-1 flex-none" style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
             {selectedYear}<span aria-hidden>{expanded ? '▾' : '▴'}</span>
           </span>
         </div>

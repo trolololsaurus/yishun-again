@@ -32,7 +32,7 @@ function FilterRow({
         background: active ? 'rgba(255,255,255,0.05)' : 'transparent',
       }}
     >
-      <span className="font-display text-left" style={{ fontSize: 10, color }}>{label}</span>
+      <span className="font-display text-left" style={{ fontSize: 11, color }}>{label}</span>
       <span className="font-display" style={{ fontSize: 20, color }}>{value}</span>
     </button>
   )
@@ -74,17 +74,20 @@ export function ChaosPanel({
 
       {/* ── Year selector ─────────────────────────────────────── */}
       <div className="px-4 pt-4 pb-3" style={{ borderBottom: '1px solid var(--color-border)' }}>
-        <label className="font-display block mb-2" style={{ fontSize: 10, color: 'var(--color-amber)' }}>
+        <label className="font-display block mb-2 text-[12px] md:text-[11px]" style={{ color: 'var(--color-amber)' }}>
           YEAR
         </label>
         <select
           value={selectedYear}
           onChange={e => onYearChange(parseInt(e.target.value))}
           onWheel={e => (e.target as HTMLSelectElement).blur()}
-          className="w-full font-body"
+          // Larger on mobile (18px, in the bottom sheet) than on the desktop
+          // sidebar (16px). 16px is already at/above the iOS zoom-on-focus
+          // threshold, so the select never zooms the page.
+          className="w-full font-body text-[18px] md:text-[16px]"
           style={{
-            fontSize: 14, color: 'var(--color-amber)', background: 'var(--color-surface)',
-            border: '1px solid var(--color-border)', minHeight: 40, padding: '0 8px',
+            color: 'var(--color-amber)', background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)', minHeight: 48, padding: '0 8px',
           }}
         >
           {availableYears.map(y => (
@@ -136,7 +139,7 @@ export function ChaosPanel({
           {/* ── Incident Breakdown / class filter ─────────────────── */}
           <div className="px-4 pt-4 pb-4" style={{ borderBottom: '1px solid var(--color-border)' }}>
             <SectionHeader>Incident Breakdown</SectionHeader>
-            <div className="font-body mb-3" style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
+            <div className="font-body mb-3" style={{ fontSize: 14, color: 'var(--color-text-secondary)' }}>
               {selectedYear} · tap to filter
             </div>
 
@@ -162,7 +165,7 @@ export function ChaosPanel({
       )}
 
       {/* ── Legal disclaimer (kept at 10px) ───────────────────── */}
-      <div className="px-4 pt-3 pb-4 font-body" style={{ fontSize: 10, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+      <div className="px-4 pt-3 pb-4 font-body" style={{ fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
         <p className="mb-1">
           The satirical incident archive of Yishun, Nee Soon — Singapore&apos;s most eventful estate.
         </p>
