@@ -1,6 +1,7 @@
 import { Suspense } from 'react'
 import { supabase } from '@/lib/supabase'
 import { ChaosSidebar } from '@/components/ChaosSidebar'
+import { BottomSheet }  from '@/components/BottomSheet'
 import { computeChaosScore, chaosDescriptor } from '@/lib/utils'
 import type { ChaosData } from '@/lib/types'
 
@@ -78,18 +79,29 @@ export default async function HudLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <div className="flex-1 min-h-0 flex overflow-hidden">
-      {/* Left column — the route's page (feed or map) fills the width. */}
-      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-        {children}
+    <>
+      <div className="flex-1 min-h-0 flex overflow-hidden">
+        {/* Left column — the route's page (feed or map) fills the width. On
+            mobile it reserves 54px at the bottom so content clears the collapsed
+            bottom sheet (which is position:fixed and would otherwise overlap). */}
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden pb-[54px] md:pb-0">
+          {children}
+        </div>
+
+        {/* Desktop sidebar — 280px, hidden on mobile where the bottom sheet
+            takes over. Scrolls internally. */}
+        <aside className="hidden md:block flex-none h-full overflow-y-auto overflow-x-hidden" style={{ width: 280 }}>
+          <Suspense fallback={null}>
+            <ChaosSidebar chaos={chaos} />
+          </Suspense>
+        </aside>
       </div>
 
-      {/* Right sidebar — fixed 280px, always visible, scrolls internally. */}
-      <aside className="flex-none h-full overflow-y-auto overflow-x-hidden" style={{ width: 280 }}>
-        <Suspense fallback={null}>
-          <ChaosSidebar chaos={chaos} />
-        </Suspense>
-      </aside>
-    </div>
+      {/* Mobile bottom sheet (md:hidden inside). Fixed to the viewport bottom,
+          so it escapes the overflow-hidden shell above. */}
+      <Suspense fallback={null}>
+        <BottomSheet chaos={chaos} />
+      </Suspense>
+    </>
   )
 }

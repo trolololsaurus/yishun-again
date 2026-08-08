@@ -18,7 +18,7 @@ export function Nav() {
 
   return (
     <header
-      className="flex-none flex items-center justify-between px-4 relative z-[100]"
+      className="flex-none flex items-center justify-between px-3 md:px-4 relative z-[100]"
       style={{ height: 72, background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}
     >
       {/* Logo — two-line stack. Links home (brand reset); the query string is
@@ -26,8 +26,8 @@ export function Nav() {
           route back to the feed). */}
       <Link
         href="/"
-        className="font-display block"
-        style={{ fontSize: 26, color: 'var(--color-amber)', lineHeight: '1.05' }}
+        className="font-display block text-[18px] md:text-[26px]"
+        style={{ color: 'var(--color-amber)', lineHeight: '1.05' }}
       >
         {isHudRoot ? (
           <h1>

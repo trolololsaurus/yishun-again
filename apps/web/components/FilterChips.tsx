@@ -1,7 +1,7 @@
 'use client'
 
 import type { FilterState } from '@/lib/types'
-import { classDisplay } from '@/lib/utils'
+import { classIcon, classLabel } from '@/lib/utils'
 
 interface Props {
   activeFilter:    FilterState
@@ -9,11 +9,11 @@ interface Props {
   onFilterChange:  (f: FilterState) => void
 }
 
-const CHIPS: Array<{ key: FilterState; label: string }> = [
-  { key: 'all',    label: 'ALL'                  },
-  { key: 'heart',  label: classDisplay('heart')  },
-  { key: 'clown',  label: classDisplay('clown')  },
-  { key: 'dagger', label: classDisplay('dagger') },
+const CHIPS: Array<{ key: FilterState; icon: string; word: string }> = [
+  { key: 'all',    icon: '',                 word: 'ALL'              },
+  { key: 'heart',  icon: classIcon('heart'), word: classLabel('heart')  },
+  { key: 'clown',  icon: classIcon('clown'), word: classLabel('clown')  },
+  { key: 'dagger', icon: classIcon('dagger'),word: classLabel('dagger') },
 ]
 
 export function FilterChips({ activeFilter, counts, onFilterChange }: Props) {
@@ -23,25 +23,30 @@ export function FilterChips({ activeFilter, counts, onFilterChange }: Props) {
 
   return (
     <div
-      className="flex items-center gap-2 px-3 overflow-x-hidden"
+      className="flex items-center gap-1.5 md:gap-2 px-2 md:px-3 overflow-x-hidden"
       style={{ height: 48, borderBottom: '1px solid var(--color-border)' }}
     >
-      {CHIPS.map(({ key, label }) => {
+      {CHIPS.map(({ key, icon, word }) => {
         const active = activeFilter === key
         return (
           <button
             key={key}
             onClick={() => onFilterChange(key)}
             aria-pressed={active}
+            aria-label={`${word} (${countFor(key)})`}
             className={[
-              'font-display whitespace-nowrap px-3 py-2 border transition-colors',
+              'font-display whitespace-nowrap px-2 md:px-3 py-2 border transition-colors',
               active
                 ? 'bg-[#803018] border-[#C07830] text-[#C07830]'
                 : 'bg-transparent border-[#1E2D4A] text-[#7A8BAA] hover:border-[#C07830] hover:text-[#C07830]',
             ].join(' ')}
             style={{ fontSize: 10, lineHeight: 1 }}
           >
-            {label} ({countFor(key)})
+            {/* Full label on md+, emoji-only on mobile so four chips fit a phone. */}
+            {icon
+              ? <>{icon}<span className="hidden md:inline"> {word}</span></>
+              : word}
+            {' '}({countFor(key)})
           </button>
         )
       })}

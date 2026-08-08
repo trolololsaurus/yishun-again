@@ -312,6 +312,38 @@ today (the `tailwind.config.js` `screens` are defined but unused).
 change from the sheet updates URL + both surfaces, no horizontal scroll, both
 themes.
 
+> **DONE (2026-08-07).** Landed as: `hooks/useChaosYear.ts` (the year + per-year
+> stats logic, extracted from `ChaosSidebar` so the sidebar and the sheet share
+> one implementation); `ChaosSidebar` reduced to a thin `ChaosPanel` render;
+> **new `components/BottomSheet.tsx`** (mobile-only, `position:fixed`, tap or
+> swipe to expand the same `ChaosPanel` to 70vh); `(hud)/layout.tsx` hides the
+> `<aside>` (`hidden md:block`), mounts the sheet, and pads the content 54px at
+> the bottom so it clears the collapsed bar; **Nav + NavLinks + FilterChips made
+> responsive** (the first breakpoints used in the app) so a 375px header and chip
+> row don't overflow. Build + lint clean, 39 web tests + 10 war-room parity green.
+>
+> **Verified in real Chromium (Playwright) at 375 AND 1280:**
+> - Mobile: sidebar hidden, sheet visible with the collapsed bar
+>   ("CHAOS 60 CRITICAL 2026 ▴"); tapping expands to 70vh showing the year
+>   selector + breakdown (`aria-expanded` toggles); nav fits (header overflow 0);
+>   four chips fit as emoji+count (row overflow 0); no horizontal page scroll;
+>   feed cards render thumbnails.
+> - Desktop: sidebar back at 280px, sheet `display:none`, nav links 14px, chips
+>   show full labels ("❤️ GOOD VIBES (8)"). Screenshots delivered.
+>
+> **Deviations, all deliberate:**
+> - **No `HudShell` / `useMediaQuery`.** The responsive swap is pure CSS
+>   (`hidden md:block` / `md:hidden`); both `ChaosSidebar` and `BottomSheet`
+>   mount and each runs `useChaosYear`. On the current year neither fetches (SSR
+>   seed); only a year *change* triggers the duplicate `/api/chaos` — same
+>   cached endpoint, folded into the Phase 6 dedupe note. Avoids the
+>   SSR-viewport / hydration problem a `useMediaQuery` conditional render carries.
+> - **Nav/chips responsive was beyond "audit Nav's fixed values"** but the
+>   mobile layout is broken without it (header + chip row overflow the width).
+> - **Swipe gesture** is touchstart/move/end delta (≥30px = open/close) with tap
+>   as the baseline — not a finger-following drag. Playwright exercised the tap;
+>   the swipe delta wants a real touch device, same caveat as Phase 4's tap.
+
 ## Phase 6 — Class filter in the URL, tests, cleanup
 
 - **`?class=`:** `FilterChips` reads/writes the param (mirrors year). Feed →

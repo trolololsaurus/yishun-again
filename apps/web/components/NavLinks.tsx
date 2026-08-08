@@ -11,21 +11,18 @@ const LINKS: Array<{ href: string; label: string }> = [
   { href: '/about',    label: 'ABOUT'    },
 ]
 
-function linkStyle(active: boolean) {
-  return { fontSize: 14, color: active ? 'var(--color-sienna)' : 'var(--color-amber)' }
-}
-
 // Shared markup. `hrefFor` decides whether the query string is carried across
 // (real links) or dropped (the static fallback, which has no client params yet).
+// Gaps and type shrink on mobile so four links + the logo fit a phone header.
 function View({ path, hrefFor }: { path: string; hrefFor: (base: string) => string }) {
   return (
-    <nav className="flex items-center gap-7">
+    <nav className="flex items-center gap-2 md:gap-7">
       {LINKS.map(({ href, label }) => (
         <Link
           key={href}
           href={hrefFor(href)}
-          className="font-display leading-none whitespace-nowrap"
-          style={linkStyle(path === href)}
+          className="font-display leading-none whitespace-nowrap text-[10px] md:text-[14px]"
+          style={{ color: path === href ? 'var(--color-sienna)' : 'var(--color-amber)' }}
         >
           {label}
         </Link>
