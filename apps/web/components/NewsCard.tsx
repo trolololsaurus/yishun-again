@@ -7,13 +7,26 @@ import {
   classIcon, classColor, classTooltip, HYPE_TOOLTIP,
   severityDiamonds, severityTooltip, hypeMeter, hypeFromSources,
   fmtDate, toParagraphs, uniqueSources, canonicalUrl, dateFromUrl,
+  collapseTimelineByDate, formatDurationGap,
 } from '@/lib/utils'
 import type { Incident } from '@/lib/types'
 
 type Row = Pick<Incident,
   'id' | 'slug' | 'title' | 'summary' | 'classification' | 'custom_label' | 'severity'
-  | 'corroboration_count' | 'incident_date' | 'area_name'
+  | 'deaths' | 'injuries' | 'corroboration_count' | 'incident_date' | 'area_name' | 'block_number'
   | 'source_urls' | 'source_timeline' | 'pixel_art_url'>
+
+// Story-timeline role → short pixel-font label, matching the detail page.
+const ROLE_LABEL: Record<string, string> = {
+  initial:          'REPORTED',
+  update:           'UPDATE',
+  verdict:          'VERDICT',
+  sentencing:       'SENTENCED',
+  appeal:           'APPEAL',
+  appeal_dismissed: 'APPEAL DISMISSED',
+  correction:       'CORRECTED',
+  follow_up:        'FOLLOW UP',
+}
 
 /**
  * News-article card for the NEWS FEED (`/`): a banner image on top, a slightly
@@ -27,8 +40,8 @@ type Row = Pick<Incident,
  */
 export function NewsCard({ incident }: { incident: Row }) {
   const {
-    slug, title, summary, classification, custom_label, severity, corroboration_count,
-    incident_date, area_name, source_urls, source_timeline, pixel_art_url,
+    slug, title, summary, classification, custom_label, severity, deaths, injuries, corroboration_count,
+    incident_date, area_name, block_number, source_urls, source_timeline, pixel_art_url,
   } = incident
   const [expanded, setExpanded] = useState(false)
 
@@ -51,6 +64,10 @@ export function NewsCard({ incident }: { incident: Row }) {
   const sortedSources = [...sources].sort((a, b) =>
     (dateFor(a) ?? 'zzzz').localeCompare(dateFor(b) ?? 'zzzz')
   )
+
+  const hasCasualties = (deaths ?? 0) > 0 || (injuries ?? 0) > 0
+  // Story timeline collapses same-date entries; it needs 2+ distinct dates.
+  const timelineNodes = collapseTimelineByDate(source_timeline ?? [])
 
   return (
     <article className="border-b border-border">
@@ -90,6 +107,7 @@ export function NewsCard({ incident }: { incident: Row }) {
             <span aria-hidden>·</span>
             <span>{fmtDate(incident_date)}</span>
             {area_name && <><span aria-hidden>·</span><span className="truncate">{area_name}</span></>}
+            {block_number && <><span aria-hidden>·</span><span className="truncate">{block_number}</span></>}
           </div>
 
           <h2
@@ -130,6 +148,18 @@ export function NewsCard({ incident }: { incident: Row }) {
             ))}
           </div>
 
+          {/* Casualties */}
+          {hasCasualties && (
+            <div className="flex gap-6 font-body text-text-secondary mb-4" style={{ fontSize: 14 }}>
+              {(deaths ?? 0) > 0 && (
+                <span>💀 Deaths: <strong style={{ color: 'var(--color-dark-events)' }}>{deaths}</strong></span>
+              )}
+              {(injuries ?? 0) > 0 && (
+                <span>🩸 Injuries: <strong className="text-text-primary">{injuries}</strong></span>
+              )}
+            </div>
+          )}
+
           {sortedSources.length > 0 && (
             <div className="mb-3">
               <div className="font-body text-text-secondary mb-2 uppercase" style={{ fontSize: 14 }}>
@@ -162,6 +192,49 @@ export function NewsCard({ incident }: { incident: Row }) {
                   )
                 })}
               </ul>
+            </div>
+          )}
+
+          {/* Story timeline — same horizontal layout as the detail page; needs
+              2+ distinct dates. source_timeline is already in the feed row, so
+              no extra fetch. */}
+          {timelineNodes.length >= 2 && (
+            <div className="mb-4">
+              <div className="font-body text-text-secondary mb-3 uppercase" style={{ fontSize: 14 }}>
+                Story Timeline
+              </div>
+              <div style={{ overflowX: 'auto', paddingBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', minWidth: 'max-content' }}>
+                  {timelineNodes.map((entry, i) => {
+                    const label  = ROLE_LABEL[entry.role ?? 'initial'] ?? 'UPDATE'
+                    const gapStr = i > 0
+                      ? formatDurationGap(new Date(timelineNodes[i - 1].date), new Date(entry.date))
+                      : null
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center' }}>
+                        {gapStr && (
+                          <div style={{ display: 'flex', alignItems: 'center', minWidth: 90, padding: '0 4px', paddingBottom: 20 }}>
+                            <div style={{ flex: 1, height: 1, borderTop: '1px solid var(--color-border)', minWidth: 10 }} />
+                            <span style={{ padding: '2px 6px', fontFamily: "'Courier Prime', monospace", fontSize: 10, color: 'var(--color-amber-dim)', whiteSpace: 'nowrap' }}>
+                              {gapStr}
+                            </span>
+                            <div style={{ flex: 1, height: 1, borderTop: '1px solid var(--color-border)', minWidth: 10 }} />
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, minWidth: 80 }}>
+                          <span style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 8, color: 'var(--color-amber)', textAlign: 'center', whiteSpace: 'nowrap', letterSpacing: '0.05em' }}>
+                            {label}
+                          </span>
+                          <span style={{ color: 'var(--color-amber)', fontSize: 14, lineHeight: 1 }}>●</span>
+                          <span style={{ fontFamily: "'Courier Prime', monospace", fontSize: 11, color: 'var(--color-amber)', whiteSpace: 'nowrap' }}>
+                            {fmtDate(entry.date)}
+                          </span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
           )}
 
