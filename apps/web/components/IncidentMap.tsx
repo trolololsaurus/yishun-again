@@ -155,9 +155,10 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
       const map = new ml.Map({
         container: containerRef.current,
         style:     MAP_STYLE,
-        center:    [103.8350, 1.4290],  // Yishun, Singapore
-        zoom:      13.5,
-        maxBounds: [[103.80, 1.40], [103.87, 1.46]],  // lock to Yishun
+        center:    [103.8386, 1.4275],  // Yishun town centre (incident cluster)
+        zoom:      14,
+        minZoom:   13.3,                 // keep the view focused on Yishun — no zooming out to the island
+        maxBounds: [[103.815, 1.404], [103.862, 1.451]],  // tight box around the Yishun planning area
         attributionControl: true,
       })
       mapRef.current = map
