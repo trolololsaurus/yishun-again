@@ -84,7 +84,11 @@ export function ChaosPanel({
           <select
             value={selectedYear}
             onChange={e => onYearChange(parseInt(e.target.value))}
-            onWheel={e => (e.target as HTMLSelectElement).blur()}
+            // NB: no onWheel={blur}. It was here to stop a page-scroll over a
+            // focused select from nudging the value, but it also fired while
+            // scrolling the OPEN dropdown to reach an option below the fold —
+            // blurring the select mid-scroll, so any year past the ~12th option
+            // (2013 and older) snapped back to ~2015 and could never be picked.
             // Larger on mobile (18px, in the bottom sheet) than on the desktop
             // sidebar (16px). 16px is already at/above the iOS zoom-on-focus
             // threshold, so the select never zooms the page.
