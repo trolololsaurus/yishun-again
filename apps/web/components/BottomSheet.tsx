@@ -84,7 +84,9 @@ export function BottomSheet({ chaos }: Props) {
         <select
           value={selectedYear}
           onChange={e => onYearChange(parseInt(e.target.value))}
-          onWheel={e => (e.target as HTMLSelectElement).blur()}
+          // NB: no onWheel={blur} — it blurred the select while scrolling the
+          // OPEN dropdown to an option below the fold, so any year older than
+          // ~2015 snapped back and could never be picked. See ChaosPanel.
           // 18px keeps it clear of the iOS zoom-on-focus threshold (16px).
           className="w-full font-body text-[18px]"
           style={{
