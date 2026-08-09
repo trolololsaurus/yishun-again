@@ -82,9 +82,10 @@ export default async function HudLayout({ children }: { children: React.ReactNod
     <>
       <div className="flex-1 min-h-0 flex overflow-hidden">
         {/* Left column — the route's page (feed or map) fills the width. On
-            mobile it reserves 54px at the bottom so content clears the collapsed
-            bottom sheet (which is position:fixed and would otherwise overlap). */}
-        <div className="flex-1 min-w-0 flex flex-col overflow-hidden pb-[54px] md:pb-0">
+            mobile it reserves 128px at the bottom so content clears the collapsed
+            bottom sheet (which is position:fixed and would otherwise overlap).
+            The collapsed sheet is ~122px now that it carries the YEAR selector. */}
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden pb-[128px] md:pb-0">
           {children}
         </div>
 

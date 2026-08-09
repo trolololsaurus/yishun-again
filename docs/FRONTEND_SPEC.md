@@ -138,12 +138,12 @@ outside the group and scroll normally.
 | Header (`Nav`) | 72px fixed top, `flex-none`. Logo + links shrink on mobile (`px-3 md:px-4`, `text-[18px] md:text-[26px]`, link `text-[10px] md:text-[14px]`) so a 375px header doesn't overflow |
 | `<main>` | `flex-1 min-h-0 flex flex-col overflow-y-auto` — the scroll region for the routes outside `(hud)` (detail, `/timeline`, `/about`) |
 | Desktop sidebar (Chaos Panel) | 280px, `hidden md:block flex-none`, `overflow-y-auto`. Hidden below `md`, where the bottom sheet takes over |
-| Mobile bottom sheet (`BottomSheet`) | `md:hidden`, `position: fixed` bottom-0 (escapes the shell's `overflow:hidden`); a slim bar taps/swipes up to the same `ChaosPanel` at 70vh. Content reserves `pb-[54px] md:pb-0` so it clears the collapsed bar |
+| Mobile bottom sheet (`BottomSheet`) | `md:hidden`, `position: fixed` bottom-0 (escapes the shell's `overflow:hidden`). The always-visible collapsed header is the **YEAR selector** (grab handle + chevron + `<select>`), NOT a score readout — the year is the one control worth one tap away on the feed/map. Tapping the handle (or swiping) expands the `ChaosPanel` (minus its own YEAR block, `showYear={false}`) upward at 70vh: order top→bottom is YEAR, CHAOS INDEX, INCIDENT BREAKDOWN. Content reserves `pb-[128px] md:pb-0` so it clears the ~122px collapsed header |
 | Feed (`/`) | **banner news-article cards** (`NewsCard`): full-width image on top (40:21), a meta row (class emoji + severity + lightning + sources + date + area + block), a **23px headline**, a 3–4 line teaser. **READ MORE expands the card in place** (several open at once) → full write-up + casualties (deaths/injuries) + dated sources + story timeline + a `Full page ↗` link. Internal scroll via an IntersectionObserver sentinel (infinite scroll). **No `react-window`**. The classification emoji is in the meta row, not on the image |
 | History (`/timeline`) | compact `IncidentCard` rows (thumbnail + info-row emoji, no image-overlay box); its own class/severity/year filters; same infinite-scroll hook (`useIncidentPages`) |
 | Map (`/map`) | fills the left column (no longer 45vh) |
 | Filter chips | **live in the Chaos panel** (the Incident Breakdown rows are the filter), not a content bar |
-| Main left column | `flex-1 min-w-0 flex flex-col overflow-hidden pb-[54px] md:pb-0` |
+| Main left column | `flex-1 min-w-0 flex flex-col overflow-hidden pb-[128px] md:pb-0` (mobile reserve = collapsed sheet height) |
 | Scrollbar | 6px width, `height: 0` (never a horizontal bar), no border-radius |
 
 The page itself never scrolls. On desktop the only internal scroll regions are

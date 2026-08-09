@@ -10,14 +10,20 @@ interface Props {
 }
 
 /**
- * Mobile-only (`md:hidden`) Chaos Index as a bottom sheet: a slim always-visible
- * bar showing the score + descriptor, swiping (or tapping) up to reveal the full
- * panel — the same ChaosPanel the desktop sidebar renders, driven by the same
- * useChaosYear hook, so the year and stats stay in sync across the breakpoint.
+ * Mobile-only (`md:hidden`) Chaos Index as a bottom sheet.
  *
- * position:fixed sits above the body's `overflow:hidden`; anchored at bottom-0,
- * the panel grows upward as its max-height animates open. The desktop sidebar is
- * hidden at this width, so exactly one of the two is visible.
+ * The always-visible handle carries the YEAR selector (the one control worth
+ * having one tap away on the feed/map), not a score readout. Swiping or tapping
+ * the grab handle expands the sheet upward to reveal the full panel — CHAOS
+ * INDEX + INCIDENT BREAKDOWN — the same ChaosPanel the desktop sidebar renders
+ * (minus its own YEAR block, which this header owns), driven by the same
+ * useChaosYear hook so everything stays in sync across the breakpoint.
+ *
+ * Layout: position:fixed, bottom-0, sitting above the body's `overflow:hidden`.
+ * The header (handle + YEAR) is first and always shown; the panel below it
+ * animates its max-height 0→70vh. Because the container is bottom-anchored, the
+ * panel grows the sheet UPWARD — so the expanded order top→bottom is YEAR, then
+ * CHAOS INDEX, then INCIDENT BREAKDOWN, with the header pinned above the score.
  */
 export function BottomSheet({ chaos }: Props) {
   const {
@@ -26,8 +32,10 @@ export function BottomSheet({ chaos }: Props) {
   } = useChaosYear(chaos)
   const [expanded, setExpanded] = useState(false)
 
-  // Tap toggles; a vertical swipe on the bar opens/closes. `moved` suppresses the
-  // click that a swipe also fires, so a swipe doesn't immediately toggle back.
+  // A vertical swipe on the grab handle opens/closes; a tap toggles. `moved`
+  // suppresses the click a swipe also fires so it doesn't immediately toggle
+  // back. The YEAR <select> is a sibling of the handle, not inside it, so
+  // choosing a year never toggles the sheet.
   const startY = useRef<number | null>(null)
   const moved  = useRef(false)
 
@@ -42,7 +50,7 @@ export function BottomSheet({ chaos }: Props) {
     else if (dy > 30) setExpanded(false)
     startY.current = null
   }
-  const onClick = () => {
+  const onHandleClick = () => {
     if (moved.current) { moved.current = false; return }
     setExpanded(v => !v)
   }
@@ -52,7 +60,45 @@ export function BottomSheet({ chaos }: Props) {
       className="md:hidden fixed inset-x-0 bottom-0 z-[200] bg-surface"
       style={{ borderTop: '1px solid var(--color-border)', boxShadow: '0 -4px 12px rgba(0,0,0,0.45)' }}
     >
-      {/* Panel — grows upward from behind the bar as it opens. */}
+      {/* ── Always-visible header: grab handle + YEAR selector ────────────── */}
+      <button
+        type="button"
+        onClick={onHandleClick}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        aria-expanded={expanded}
+        aria-label="Chaos Index details"
+        className="w-full flex items-center justify-center gap-2 pt-2 pb-1"
+      >
+        <span className="block rounded-full" style={{ width: 32, height: 4, background: 'var(--color-border)' }} />
+        <span className="font-body" style={{ fontSize: 12, color: 'var(--color-text-secondary)' }} aria-hidden>
+          {expanded ? '▾' : '▴'}
+        </span>
+      </button>
+
+      <div className="px-4 pt-1 pb-3" style={{ borderBottom: '1px solid var(--color-border)' }}>
+        <label className="font-display block mb-2 text-[12px]" style={{ color: 'var(--color-amber)' }}>
+          YEAR
+        </label>
+        <select
+          value={selectedYear}
+          onChange={e => onYearChange(parseInt(e.target.value))}
+          onWheel={e => (e.target as HTMLSelectElement).blur()}
+          // 18px keeps it clear of the iOS zoom-on-focus threshold (16px).
+          className="w-full font-body text-[18px]"
+          style={{
+            color: 'var(--color-amber)', background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)', minHeight: 48, padding: '0 8px',
+          }}
+        >
+          {availableYears.map(y => (
+            <option key={y} value={y}>{y}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* ── Panel — CHAOS INDEX + BREAKDOWN, grows upward from behind the header. */}
       <div
         className="overflow-y-auto transition-[max-height] duration-300 ease-out"
         style={{ maxHeight: expanded ? '70vh' : 0 }}
@@ -69,36 +115,9 @@ export function BottomSheet({ chaos }: Props) {
           onYearChange={onYearChange}
           activeFilter={selectedClass}
           onFilterChange={onClassChange}
+          showYear={false}
         />
       </div>
-
-      {/* Always-visible bar — tap or swipe to toggle. */}
-      <button
-        type="button"
-        onClick={onClick}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-        aria-expanded={expanded}
-        aria-label="Chaos Index details"
-        className="w-full block"
-      >
-        <div className="flex justify-center pt-2 pb-1">
-          <span className="block rounded-full" style={{ width: 32, height: 4, background: 'var(--color-border)' }} />
-        </div>
-        <div className="flex items-center justify-between px-4 pb-2">
-          <div className="flex items-baseline gap-2 min-w-0">
-            <span className="font-display flex-none" style={{ fontSize: 11, color: 'var(--color-amber)', letterSpacing: '0.1em' }}>CHAOS</span>
-            <span className="font-display flex-none" style={{ fontSize: 22, color: 'var(--color-amber)' }}>{stats.score}</span>
-            <span className="font-display truncate" style={{ fontSize: 11, color: 'var(--color-good-vibes)', letterSpacing: '0.1em' }}>
-              {stats.descriptor.toUpperCase()}
-            </span>
-          </div>
-          <span className="font-body flex items-center gap-1 flex-none" style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
-            {selectedYear}<span aria-hidden>{expanded ? '▾' : '▴'}</span>
-          </span>
-        </div>
-      </button>
     </div>
   )
 }
