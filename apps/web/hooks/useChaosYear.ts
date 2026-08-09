@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { chaosDescriptor } from '@/lib/utils'
 import { parseYear, parseClass, patchedParams, buildHref } from '@/lib/params'
 import type { ChaosData, FilterState } from '@/lib/types'
@@ -34,7 +34,6 @@ interface Result {
  */
 export function useChaosYear(chaos: ChaosData): Result {
   const pathname     = usePathname()
-  const router       = useRouter()
   const searchParams = useSearchParams()
 
   const currentYear  = chaos.year
@@ -86,10 +85,27 @@ export function useChaosYear(chaos: ChaosData): Result {
     return () => { cancelled = true }
   }, [selectedYear, currentYear])
 
+  // Update the URL client-side ONLY — never router.replace() here.
+  //
+  // The selector's value is derived from useSearchParams, and router.replace()
+  // triggers an App Router RSC navigation that must COMMIT before that value
+  // updates. Every pick re-requests the route's async server component (which
+  // queries Supabase), so a pick made before the previous navigation commits
+  // supersedes it and the control freezes on the last committed year — the
+  // "year selector gets stuck after a while" bug. It also refetches SSR data on
+  // every filter change for nothing.
+  //
+  // window.history.replaceState updates the URL synchronously with no server
+  // round-trip; Next patches it so usePathname/useSearchParams still react, and
+  // the client-side feed/map/chaos fetches all key off selectedYear/selectedClass.
+  // replaceState (not pushState) preserves the old no-history-entry behaviour.
+  const writeParams = (patch: Record<string, string | null>) => {
+    window.history.replaceState(null, '', buildHref(pathname, patchedParams(searchParams, patch)))
+  }
+
   const onYearChange = (y: number) => {
     // Drop the param at the current year so the default view keeps a clean URL.
-    const next = patchedParams(searchParams, { year: y === currentYear ? null : String(y) })
-    router.replace(buildHref(pathname, next), { scroll: false })
+    writeParams({ year: y === currentYear ? null : String(y) })
   }
 
   const selectedClass = parseClass(searchParams)
@@ -97,8 +113,7 @@ export function useChaosYear(chaos: ChaosData): Result {
     // Drop the param for 'all' so the default view keeps a clean URL. The feed
     // and map read ?class= straight off the URL, so this is all the wiring the
     // filter needs — it persists across the /↔/map navigation for free.
-    const next = patchedParams(searchParams, { class: f === 'all' ? null : f })
-    router.replace(buildHref(pathname, next), { scroll: false })
+    writeParams({ class: f === 'all' ? null : f })
   }
 
   return {

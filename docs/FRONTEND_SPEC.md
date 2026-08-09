@@ -152,10 +152,22 @@ frame, now with a responsive twist below `md`.
 
 > **State lives in the URL.** `?year=` (Chaos panel year) and `?class=` (class
 > filter) are the single source of truth, read via `useSearchParams`
-> (`lib/params.ts`) and written via `router.replace(..., { scroll: false })`.
-> Nav links carry both params forward, so the year and filter survive
-> `/ ↔ /map` navigation. The pages SSR the current year and read the params
-> client-side, which keeps both routes on ISR (`revalidate = 60`).
+> (`lib/params.ts`) and written via **`window.history.replaceState`**
+> (`useChaosYear.ts::writeParams`) — **never `router.replace`**. `router.replace`
+> triggers an App Router RSC navigation that must COMMIT before `useSearchParams`
+> (and the `<select>` value derived from it) updates; a pick made before the
+> commit supersedes it, so the selector froze on a year under any sustained
+> interaction (the "year selector gets stuck after a while" bug). `replaceState`
+> updates the URL synchronously with no server round-trip, and Next re-syncs
+> `useSearchParams`/`usePathname` off it. This is safe **only because no server
+> component reads `year`/`class`** — `layout.tsx`, `(hud)/page.tsx` and
+> `(hud)/map/page.tsx` all derive the year from `new Date().getFullYear()`, so
+> dropping the RSC navigation loses no rendered output. `replaceState` (not
+> `pushState`) keeps the old no-history-entry semantics. Guard:
+> `lib/chaosYearWrite.guard.test.ts`. Nav links carry both params forward, so the
+> year and filter survive `/ ↔ /map` navigation. The pages SSR the current year
+> and read the params client-side, which keeps both routes on ISR
+> (`revalidate = 60`).
 
 > **Nav labels.** `FEED | MAP | HISTORY | ABOUT`, separated by a dim `|`
 > (`--color-text-dim`). `HISTORY` is a **label only** — the route stays
