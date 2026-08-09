@@ -51,11 +51,14 @@ interface Props {
   onYearChange:   (y: number) => void
   activeFilter:   FilterState
   onFilterChange: (f: FilterState) => void
+  // The mobile bottom sheet renders its own YEAR selector in the always-visible
+  // handle, so it hides this one to avoid showing it twice. Desktop keeps it.
+  showYear?:      boolean
 }
 
 export function ChaosPanel({
   score, descriptor, counts, loading, error, selectedYear, availableYears, onYearChange,
-  activeFilter, onFilterChange,
+  activeFilter, onFilterChange, showYear = true,
 }: Props) {
   // Defensive default — never crash if counts is momentarily absent.
   const c = counts ?? { heart: 0, clown: 0, dagger: 0, total: 0 }
@@ -72,29 +75,31 @@ export function ChaosPanel({
   return (
     <div className={`h-full bg-surface${loading ? ' opacity-60' : ''}`} style={{ borderLeft: '1px solid var(--color-border)' }}>
 
-      {/* ── Year selector ─────────────────────────────────────── */}
-      <div className="px-4 pt-4 pb-3" style={{ borderBottom: '1px solid var(--color-border)' }}>
-        <label className="font-display block mb-2 text-[12px] md:text-[11px]" style={{ color: 'var(--color-amber)' }}>
-          YEAR
-        </label>
-        <select
-          value={selectedYear}
-          onChange={e => onYearChange(parseInt(e.target.value))}
-          onWheel={e => (e.target as HTMLSelectElement).blur()}
-          // Larger on mobile (18px, in the bottom sheet) than on the desktop
-          // sidebar (16px). 16px is already at/above the iOS zoom-on-focus
-          // threshold, so the select never zooms the page.
-          className="w-full font-body text-[18px] md:text-[16px]"
-          style={{
-            color: 'var(--color-amber)', background: 'var(--color-surface)',
-            border: '1px solid var(--color-border)', minHeight: 48, padding: '0 8px',
-          }}
-        >
-          {availableYears.map(y => (
-            <option key={y} value={y}>{y}</option>
-          ))}
-        </select>
-      </div>
+      {/* ── Year selector (desktop sidebar; the mobile sheet owns its own) ── */}
+      {showYear && (
+        <div className="px-4 pt-4 pb-3" style={{ borderBottom: '1px solid var(--color-border)' }}>
+          <label className="font-display block mb-2 text-[12px] md:text-[11px]" style={{ color: 'var(--color-amber)' }}>
+            YEAR
+          </label>
+          <select
+            value={selectedYear}
+            onChange={e => onYearChange(parseInt(e.target.value))}
+            onWheel={e => (e.target as HTMLSelectElement).blur()}
+            // Larger on mobile (18px, in the bottom sheet) than on the desktop
+            // sidebar (16px). 16px is already at/above the iOS zoom-on-focus
+            // threshold, so the select never zooms the page.
+            className="w-full font-body text-[18px] md:text-[16px]"
+            style={{
+              color: 'var(--color-amber)', background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)', minHeight: 48, padding: '0 8px',
+            }}
+          >
+            {availableYears.map(y => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {error ? (
         /* ── Error state — surfaced loudly so a chaos failure is obvious ── */
