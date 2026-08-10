@@ -413,6 +413,19 @@ export function computeChaosScore(incidents: Array<{ classification: string; sev
   return Math.max(0, Math.min(100, Math.round(100 * (1 - Math.exp(-positive / CHAOS_SCALE)))))
 }
 
+// Custom (📌 CULTURE) cards group under GOOD VIBES (heart) for FILTERING and the
+// Incident Breakdown — the GOOD VIBES filter/count also matches custom — but they
+// NEVER affect the Chaos score: computeChaosScore keeps custom at weight 0. Keep
+// these two helpers and the breakdown reducers (layout + /api/chaos) in agreement.
+export function classesForFilter(filter: string): string[] {
+  return filter === 'heart' ? ['heart', 'custom'] : [filter]
+}
+export function matchesClassFilter(filter: string, cls: string): boolean {
+  if (filter === 'all')   return true
+  if (filter === 'heart') return cls === 'heart' || cls === 'custom'
+  return cls === filter
+}
+
 // For the rare places that must build raw HTML strings (MapLibre Popup.setHTML).
 // DB fields like title/custom_label are LLM-written from scraped text and can
 // reach the site without human review via auto-publish — never interpolate them

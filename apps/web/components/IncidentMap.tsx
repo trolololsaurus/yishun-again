@@ -4,7 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useRouter }         from 'next/navigation'
 import type { FilterState, MapFeature } from '@/lib/types'
-import { pinColor, classIcon, classLabel, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, escapeHtml } from '@/lib/utils'
+import { pinColor, classIcon, classLabel, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, escapeHtml, matchesClassFilter } from '@/lib/utils'
 
 // OpenFreeMap Liberty — keyless, served via Cloudflare CDN. The env var lets us
 // override per-environment, but the hardcoded fallback guarantees the map still
@@ -85,7 +85,8 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
 
   const applyFilterToMarkers = useCallback((filter: FilterState) => {
     for (const { el, classification } of markersRef.current) {
-      el.style.display = filter === 'all' || classification === filter ? '' : 'none'
+      // Custom (CULTURE) pins ride under GOOD VIBES (heart) — matchesClassFilter.
+      el.style.display = matchesClassFilter(filter, classification) ? '' : 'none'
     }
   }, [])
 

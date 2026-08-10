@@ -44,12 +44,13 @@ export default async function HudLayout({ children }: { children: React.ReactNod
 
   const counts = rows.reduce(
     (acc, r) => {
-      // Only the three real classes — a 'custom' row must not inflate total.
-      const cls = r.classification as 'heart' | 'clown' | 'dagger'
-      if (cls === 'heart' || cls === 'clown' || cls === 'dagger') {
-        acc[cls] += 1
-        acc.total += 1
-      }
+      // Custom (CULTURE) cards fold into GOOD VIBES (heart) for the breakdown and
+      // the ALL total, so the Good Vibes filter shows them and its count matches.
+      // They still never touch the Chaos score (computeChaosScore weight 0).
+      const cls = r.classification
+      if (cls === 'heart' || cls === 'custom') { acc.heart += 1; acc.total += 1 }
+      else if (cls === 'clown')  { acc.clown  += 1; acc.total += 1 }
+      else if (cls === 'dagger') { acc.dagger += 1; acc.total += 1 }
       return acc
     },
     { heart: 0, clown: 0, dagger: 0, total: 0 }
