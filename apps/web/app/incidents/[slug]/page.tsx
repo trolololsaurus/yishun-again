@@ -3,7 +3,7 @@ import { Suspense }      from 'react'
 import { notFound }      from 'next/navigation'
 import Link              from 'next/link'
 import { supabase }      from '@/lib/supabase'
-import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, fmtDate, formatDuration, formatDurationGap, lastVerdictEntry, verdictNoun, collapseTimelineByDate, sharedLocationLabel, dateFromUrl, toParagraphs, uniqueSources, canonicalUrl } from '@/lib/utils'
+import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, fmtDate, formatDuration, formatDurationGap, lastVerdictEntry, verdictNoun, collapseTimelineByDate, sharedLocationLabel, dateFromUrl, toParagraphs, uniqueSources, canonicalUrl, foreignSourceNote } from '@/lib/utils'
 import { ShareButton }   from './ShareButton'
 import { UTMLogger }     from '@/components/UTMLogger'
 import { SITE_URL }      from '@/lib/site'
@@ -274,6 +274,7 @@ export default async function IncidentPage({ params }: Props) {
                 let domain = url
                 try { domain = new URL(url).hostname.replace(/^www\./, '') } catch {}
                 const date = dateFor(url)
+                const foreign = foreignSourceNote(url)
                 return (
                   <li key={i} className="flex items-baseline gap-2">
                     <span
@@ -283,15 +284,26 @@ export default async function IncidentPage({ params }: Props) {
                     >
                       {date ? fmtDate(date) : 'Undated'}
                     </span>
-                    <a
-                      href={url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-body text-amber-lt hover:underline break-all"
-                      style={{ fontSize: '14px' }}
-                    >
-                      {domain}
-                    </a>
+                    <span className="min-w-0">
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-body text-amber-lt hover:underline break-all"
+                        style={{ fontSize: '14px' }}
+                      >
+                        {domain}
+                      </a>
+                      {foreign && (
+                        <span
+                          className="font-body text-text-secondary ml-2"
+                          style={{ fontSize: '12px' }}
+                          title="Reported by an outlet outside Singapore"
+                        >
+                          {foreign}
+                        </span>
+                      )}
+                    </span>
                   </li>
                 )
               })}

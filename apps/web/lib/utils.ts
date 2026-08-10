@@ -508,3 +508,31 @@ export function uniqueSources(urls: readonly (string | null | undefined)[] | nul
   }
   return out
 }
+
+// ── Foreign-linked source note ───────────────────────────────────────────────
+//
+// Yishun Again is a Singapore archive. Some incidents are corroborated by
+// Malaysian outlets — Malay Mail and friends cover SG crime and court news, and
+// they are legitimate citations, but a reader should see at a glance that the
+// source sits outside the local press. The label the incident page shows is the
+// bare domain, so this returns a short parenthetical to render beside it.
+//
+// Keyed on the registrable domain, suffix-aware, so a subdomain (e.g.
+// www.malaymail.com, malaysia.news.yahoo.com) is covered without listing each.
+// Operator direction 2026-08 named Malay Mail specifically; the other
+// clearly-Malaysian outlets already in the sources table are included so the
+// annotation is consistent rather than singling one out.
+const FOREIGN_LINKED_DOMAINS = [
+  'malaymail.com',
+  'thestar.com.my',
+  'malaysia.news.yahoo.com',
+  'nst.com.my',            // New Straits Times (MY)
+  'thesundaily.my',
+]
+
+export function foreignSourceNote(url: string): string | null {
+  let host = ''
+  try { host = new URL(url).hostname.toLowerCase().replace(/^www\./, '') } catch { return null }
+  const isForeign = FOREIGN_LINKED_DOMAINS.some(d => host === d || host.endsWith('.' + d))
+  return isForeign ? '(foreign-linked news source)' : null
+}

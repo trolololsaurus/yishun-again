@@ -99,6 +99,55 @@ check("dedupe_urls keeps the FIRST spelling", d[0] == STOMP + "?ref=home-editors
 check("dedupe_urls preserves order", d[1] == "https://asiaone.com/x")
 check("dedupe_urls handles empties", sa.dedupe_urls([None, "", STOMP]) == [STOMP])
 
+# ── collapse_same_article: one story, two slugs, same publisher canonical ──
+# dedupe_urls cannot catch this (the paths genuinely differ); the publisher's
+# own rel=canonical can. AsiaOne served the Yishun coffee-shop fire at two
+# slugs, both declaring one canonical, and the two entered as separate sources.
+AO1 = "https://www.asiaone.com/singapore/yishun-food-stall-free-buffet-fire-coffee-shop"
+AO2 = "https://www.asiaone.com/singapore/yishun-food-stall-buffet-fire-coffee-shop"
+MO  = "https://mothership.sg/2026/08/thai-food-stall-free-buffet-fire-yishun/"
+CANON = '<link rel="canonical" href="' + AO1 + '"/>'
+
+def _fetch_both_canon(u):
+    # Both AsiaOne slugs declare AO1 as canonical; Mothership declares itself.
+    if "asiaone.com" in u:
+        return CANON
+    return '<link rel="canonical" href="' + MO + '"/>'
+
+kept, dropped = sa.collapse_same_article([AO1, AO2, MO], _fetch_both_canon)
+check("the duplicate AsiaOne slug is dropped", dropped == [AO2])
+check("the first spelling and the other publisher are kept", kept == [AO1, MO])
+
+# A story whose every source is a different host costs ZERO fetches.
+calls = []
+def _count(u):
+    calls.append(u); return ""
+kept2, dropped2 = sa.collapse_same_article(
+    ["https://a.sg/x", "https://b.sg/y", "https://c.sg/z"], _count)
+check("all-distinct-hosts collapses nothing", dropped2 == [])
+check("...and fetches nothing (the common case is free)", calls == [])
+
+# Two same-host URLs that are genuinely DIFFERENT articles (different canonical)
+# must BOTH be kept.
+def _distinct_canon(u):
+    return '<link rel="canonical" href="' + u + '"/>'
+kept3, dropped3 = sa.collapse_same_article(
+    ["https://x.sg/story-a", "https://x.sg/story-b"], _distinct_canon)
+check("distinct same-host articles are both kept", dropped3 == [] and len(kept3) == 2)
+
+# A page with no canonical link falls back to its own URL — never merged away.
+kept4, dropped4 = sa.collapse_same_article(
+    ["https://x.sg/a", "https://x.sg/b"], lambda u: "<html>no canonical</html>")
+check("no rel=canonical -> nothing merged", dropped4 == [])
+
+# A fetch that raises must not fail the row.
+kept5, dropped5 = sa.collapse_same_article(
+    ["https://x.sg/a", "https://x.sg/b"], lambda u: (_ for _ in ()).throw(RuntimeError("boom")))
+check("a raising fetch degrades to keep-both", dropped5 == [] and len(kept5) == 2)
+
+check("fewer than two URLs is a no-op", sa.collapse_same_article(["https://x.sg/a"], _count) == (["https://x.sg/a"], []))
+check("empty input is a no-op", sa.collapse_same_article([], _count) == ([], []))
+
 # ── redirectors: a citation must point at the publisher, not a wrapper ───────
 # google_news_rss put unresolved news.google.com/rss/articles/<blob> URLs into
 # war_room_queue.source_url and source_urls in production (2026-08-01). The

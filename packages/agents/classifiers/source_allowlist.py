@@ -27,6 +27,7 @@ since the operator approved the parent publisher.
 """
 
 import logging
+import re
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,64 @@ def dedupe_urls(urls: list[str]) -> list[str]:
         seen.add(key)
         out.append(u)
     return out
+
+
+def collapse_same_article(urls: list[str], fetch) -> tuple[list[str], list[str]]:
+    """
+    Collapse URLs that are the SAME article under different slugs, using each
+    page's own `<link rel="canonical">`.
+
+    `dedupe_urls` only removes tracking-parameter variants — the paths must
+    match. But one publisher can serve one story at two slugs: AsiaOne carried
+    the Yishun coffee-shop fire at both `/yishun-food-stall-free-buffet-fire-...`
+    and `/yishun-food-stall-buffet-fire-...`, and the two entered as separate
+    sources because the listing scraper and the sitemap adapter each linked a
+    different one. URL-only logic cannot see they are one article; the publisher
+    can, and both pages declare the SAME rel=canonical.
+
+    Returns (kept, dropped), first spelling of each canonical kept, order
+    preserved.
+
+    `fetch(url) -> str` returns the article HTML (''/None on failure) and is
+    INJECTED so this stays pure and unit-testable — no network in tests, and no
+    import cycle with fetch_strategy. It is only ever called for URLs that share
+    a host with another URL in the list, so a story with all-distinct hosts
+    (the common case) costs zero fetches.
+    """
+    urls = [u for u in (urls or []) if u]
+    if len(urls) < 2:
+        return list(urls), []
+
+    hosts: dict[str, int] = {}
+    for u in urls:
+        hosts[domain_of(u)] = hosts.get(domain_of(u), 0) + 1
+
+    kept, dropped, seen_canon = [], [], {}
+    for u in urls:
+        # Unique host in this list can't be a same-publisher slug dupe: keep it
+        # without spending a fetch.
+        if hosts.get(domain_of(u), 0) < 2:
+            kept.append(u)
+            continue
+        declared = u
+        try:
+            html = fetch(u) or ""
+            m = re.search(r'<link[^>]+rel=["\']canonical["\'][^>]+href=["\']([^"\']+)',
+                          html, re.IGNORECASE)
+            if m and m.group(1).startswith("http"):
+                declared = m.group(1).strip()
+        except Exception as exc:                  # noqa: BLE001 — never fail the row
+            logger.debug("collapse_same_article: canonical fetch failed for %s: %s",
+                         u[:80], exc)
+        key = canonical_url(declared)
+        if key in seen_canon:
+            dropped.append(u)
+            logger.info("collapse_same_article: %s is the same article as %s (canonical %s)",
+                        domain_of(u), domain_of(seen_canon[key]), key[:80])
+            continue
+        seen_canon[key] = u
+        kept.append(u)
+    return kept, dropped
 
 
 def load_source_domains(client=None) -> dict[str, dict]:

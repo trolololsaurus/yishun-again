@@ -12,6 +12,7 @@ import logging
 
 from classifiers.source_allowlist import (
     check_source_urls,
+    collapse_same_article,
     dedupe_urls,
     domain_of,
     is_redirect_domain,
@@ -95,6 +96,26 @@ def build_queue_row(
     # while holding one Stomp report with and without `?ref=home-editors-picks`.
     if raw_content.get("source_urls") is not None:
         raw_content["source_urls"] = dedupe_urls(raw_content["source_urls"])
+
+        # dedupe_urls only catches tracking-parameter variants of one URL. It
+        # does NOT catch one publisher serving one story at two DIFFERENT slugs,
+        # which is a real case: AsiaOne carried the Yishun coffee-shop fire at
+        # both /yishun-food-stall-free-buffet-fire-... and
+        # /yishun-food-stall-buffet-fire-..., and both entered because the
+        # listing scraper and the sitemap adapter each linked a different slug.
+        # Both pages declare the SAME rel=canonical, so collapse on that. Only
+        # same-host URLs cost a fetch, and polite_get caches within the pass, so
+        # the article was almost always already pulled for its body or date.
+        from scrapers.fetch_strategy import polite_get
+
+        def _html(url: str) -> str:
+            status, body = polite_get(url, timeout=15)
+            return body.decode("utf-8", errors="ignore") if status == 200 else ""
+
+        kept, dropped_dupe = collapse_same_article(raw_content["source_urls"], _html)
+        raw_content["source_urls"] = kept
+        if dropped_dupe:
+            raw_content.setdefault("_source_allowlist", {})["dropped_same_article"] = dropped_dupe
 
     allow = check_source_urls(raw_content.get("source_urls") or [])
     if raw_content.get("source_urls") is not None:

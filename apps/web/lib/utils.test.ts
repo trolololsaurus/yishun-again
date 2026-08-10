@@ -14,7 +14,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { sharedLocationLabel, dateFromUrl, toParagraphs, splitSentences, canonicalUrl, uniqueSources } from './utils.ts'
+import { sharedLocationLabel, dateFromUrl, toParagraphs, splitSentences, canonicalUrl, uniqueSources, foreignSourceNote } from './utils.ts'
 
 // ── sharedLocationLabel ─────────────────────────────────────────────────────
 // "Same location" alone is meaningless in a single-town archive. All 137
@@ -251,4 +251,28 @@ test('uniqueSources tolerates null and empty entries', () => {
   assert.deepEqual(uniqueSources([null, '', undefined, STOMP]), [STOMP])
   assert.deepEqual(uniqueSources(null), [])
   assert.deepEqual(uniqueSources(undefined), [])
+})
+
+// ── foreignSourceNote ────────────────────────────────────────────────────────
+// Malaysian outlets legitimately corroborate SG incidents; a reader should see
+// at a glance that the source sits outside the local press. Operator direction
+// 2026-08 named Malay Mail specifically.
+test('foreignSourceNote flags Malaysian outlets', () => {
+  assert.equal(foreignSourceNote('https://www.malaymail.com/news/singapore/2026/08/01/x/123'),
+               '(foreign-linked news source)')
+  assert.equal(foreignSourceNote('https://malaymail.com/x'), '(foreign-linked news source)')
+  assert.equal(foreignSourceNote('https://www.thestar.com.my/news/x'), '(foreign-linked news source)')
+  assert.equal(foreignSourceNote('https://malaysia.news.yahoo.com/x'), '(foreign-linked news source)')
+})
+
+test('foreignSourceNote leaves Singapore outlets unmarked', () => {
+  assert.equal(foreignSourceNote('https://www.straitstimes.com/singapore/x'), null)
+  assert.equal(foreignSourceNote('https://mothership.sg/2026/08/x/'), null)
+  assert.equal(foreignSourceNote('https://sg.news.yahoo.com/x'), null)  // SG Yahoo, not MY
+  assert.equal(foreignSourceNote('https://www.asiaone.com/singapore/x'), null)
+})
+
+test('foreignSourceNote does not match a lookalike domain', () => {
+  assert.equal(foreignSourceNote('https://malaymail.com.evil.example/x'), null)
+  assert.equal(foreignSourceNote('not a url'), null)
 })
