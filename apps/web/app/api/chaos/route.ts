@@ -51,13 +51,13 @@ export async function GET(req: Request) {
   const score  = computeChaosScore(rows)
   const counts = rows.reduce(
     (acc, r) => {
-      // QA M2: only count the three real classes; a 'custom' row must not add a
-      // phantom key or inflate total, or the chips won't sum to ALL.
-      const cls = r.classification as 'heart' | 'clown' | 'dagger'
-      if (cls === 'heart' || cls === 'clown' || cls === 'dagger') {
-        acc[cls] += 1
-        acc.total += 1
-      }
+      // Custom (CULTURE) cards fold into GOOD VIBES (heart) for the breakdown and
+      // the ALL total, matching the GOOD VIBES filter (classesForFilter) and the
+      // SSR layout reducer. They never affect the Chaos score (weight 0).
+      const cls = r.classification
+      if (cls === 'heart' || cls === 'custom') { acc.heart += 1; acc.total += 1 }
+      else if (cls === 'clown')  { acc.clown  += 1; acc.total += 1 }
+      else if (cls === 'dagger') { acc.dagger += 1; acc.total += 1 }
       return acc
     },
     { heart: 0, clown: 0, dagger: 0, total: 0 }

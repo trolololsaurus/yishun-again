@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabase }    from '@/lib/supabase'
 import { rateLimit, getIp } from '@/lib/rateLimit'
-import { sanitiseClassification, sanitisePage, sanitiseYear } from '@/lib/utils'
+import { sanitiseClassification, sanitisePage, sanitiseYear, classesForFilter } from '@/lib/utils'
 
 export const revalidate = 0  // never cache — always hit Supabase
 
@@ -38,7 +38,9 @@ export async function GET(req: Request) {
     .order('id',             { ascending: false })
     .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1)
 
-  if (cls)    q = q.eq('classification', cls)
+  // Custom (CULTURE) cards ride under the GOOD VIBES (heart) filter — see
+  // classesForFilter. heart → ['heart','custom']; clown/dagger unchanged.
+  if (cls)    q = q.in('classification', classesForFilter(cls))
   if (minSev) q = q.gte('severity', minSev)
   // Year filter uses incident_date (the real event date) — SAME column the chaos
   // API filters on, so sidebar counts, chip counts and feed rows all agree.
