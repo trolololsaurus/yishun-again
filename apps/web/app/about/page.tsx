@@ -24,19 +24,28 @@ export default function AboutPage() {
 
       <section className="space-y-4 text-text-primary leading-relaxed" style={{ fontSize: '16px' }}>
         <p>
-          Yishun Again is a satirical incident archive for Yishun, in Nee Soon in
-          Singapore&apos;s north. It exists because Yishun has a reputation — earned, documented,
-          and for reasons that remain unclear to everyone including us.
+          Yishun has a reputation as the Hive of Scum and Villainy. You&apos;ve heard it.
+          We&apos;re the ones documenting it.
         </p>
         <p>
-          Our pipeline scrapes public news sources, drafts incident write-ups, and queues
-          them for operator review. A human reviews and approves every entry before it goes live.
-          No rumour is published. No private individual is named. Every incident links to at least
-          one verifiable public source.
+          Yishun Again is a satirical incident archive covering Nee Soon, Singapore. Nobody
+          agrees on why the reputation exists. Everybody agrees it&apos;s earned.
         </p>
         <p>
-          The Chaos Index is a weighted score computed from the severity and type of each incident.
-          Daggers count triple. Clowns count 1.5×. Hearts subtract. This is not peer-reviewed.
+          <strong className="text-amber">The Devil&apos;s Ring</strong> — one circular stretch of
+          tarmac that shows up in this archive more than anywhere else in the estate. We didn&apos;t
+          name it that to be dramatic. We named it that because the data kept forcing our hand.
+        </p>
+        <p>
+          <strong className="text-amber">How this works.</strong> Our AI pipeline scrapes public
+          news, drafts each incident, and hands it to a human for review. Nothing goes live
+          unreviewed. No rumours. Every entry is backed by at least one verifiable public source.
+          We&apos;re satirical about Yishun&apos;s reputation — not about the facts.
+        </p>
+        <p>
+          <strong className="text-amber">The Chaos Index.</strong> Every incident is scored:
+          daggers count triple, clowns count 1.5×, hearts subtract. It is not peer-reviewed, and
+          we will not be defending it in an academic journal.
         </p>
       </section>
 
