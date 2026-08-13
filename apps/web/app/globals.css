@@ -54,7 +54,7 @@ body {
   box-shadow: 4px 4px 0 var(--color-bg) !important;
 }
 .maplibregl-popup-tip { display: none !important; }
-.maplibregl-ctrl-attrib { font-size: 9px !important; background: transparent !important; box-shadow: none !important; }
+.maplibregl-ctrl-attrib, .maplibregl-ctrl-attrib-inner { font-size: 8px !important; background: transparent !important; box-shadow: none !important; }
 .maplibregl-ctrl-attrib a { color: var(--color-text-secondary) !important; }
 .maplibregl-ctrl-attrib-button { display: none !important; }
 

@@ -735,6 +735,25 @@ CSS tokens are defined in spec §6.1. Key colours: bg `#0D0D0D`, accent red `#E7
 
 Map: MapLibre GL JS with OpenFreeMap "Liberty" style (`https://tiles.openfreemap.org/styles/liberty`). Keyless — no Mapbox token, no Stadia/CartoDB. `IncidentMap.tsx` reads `NEXT_PUBLIC_MAPLIBRE_STYLE` with a hardcoded fallback to the same Liberty URL (`||`, so an empty-string env var also falls back), so the map can never be a single point of failure if the var is unset. A set-but-wrong env var overrides the fallback. Because `NEXT_PUBLIC_*` vars are baked at build time, changing it requires a fresh deploy, not just a restart.
 
+**Liberty ships light and is recoloured dark-green at runtime** (`tintMap` in
+`IncidentMap.tsx`, called on `load`). The point is pin legibility: the coral /
+teal / yellow classification pins have almost no contrast on Liberty's stock
+white-and-pastel streets. The recolour **walks the live style and assigns by
+layer id** rather than listing layers — Liberty has 111 of them, ~50 being
+near-white `tunnel_*` / `bridge_*` / `aeroway_*` variants that a hand-written
+table drifts out of sync with. Three things worth knowing before touching it:
+- **`setPaintProperty` on a missing layer does not throw, it fires an `error`
+  event.** A `try`/`catch` around it catches nothing and the map's own error
+  handler then reports a style failure every frame. Walking the live layer
+  list is what makes that impossible.
+- **Pattern fills ignore `fill-color`.** `landcover_wetland` and
+  `road_area_pattern` carry their own light sprite pixels, so they stay bright
+  holes in the dark map unless faded via `fill-opacity`.
+- **Liberty's POI/shield icon layers are hidden outright** (`HIDDEN_LAYER_RE`).
+  At Yishun zoom there are dozens, all more saturated than the basemap, and
+  they competed directly with the incident pins — which are the only thing on
+  this map anyone came to look at.
+
 **Lightning (⚡) = corroboration, not a separate hype field.** As of the June-2026 feed pass, the lightning meter is derived live from `corroboration_count`: `bolts = max(0, corroboration_count − 1)` (2 sources → ⚡, 3 → ⚡⚡, …). It grows as sources merge into one incident. The legacy `hype_meter` column is no longer read by the frontend. The **DEVELOPING** badge/banner was removed (it confused readers); `is_developing` drives the report-count line only — the feed is sorted newest-first (`incident_date DESC`, `id` tiebreaker), not by `is_developing`. The story timeline collapses same-date entries to a single node, and "time to verdict" is computed from the last verdict/sentencing/appeal entry in `source_timeline` (never `incident_date`). See `docs/FRONTEND_SPEC.md` and `lib/utils.ts` (`hypeFromSources`, `lastVerdictEntry`, `collapseTimelineByDate`).
 
 **The source count is counted, not trusted (2026-08-04).** "Corroborated by N

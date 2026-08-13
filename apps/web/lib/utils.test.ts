@@ -14,7 +14,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { sharedLocationLabel, dateFromUrl, toParagraphs, splitSentences, canonicalUrl, uniqueSources, foreignSourceNote } from './utils.ts'
+import { sharedLocationLabel, dateFromUrl, toParagraphs, splitSentences, canonicalUrl, uniqueSources, foreignSourceNote, spreadOverlappingPins, PIN_SPREAD_DEG } from './utils.ts'
 
 // ── sharedLocationLabel ─────────────────────────────────────────────────────
 // "Same location" alone is meaningless in a single-town archive. All 137
@@ -275,4 +275,39 @@ test('foreignSourceNote leaves Singapore outlets unmarked', () => {
 test('foreignSourceNote does not match a lookalike domain', () => {
   assert.equal(foreignSourceNote('https://malaymail.com.evil.example/x'), null)
   assert.equal(foreignSourceNote('not a url'), null)
+})
+
+// ── spreadOverlappingPins ───────────────────────────────────────────────────
+test('spreadOverlappingPins leaves a solitary pin exactly where it is', () => {
+  const f = { geometry: { coordinates: [103.8350, 1.4295] as [number, number] } }
+  const out = spreadOverlappingPins([f])
+  assert.deepStrictEqual(out[0].geometry.coordinates, [103.8350, 1.4295])
+})
+
+test('spreadOverlappingPins separates pins sharing one coordinate', () => {
+  const at = (id: string) => ({ id, geometry: { coordinates: [103.8350, 1.4295] as [number, number] } })
+  const out = spreadOverlappingPins([at('a'), at('b'), at('c')])
+  const keys = new Set(out.map(f => f.geometry.coordinates.join(',')))
+  assert.strictEqual(keys.size, 3, 'all three must end up distinct/clickable')
+  // Every pin stays within the spread radius of its true address.
+  for (const f of out) {
+    const [lng, lat] = f.geometry.coordinates
+    const d = Math.hypot(lng - 103.8350, lat - 1.4295)
+    assert.ok(d <= PIN_SPREAD_DEG * 1.0001, `moved ${d} — outside the block footprint`)
+  }
+  assert.strictEqual(out.length, 3)
+})
+
+test('spreadOverlappingPins is deterministic across renders', () => {
+  const at = (id: string) => ({ id, geometry: { coordinates: [103.84, 1.43] as [number, number] } })
+  const a = spreadOverlappingPins([at('x'), at('y')])
+  const b = spreadOverlappingPins([at('x'), at('y')])
+  assert.deepStrictEqual(a.map(f => f.geometry.coordinates), b.map(f => f.geometry.coordinates))
+})
+
+test('spreadOverlappingPins keeps genuinely distinct coordinates untouched', () => {
+  const f1 = { geometry: { coordinates: [103.8350, 1.4295] as [number, number] } }
+  const f2 = { geometry: { coordinates: [103.8460, 1.4175] as [number, number] } }
+  const out = spreadOverlappingPins([f1, f2])
+  assert.deepStrictEqual(out.map(f => f.geometry.coordinates), [f1, f2].map(f => f.geometry.coordinates))
 })

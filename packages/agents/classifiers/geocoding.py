@@ -74,37 +74,49 @@ _STREET_RE = re.compile(
 # "yishun park"). Matching is case-insensitive substring over block_number,
 # area_name and title ONLY (never the summary: every dagger story mentions
 # "taken to Khoo Teck Puat Hospital", which would mis-pin them at the hospital).
+#
+# Every query below is verified to resolve inside the Yishun box. Eight of them
+# silently did not (Aug 2026): YISHUN INTEGRATED TRANSPORT HUB, YISHUN PARK
+# HAWKER CENTRE, YISHUN STADIUM, YISHUN PUBLIC LIBRARY, CHONG PANG MARKET AND
+# FOOD CENTRE, JUNCTION NINE, NORTH VIEW PRIMARY SCHOOL and ORCHID COUNTRY CLUB
+# all returned nothing, so an incident naming one of those places fell through
+# to "no pin" with no error anywhere. A dead alias is invisible — if you add
+# one, check it against OneMap first.
 _POI_ALIASES: list[tuple[str, str]] = [
     ("khoo teck puat",                  "KHOO TECK PUAT HOSPITAL"),
     ("yishun community hospital",       "YISHUN COMMUNITY HOSPITAL"),
     ("yishun polyclinic",               "YISHUN POLYCLINIC"),
     ("northpoint",                      "NORTHPOINT CITY"),
-    ("yishun integrated transport hub", "YISHUN INTEGRATED TRANSPORT HUB"),
-    ("yishun bus interchange",          "YISHUN INTEGRATED TRANSPORT HUB"),
-    ("yishun interchange",              "YISHUN INTEGRATED TRANSPORT HUB"),
+    ("yishun integrated transport hub", "YISHUN BUS INTERCHANGE"),
+    ("yishun bus interchange",          "YISHUN BUS INTERCHANGE"),
+    ("yishun interchange",              "YISHUN BUS INTERCHANGE"),
+    ("bus interchange",                 "YISHUN BUS INTERCHANGE"),
     ("yishun mrt",                      "YISHUN MRT STATION"),
     ("safra yishun",                    "SAFRA YISHUN"),
-    ("yishun park hawker",              "YISHUN PARK HAWKER CENTRE"),
+    ("yishun safra",                    "SAFRA YISHUN"),
+    ("yishun park hawker",              "YISHUN HAWKER CENTRE"),
     ("yishun park connector",           "YISHUN PARK"),
     ("yishun park",                     "YISHUN PARK"),
+    ("yishun boardwalk",                "YISHUN BOARDWALK"),
     ("yishun pond",                     "YISHUN POND"),
-    ("yishun stadium",                  "YISHUN STADIUM"),
+    ("yishun stadium",                  "YISHUN STADIUM SINGAPORE"),
     ("yishun swimming",                 "YISHUN SWIMMING COMPLEX"),
     ("yishun sports hall",              "YISHUN SPORTS HALL"),
-    ("yishun public library",           "YISHUN PUBLIC LIBRARY"),
-    ("yishun library",                  "YISHUN PUBLIC LIBRARY"),
-    ("chong pang",                      "CHONG PANG MARKET AND FOOD CENTRE"),
+    ("yishun public library",           "YISHUN LIBRARY"),
+    ("yishun library",                  "YISHUN LIBRARY"),
+    ("chong pang city",                 "CHONG PANG CITY"),
+    ("chong pang",                      "CHONG PANG MARKET"),
     ("wisteria",                        "WISTERIA MALL"),
-    ("junction nine",                   "JUNCTION NINE"),
-    ("junction 9",                      "JUNCTION NINE"),
+    ("junction nine",                   "JUNCTION 9"),
+    ("junction 9",                      "JUNCTION 9"),
     ("north gaia",                      "NORTH GAIA"),
     ("yishun 10",                       "YISHUN 10"),
     ("yishun ten",                      "YISHUN 10"),
-    ("gv yishun",                       "YISHUN 10"),
-    ("north view primary",              "NORTH VIEW PRIMARY SCHOOL"),
+    ("gv yishun",                       "GV YISHUN"),
+    ("north view primary",              "NORTH VIEW PRIMARY"),
     ("chung cheng high",                "CHUNG CHENG HIGH SCHOOL YISHUN"),
     ("yishun industrial park",          "YISHUN INDUSTRIAL PARK A"),
-    ("orchid country club",             "ORCHID COUNTRY CLUB"),
+    ("orchid country club",             "ORCHID COUNTRY CLUB SINGAPORE"),
     ("yishun dam",                      "YISHUN DAM"),
     ("lower seletar",                   "LOWER SELETAR RESERVOIR PARK"),
 ]
@@ -164,6 +176,23 @@ def _find_block_in_text(*texts: Optional[str]) -> Optional[str]:
     return None
 
 
+def deslug(slug: Optional[str]) -> str:
+    """
+    "khoo-teck-puat-hospital-opens-yishun-2010" -> "khoo teck puat hospital
+    opens yishun 2010", so the slug can be mined like any other prose.
+
+    Callers append this to the title. The slug routinely names a location the
+    title does not: of 66 published incidents with no pin (Aug 2026) the great
+    majority were stories whose own subject was a named place — the hospital
+    opening, the Northpoint impounds, the Chong Pang worksite — where the
+    headline was written around the event and only the slug kept the name.
+    Safe to mine for the same reason the title is: it is a compressed headline,
+    naming the story's own subject, not a passing mention like a summary's
+    "taken to Khoo Teck Puat Hospital".
+    """
+    return (slug or "").replace("-", " ")
+
+
 def _find_poi(*texts: Optional[str]) -> Optional[str]:
     """First POI-whitelist match across the given strings → OneMap query."""
     combined = " ".join(t for t in texts if t).lower()
@@ -185,30 +214,45 @@ def _abbrev_street(street: str) -> str:
     return s
 
 
-def _onemap_lookup(query: str) -> Optional[tuple[float, float]]:
-    """Single OneMap query → (lat, lon) if the top hit is inside Yishun."""
-    try:
-        resp = httpx.get(
-            BASE_URL,
-            params={
-                "searchVal":      query,
-                "returnGeom":     "Y",
-                "getAddrDetails": "Y",
-                "pageNum":        "1",
-            },
-            timeout=8.0,
-        )
-        resp.raise_for_status()
-        results = resp.json().get("results", [])
-        if results:
+def _onemap_lookup(query: str, attempts: int = 3) -> Optional[tuple[float, float]]:
+    """
+    Single OneMap query → (lat, lon) if the top hit is inside Yishun.
+
+    Retries on TRANSPORT failure only, never on an empty result — a query that
+    genuinely matches nothing must fail fast so the next query in the priority
+    order gets its turn. The retry exists because a dropped request is
+    indistinguishable at the call site from "this place does not exist": during
+    a 66-row backfill, OneMap intermittently dropped requests and those rows
+    silently ended up with no pin even though their address was perfectly good.
+    """
+    for attempt in range(attempts):
+        try:
+            resp = httpx.get(
+                BASE_URL,
+                params={
+                    "searchVal":      query,
+                    "returnGeom":     "Y",
+                    "getAddrDetails": "Y",
+                    "pageNum":        "1",
+                },
+                timeout=8.0,
+            )
+            resp.raise_for_status()
+            results = resp.json().get("results", [])
+            if not results:
+                return None                       # real miss — don't retry
             lat = float(results[0]["LATITUDE"])
             lon = float(results[0]["LONGITUDE"])
             if _within_yishun(lat, lon):
                 logger.debug("Geocoded %r → (%.5f, %.5f)", query, lat, lon)
                 return (lat, lon)
             logger.debug("Out of Yishun bounds for %r: (%.5f, %.5f)", query, lat, lon)
-    except Exception as exc:
-        logger.debug("OneMap request failed for %r: %s", query, exc)
+            return None                           # real miss — don't retry
+        except Exception as exc:
+            logger.debug("OneMap request failed for %r (attempt %d): %s",
+                         query, attempt + 1, exc)
+            if attempt + 1 < attempts:
+                time.sleep(1.0 * (attempt + 1))
     return None
 
 
@@ -354,7 +398,9 @@ def _run_backfill(only_missing: bool) -> dict:
     for row in rows:
         coords, method = geocode_incident_with_method(
             row.get("block_number"), row.get("area_name"),
-            extra_text=row.get("title"), location_text=row.get("summary"),
+            # Title AND slug: the slug often carries the only place-name.
+            extra_text=f"{row.get('title') or ''} {deslug(row.get('slug'))}",
+            location_text=row.get("summary"),
         )
         new_lat, new_lon = coords if coords else (None, None)
         try:
