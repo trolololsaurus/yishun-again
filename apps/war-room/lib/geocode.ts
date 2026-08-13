@@ -28,38 +28,42 @@ const STREET_RE = new RegExp(
 // ONLY (never the summary: dagger stories routinely mention the hospital
 // victims were taken to, which would mis-pin them there).
 const POI_ALIASES: Array<[string, string]> = [
-  ['khoo teck puat',                  'KHOO TECK PUAT HOSPITAL'],
-  ['yishun community hospital',       'YISHUN COMMUNITY HOSPITAL'],
-  ['yishun polyclinic',               'YISHUN POLYCLINIC'],
-  ['northpoint',                      'NORTHPOINT CITY'],
-  ['yishun integrated transport hub', 'YISHUN INTEGRATED TRANSPORT HUB'],
-  ['yishun bus interchange',          'YISHUN INTEGRATED TRANSPORT HUB'],
-  ['yishun interchange',              'YISHUN INTEGRATED TRANSPORT HUB'],
-  ['yishun mrt',                      'YISHUN MRT STATION'],
-  ['safra yishun',                    'SAFRA YISHUN'],
-  ['yishun park hawker',              'YISHUN PARK HAWKER CENTRE'],
-  ['yishun park connector',           'YISHUN PARK'],
-  ['yishun park',                     'YISHUN PARK'],
-  ['yishun pond',                     'YISHUN POND'],
-  ['yishun stadium',                  'YISHUN STADIUM'],
-  ['yishun swimming',                 'YISHUN SWIMMING COMPLEX'],
-  ['yishun sports hall',              'YISHUN SPORTS HALL'],
-  ['yishun public library',           'YISHUN PUBLIC LIBRARY'],
-  ['yishun library',                  'YISHUN PUBLIC LIBRARY'],
-  ['chong pang',                      'CHONG PANG MARKET AND FOOD CENTRE'],
-  ['wisteria',                        'WISTERIA MALL'],
-  ['junction nine',                   'JUNCTION NINE'],
-  ['junction 9',                      'JUNCTION NINE'],
-  ['north gaia',                      'NORTH GAIA'],
-  ['yishun 10',                       'YISHUN 10'],
-  ['yishun ten',                      'YISHUN 10'],
-  ['gv yishun',                       'YISHUN 10'],
-  ['north view primary',              'NORTH VIEW PRIMARY SCHOOL'],
-  ['chung cheng high',                'CHUNG CHENG HIGH SCHOOL YISHUN'],
-  ['yishun industrial park',          'YISHUN INDUSTRIAL PARK A'],
-  ['orchid country club',             'ORCHID COUNTRY CLUB'],
-  ['yishun dam',                      'YISHUN DAM'],
-  ['lower seletar',                   'LOWER SELETAR RESERVOIR PARK'],
+  ['khoo teck puat',                      'KHOO TECK PUAT HOSPITAL'],
+  ['yishun community hospital',           'YISHUN COMMUNITY HOSPITAL'],
+  ['yishun polyclinic',                   'YISHUN POLYCLINIC'],
+  ['northpoint',                          'NORTHPOINT CITY'],
+  ['yishun integrated transport hub',     'YISHUN BUS INTERCHANGE'],
+  ['yishun bus interchange',              'YISHUN BUS INTERCHANGE'],
+  ['yishun interchange',                  'YISHUN BUS INTERCHANGE'],
+  ['bus interchange',                     'YISHUN BUS INTERCHANGE'],
+  ['yishun mrt',                          'YISHUN MRT STATION'],
+  ['safra yishun',                        'SAFRA YISHUN'],
+  ['yishun safra',                        'SAFRA YISHUN'],
+  ['yishun park hawker',                  'YISHUN HAWKER CENTRE'],
+  ['yishun park connector',               'YISHUN PARK'],
+  ['yishun park',                         'YISHUN PARK'],
+  ['yishun boardwalk',                    'YISHUN BOARDWALK'],
+  ['yishun pond',                         'YISHUN POND'],
+  ['yishun stadium',                      'YISHUN STADIUM SINGAPORE'],
+  ['yishun swimming',                     'YISHUN SWIMMING COMPLEX'],
+  ['yishun sports hall',                  'YISHUN SPORTS HALL'],
+  ['yishun public library',               'YISHUN LIBRARY'],
+  ['yishun library',                      'YISHUN LIBRARY'],
+  ['chong pang city',                     'CHONG PANG CITY'],
+  ['chong pang',                          'CHONG PANG MARKET'],
+  ['wisteria',                            'WISTERIA MALL'],
+  ['junction nine',                       'JUNCTION 9'],
+  ['junction 9',                          'JUNCTION 9'],
+  ['north gaia',                          'NORTH GAIA'],
+  ['yishun 10',                           'YISHUN 10'],
+  ['yishun ten',                          'YISHUN 10'],
+  ['gv yishun',                           'GV YISHUN'],
+  ['north view primary',                  'NORTH VIEW PRIMARY'],
+  ['chung cheng high',                    'CHUNG CHENG HIGH SCHOOL YISHUN'],
+  ['yishun industrial park',              'YISHUN INDUSTRIAL PARK A'],
+  ['orchid country club',                 'ORCHID COUNTRY CLUB SINGAPORE'],
+  ['yishun dam',                          'YISHUN DAM'],
+  ['lower seletar',                       'LOWER SELETAR RESERVOIR PARK'],
 ]
 
 const withinYishun = (lat: number, lon: number) =>
@@ -152,6 +156,16 @@ async function onemapLookup(query: string): Promise<[number, number] | null> {
  * Failure must never block an approval — callers publish with null coords
  * (no pin) when this returns null.
  */
+/**
+ * "khoo-teck-puat-hospital-opens-yishun-2010" -> spaced prose, so the slug can
+ * be mined for a place-name like the title is. The slug routinely carries the
+ * only location a story has: its headline is written around the event while
+ * the slug keeps the place. Callers pass `${title} ${deslug(slug)}`.
+ */
+export function deslug(slug?: string | null): string {
+  return (slug ?? '').replace(/-/g, ' ')
+}
+
 export async function geocodeIncident(
   blockNumber?: string | null,
   areaName?: string | null,

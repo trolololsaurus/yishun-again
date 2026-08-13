@@ -19,7 +19,7 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { slugify } from '@/lib/utils'
-import { geocodeIncident } from '@/lib/geocode'
+import { geocodeIncident, deslug } from '@/lib/geocode'
 
 const MAX_BULK = 200   // safety cap per call
 
@@ -159,7 +159,7 @@ export async function POST(request: Request) {
     let latitude: number | null = null
     let longitude: number | null = null
     try {
-      const coords = await geocodeIncident(blockNumber, areaName, title)
+      const coords = await geocodeIncident(blockNumber, areaName, `${title} ${deslug(slug)}`)
       if (coords) [latitude, longitude] = coords
     } catch { /* publish without pin */ }
 

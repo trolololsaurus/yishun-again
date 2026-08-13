@@ -4,7 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useRouter }         from 'next/navigation'
 import type { FilterState, MapFeature } from '@/lib/types'
-import { pinColor, classIcon, classLabel, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, escapeHtml, matchesClassFilter } from '@/lib/utils'
+import { pinColor, classIcon, classLabel, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, escapeHtml, matchesClassFilter, spreadOverlappingPins } from '@/lib/utils'
 
 // OpenFreeMap Liberty — keyless, served via Cloudflare CDN. The env var lets us
 // override per-environment, but the hardcoded fallback guarantees the map still
@@ -102,7 +102,11 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
     for (const { marker } of markersRef.current) marker.remove()
     markersRef.current = []
 
-    for (const f of list) {
+    // Fan out co-located pins so each one stays clickable. Done here rather
+    // than in the map API or page.tsx because both feed markers through this
+    // one function, and because the stored coordinate must stay the true
+    // address — the spread is presentation, not data.
+    for (const f of spreadOverlappingPins(list)) {
       const { classification, custom_label, title, slug, id } = f.properties
 
       // Emoji-only pin: no circle badge. Centering an emoji inside a circle is

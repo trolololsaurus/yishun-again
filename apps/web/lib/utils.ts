@@ -549,3 +549,54 @@ export function foreignSourceNote(url: string): string | null {
   const isForeign = FOREIGN_LINKED_DOMAINS.some(d => host === d || host.endsWith('.' + d))
   return isForeign ? '(foreign-linked news source)' : null
 }
+
+// ── Map pin de-stacking ─────────────────────────────────────────────────────
+// Incidents at one address (a block with five stories, a street centroid shared
+// by everything on that road) resolve to the SAME coordinate, so their markers
+// land exactly on top of each other and only the last one is clickable — the
+// rest are unreachable even though they are on the map.
+//
+// Members of a stack are spread evenly around a small circle centred on the
+// true point. The offset is DERIVED FROM POSITION IN THE STACK, not random:
+// a random jitter would move every pin on each re-render (year change, filter
+// change), so a pin the user is reaching for would slide out from under the
+// cursor. Solitary pins are never moved.
+//
+// PIN_SPREAD_DEG ~= 20 m at Singapore's latitude (1 deg lat ~= 110.6 km), well
+// inside the footprint of an HDB block, so a spread pin still sits on its own
+// building rather than drifting to a neighbouring address.
+export const PIN_SPREAD_DEG = 0.00018
+
+export function spreadOverlappingPins<T extends { geometry: { coordinates: [number, number] } }>(
+  features: T[],
+): T[] {
+  const groups = new Map<string, T[]>()
+  for (const f of features) {
+    // 5dp ~= 1 m: finer than that and genuinely-distinct addresses would be
+    // treated as a stack; coarser and true duplicates would be missed.
+    const [lng, lat] = f.geometry.coordinates
+    const key = `${lng.toFixed(5)},${lat.toFixed(5)}`
+    const g = groups.get(key)
+    if (g) g.push(f); else groups.set(key, [f])
+  }
+
+  const out: T[] = []
+  for (const group of groups.values()) {
+    if (group.length === 1) { out.push(group[0]); continue }
+    group.forEach((f, i) => {
+      const angle = (2 * Math.PI * i) / group.length
+      const [lng, lat] = f.geometry.coordinates
+      out.push({
+        ...f,
+        geometry: {
+          ...f.geometry,
+          coordinates: [
+            lng + PIN_SPREAD_DEG * Math.cos(angle),
+            lat + PIN_SPREAD_DEG * Math.sin(angle),
+          ] as [number, number],
+        },
+      })
+    })
+  }
+  return out
+}

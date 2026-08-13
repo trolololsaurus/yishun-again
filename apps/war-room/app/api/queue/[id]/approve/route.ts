@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { validateUUID, slugify } from '@/lib/utils'
-import { geocodeIncident } from '@/lib/geocode'
+import { geocodeIncident, deslug } from '@/lib/geocode'
 import { generateIncidentArt } from '@/lib/artGenerate'
 import type { ApproveBody, Classification } from '@/lib/types'
 
@@ -97,7 +97,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   let latitude: number | null = null
   let longitude: number | null = null
   try {
-    const coords = await geocodeIncident(blockNumber, areaName, title)
+    const coords = await geocodeIncident(blockNumber, areaName, `${title} ${deslug(slug)}`)
     if (coords) [latitude, longitude] = coords
   } catch (e) {
     console.error('approve — geocoding failed (publishing without pin):', e)
