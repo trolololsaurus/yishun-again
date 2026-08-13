@@ -28,7 +28,7 @@ The rule this file pins has two halves, and they are NOT the same rule:
 Collapsing those two into one rule in either direction is the regression this
 file exists to stop.
 """
-from classifiers.geocoding import build_geocode_queries, _find_block_in_text
+from classifiers.geocoding import build_geocode_queries, _find_block_in_text, deslug, _POI_ALIASES
 
 passed = failed = 0
 
@@ -109,6 +109,47 @@ check("column block+street still produces block queries first",
       methods(q)[0] == "block" and "349 YISHUN AVE 11" in texts(q))
 q = build_geocode_queries(None, "Yishun Ring Road")
 check("street column alone still produces a street query", methods(q) == ["street"])
+
+# -- Slug mining (Aug 2026): the place-name often lives ONLY in the slug -------
+# A headline is written around the event while the slug keeps the location, so
+# callers pass f"{title} {deslug(slug)}". Six published incidents had no pin
+# purely because of this.
+check("deslug turns a slug into minable prose",
+      deslug("khoo-teck-puat-hospital-opens-yishun-2010")
+      == "khoo teck puat hospital opens yishun 2010")
+check("deslug tolerates None", deslug(None) == "")
+
+_title = "Yishun gets its own hospital after north residents spent decades travelling"
+q = build_geocode_queries(None, "Yishun", _title)
+check("title alone finds no POI for the hospital story", q == [])
+q = build_geocode_queries(
+    None, "Yishun", _title + " " + deslug("khoo-teck-puat-hospital-opens-yishun-2010"))
+check("slug supplies the POI the title lacks", methods(q) == ["poi"])
+check("slug-mined POI is the hospital", "KHOO TECK PUAT HOSPITAL" in texts(q))
+
+q = build_geocode_queries(
+    None, "Yishun",
+    "PMD fire in a corridor " + deslug("pmd-fire-block-756-yishun-street-72-oct-2024"))
+check("slug supplies block AND street together", methods(q)[0] == "block")
+check("slug-mined block+street reaches the query",
+      any("756" in t and "YISHUN ST 72" in t for t in texts(q)))
+
+# A slug's trailing date must never be read as an address.
+check("a slug date suffix is not mistaken for a block",
+      build_geocode_queries(None, "Yishun", deslug("yishun-hailstones-2018")) == [])
+
+# -- Every POI alias must map to a query verified against OneMap --------------
+# Eight aliases silently pointed at queries OneMap returns nothing for, so an
+# incident naming one of those places fell through to "no pin" with no error
+# anywhere. A dead alias is invisible; this pins the ones known to be dead.
+_DEAD = {
+    "YISHUN INTEGRATED TRANSPORT HUB", "YISHUN PARK HAWKER CENTRE",
+    "YISHUN STADIUM", "YISHUN PUBLIC LIBRARY",
+    "CHONG PANG MARKET AND FOOD CENTRE", "JUNCTION NINE",
+    "NORTH VIEW PRIMARY SCHOOL", "ORCHID COUNTRY CLUB",
+}
+check("no POI alias points at a known-dead OneMap query",
+      not any(query in _DEAD for _, query in _POI_ALIASES))
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

@@ -786,8 +786,41 @@ state, including "NSF dies after being pinned down at Block 279 Yishun Street
 the summary**, and that asymmetry is deliberate: an address is a specific
 phrase, whereas every dagger story mentions "taken to Khoo Teck Puat Hospital"
 and mining POIs from prose would pin them all at the hospital. Rows that name no
-location anywhere still get NO pin — never the Yishun centroid. Guard:
-`test_geocode_address_mining.py`.
+location anywhere still get NO pin — never the Yishun centroid.
+
+**Since 2026-08-13 the SLUG is mined too, and it is often the only place the
+location survives.** A headline is written around the event while the slug keeps
+the place: `khoo-teck-puat-hospital-opens-yishun-2010` has the title "Yishun gets
+its own hospital after north residents spent decades travelling", which names
+nothing geocodable. Callers pass `f"{title} {deslug(slug)}"`, so the existing
+POI, block and street miners all see it — mining the slug is safe for the same
+reason the title is (a compressed headline naming the story's own subject), and
+the summary remains POI-exempt. Two other pin-losers were closed at the same
+time, both of which failed **silently**:
+- **Eight POI whitelist entries were dead queries** (`YISHUN INTEGRATED
+  TRANSPORT HUB`, `YISHUN PARK HAWKER CENTRE`, `YISHUN STADIUM`, `YISHUN PUBLIC
+  LIBRARY`, `CHONG PANG MARKET AND FOOD CENTRE`, `JUNCTION NINE`, `NORTH VIEW
+  PRIMARY SCHOOL`, `ORCHID COUNTRY CLUB`). OneMap returned nothing for any of
+  them, so an incident naming one of those places fell through to "no pin" with
+  no error anywhere. **Verify a new alias against OneMap before adding it** — a
+  dead alias is invisible.
+- **A dropped OneMap request was indistinguishable from "no such place".**
+  `_onemap_lookup` now retries transport failures (3 attempts, backoff) and
+  never retries an empty result, so a genuine miss still falls straight through
+  to the next query in the priority order.
+
+Guards: `test_geocode_address_mining.py` (29 checks, incl. slug mining and a
+dead-alias assertion).
+
+**Co-located pins are fanned out at RENDER time, not in the data.** Several
+incidents at one block resolve to the same coordinate, so their markers stacked
+and only the last was clickable. `spreadOverlappingPins` (`apps/web/lib/utils.ts`,
+called in `IncidentMap.renderMarkers`, which both the SSR and year-change paths
+flow through) spreads a stack around a ~20 m circle — inside the block
+footprint. The offset derives from position in the stack, **not** randomness: a
+random jitter moves every pin on each re-render, so a pin the user is reaching
+for slides out from under the cursor. The stored coordinate stays the true
+address. Guard: four cases in `apps/web/lib/utils.test.ts`.
 
 **A `same_location` related link names the location.** `sharedLocationLabel`
 intersects the two incidents' own `area_name`/`block_number` — block-level when
