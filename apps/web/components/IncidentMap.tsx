@@ -13,6 +13,114 @@ import { pinColor, classIcon, classLabel, classTooltip, HYPE_TOOLTIP, severityDi
 const FALLBACK_MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty'
 const MAP_STYLE = process.env.NEXT_PUBLIC_MAPLIBRE_STYLE || FALLBACK_MAP_STYLE
 
+// ── Dark-green recolour of the Liberty basemap ──────────────────────────────
+// Liberty ships a light street map: bright buildings, white roads, pale land.
+// The coral/teal/yellow pins have almost no contrast against it and the panel
+// chrome around the map is dark, so the page reads as two unrelated halves.
+// Repainting is done here rather than by switching styles because Liberty is
+// keyless and CDN-backed — the tinted alternatives are not.
+//
+// Liberty has 111 layers and every one of them ships a light colour, including
+// ~50 near-white tunnel/bridge/aeroway variants that a hand-written list will
+// always drift out of sync with. So the recolour walks the live style and
+// assigns by layer id instead: whatever upstream adds gets tinted too, and no
+// entry can go stale. Order matters — the first pattern that matches wins, so
+// casings are tested before the roads they sit under.
+const MAP_COLORS = {
+  ground:      '#245039',  // base earth
+  residential: '#295740',  // built-up blocks, a step above the base
+  green:       '#1E4A34',  // parks, woodland, pitches
+  water:       '#16384A',  // teal, so it separates from parkland
+  building:    '#2C5C45',  // low contrast: buildings are texture, not subject
+  roadMajor:   '#7A5140',  // dark warm brown
+  roadMinor:   '#5A3E31',
+  casing:      '#38261E',
+  rail:        '#3F3A2E',
+  boundary:    '#2E5540',
+  label:       '#CFDDD2',
+  labelHalo:   '#12301F',
+}
+
+// Icon layers Liberty draws in bright blue over the whole town. They are the
+// single biggest competitor to the incident pins — at Yishun zoom there are
+// dozens of them, all more saturated than the map itself — and the pins are
+// the only thing on this map anyone came to look at, so they are hidden
+// outright rather than dimmed.
+const HIDDEN_LAYER_RE = /^(poi_|airport|road_one_way_arrow|highway-shield|road_shield)/
+
+function colorForLayer(id: string): string | null {
+  if (HIDDEN_LAYER_RE.test(id)) return null
+  if (/casing|outline|hatching/.test(id))            return MAP_COLORS.casing
+  if (/water|waterway/.test(id))                     return MAP_COLORS.water
+  if (/rail/.test(id))                               return MAP_COLORS.rail
+  if (/motorway|trunk|primary/.test(id))             return MAP_COLORS.roadMajor
+  if (/road_|street|tunnel_|bridge_|aeroway_(runway|taxiway)/.test(id))
+    return MAP_COLORS.roadMinor
+  if (/building/.test(id))                           return MAP_COLORS.building
+  if (/residential/.test(id))                        return MAP_COLORS.residential
+  if (/park|wood|grass|forest|pitch|cemetery|wetland/.test(id))
+    return MAP_COLORS.green
+  if (/landcover|landuse|aeroway/.test(id))          return MAP_COLORS.ground
+  if (/boundary/.test(id))                           return MAP_COLORS.boundary
+  return null
+}
+
+// setPaintProperty on a missing layer does NOT throw — it fires an 'error'
+// EVENT, so a try/catch catches nothing and the map's own error handler
+// reports a style failure on every frame. Walking the live layer list avoids
+// the problem entirely: every id here is one the style actually has.
+function tintMap(map: any) {
+  const style = map.getStyle?.()
+  if (!style?.layers) return
+
+  for (const layer of style.layers) {
+    const { id, type } = layer
+
+    if (HIDDEN_LAYER_RE.test(id)) {
+      map.setLayoutProperty(id, 'visibility', 'none')
+      continue
+    }
+
+    if (type === 'symbol') {
+      // Keep road and place names; light text on a dark halo so they stay
+      // readable over both the green ground and the brown roads.
+      map.setPaintProperty(id, 'text-color', MAP_COLORS.label)
+      map.setPaintProperty(id, 'text-halo-color', MAP_COLORS.labelHalo)
+      map.setPaintProperty(id, 'text-halo-width', 1.2)
+      continue
+    }
+
+    if (type === 'background') {
+      map.setPaintProperty(id, 'background-color', MAP_COLORS.ground)
+      continue
+    }
+
+    const color = colorForLayer(id)
+    if (!color) continue
+
+    if (type === 'fill') {
+      // Pattern fills (wetland reeds, pedestrian areas) ignore fill-color
+      // entirely — the sprite carries its own light pixels, so recolouring
+      // does nothing and the patch stays a bright hole in the dark map.
+      // Fading it is the only lever short of hiding the feature.
+      if (layer.paint?.['fill-pattern']) {
+        map.setPaintProperty(id, 'fill-opacity', 0.12)
+        continue
+      }
+      map.setPaintProperty(id, 'fill-color', color)
+      // Liberty outlines some fills in near-white; left alone it draws a bright
+      // grid over the dark ground.
+      if (layer.paint?.['fill-outline-color']) {
+        map.setPaintProperty(id, 'fill-outline-color', MAP_COLORS.casing)
+      }
+    } else if (type === 'line') {
+      map.setPaintProperty(id, 'line-color', color)
+    } else if (type === 'fill-extrusion') {
+      map.setPaintProperty(id, 'fill-extrusion-color', MAP_COLORS.building)
+    }
+  }
+}
+
 interface Props {
   features:     MapFeature[]
   activeFilter: FilterState
@@ -194,6 +302,7 @@ export function IncidentMap({ features, activeFilter, selectedYear }: Props) {
         clearTimeout(loadTimeout)
         loadedRef.current = true
         setMapStatus('ready')
+        tintMap(map)
         map.resize()
         setTimeout(() => { if (!destroyed) map.resize() }, 200)
 
