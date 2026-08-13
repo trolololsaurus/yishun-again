@@ -32,7 +32,7 @@ export default function AboutPage() {
           agrees on why the reputation exists. Everybody agrees it&apos;s earned.
         </p>
         <p>
-          <strong className="text-amber">The Devil&apos;s Ring</strong> — one circular stretch of
+          <strong className="text-amber">The Devil&apos;s Ring.</strong> One circular stretch of
           tarmac that shows up in this archive more than anywhere else in the estate. We didn&apos;t
           name it that to be dramatic. We named it that because the data kept forcing our hand.
         </p>
