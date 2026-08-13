@@ -40,7 +40,7 @@ export default function AboutPage() {
           <strong className="text-amber">How this works.</strong> Our AI pipeline scrapes public
           news, drafts each incident, and hands it to a human for review. Nothing goes live
           unreviewed. No rumours. Every entry is backed by at least one verifiable public source.
-          We&apos;re satirical about Yishun&apos;s reputation — not about the facts.
+          We&apos;re satirical about Yishun&apos;s reputation, and we back it with verifiable facts.
         </p>
         <p>
           <strong className="text-amber">The Chaos Index.</strong> Every incident is scored:
