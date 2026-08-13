@@ -32,9 +32,9 @@ const MAP_COLORS = {
   green:       '#1E4A34',  // parks, woodland, pitches
   water:       '#16384A',  // teal, so it separates from parkland
   building:    '#2C5C45',  // low contrast: buildings are texture, not subject
-  roadMajor:   '#7A5140',  // dark warm brown
-  roadMinor:   '#5A3E31',
-  casing:      '#38261E',
+  roadMajor:   '#4A4E4C',  // dark grey, faintly green-tinted to sit in the palette
+  roadMinor:   '#3C4240',  // a step darker so the hierarchy still reads
+  casing:      '#2A2F2D',  // darkest, keeps the network legible at low zoom
   rail:        '#3F3A2E',
   boundary:    '#2E5540',
   label:       '#CFDDD2',
@@ -83,7 +83,7 @@ function tintMap(map: any) {
 
     if (type === 'symbol') {
       // Keep road and place names; light text on a dark halo so they stay
-      // readable over both the green ground and the brown roads.
+      // readable over both the green ground and the grey roads.
       map.setPaintProperty(id, 'text-color', MAP_COLORS.label)
       map.setPaintProperty(id, 'text-halo-color', MAP_COLORS.labelHalo)
       map.setPaintProperty(id, 'text-halo-width', 1.2)
