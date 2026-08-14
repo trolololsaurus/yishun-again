@@ -4,7 +4,7 @@ Yishun - You'll never find a more wretched hive of scum and villainy.
 A satirical, semi-autonomous incident archive for Yishun, Singapore. An agent
 pipeline scrapes Singapore news sources, filters and drafts incident write-ups,
 and either auto-publishes them or queues them for operator review in a private
-CMS (the War Room).
+CMS.
 
 **Core constraint:** every published incident links to a verifiable source, and
 that link points at the **publisher** — never an aggregator or a redirect
