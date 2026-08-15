@@ -39,8 +39,8 @@ export default async function ReportsPage() {
   if (error) {
     return (
       <div>
-        <h1 className="font-body font-bold text-yellow text-lg mb-6">MONTHLY REPORTS</h1>
-        <div className="font-body text-red text-sm">
+        <h1 className="font-bold text-yellow text-lg mb-6">MONTHLY REPORTS</h1>
+        <div className="text-red text-sm">
           Failed to load monthly reports: {error.message}
         </div>
       </div>
@@ -52,10 +52,10 @@ export default async function ReportsPage() {
   if (reports.length === 0) {
     return (
       <div>
-        <h1 className="font-body font-bold text-yellow text-lg mb-6">MONTHLY REPORTS</h1>
+        <h1 className="font-bold text-yellow text-lg mb-6">MONTHLY REPORTS</h1>
         <div className="border border-border bg-surface p-6 max-w-2xl">
-          <div className="font-body text-text-primary text-sm mb-2">No reports yet.</div>
-          <div className="font-body text-text-secondary text-sm leading-relaxed">
+          <div className="text-text-primary text-sm mb-2">No reports yet.</div>
+          <div className="text-text-secondary text-sm leading-relaxed">
             The orchestrator generates one report on the 1st of each month, covering the
             previous 30 days of ingestion, publishing, operator workload, learning and
             backend health. It is emailed to the operator and archived here.
@@ -68,19 +68,19 @@ export default async function ReportsPage() {
   return (
     <div>
       <div className="flex items-baseline gap-4 mb-2">
-        <h1 className="font-body font-bold text-yellow text-lg">MONTHLY REPORTS</h1>
-        <span className="font-body text-text-secondary text-sm">
+        <h1 className="font-bold text-yellow text-lg">MONTHLY REPORTS</h1>
+        <span className="text-text-secondary text-sm">
           {reports.length} archived
         </span>
       </div>
-      <p className="font-body text-text-secondary text-sm mb-6">
+      <p className="text-text-secondary text-sm mb-6">
         Generated on the 1st of each month, covering the previous 30 days. Newest first.
       </p>
 
       <div className="overflow-x-auto">
-        <table className="w-full font-body text-sm border-collapse">
+        <table className="w-full text-sm border-collapse">
           <thead>
-            <tr className="border-b border-border text-text-secondary" style={{ fontSize: '10px' }}>
+            <tr className="border-b border-border text-text-secondary text-xs">
               <th className="text-left py-2 pr-4 uppercase tracking-widest">Period</th>
               <th className="text-right py-2 pr-4 uppercase tracking-widest">Published</th>
               <th className="text-right py-2 pr-4 uppercase tracking-widest">Auto</th>
@@ -103,7 +103,7 @@ export default async function ReportsPage() {
                       {fmtPeriod(r.period_start, r.period_end)}
                     </Link>
                     {gaps > 0 && (
-                      <div className="text-text-secondary mt-1" style={{ fontSize: '10px' }}>
+                      <div className="text-text-secondary mt-1 text-xs">
                         {gaps} data gap{gaps === 1 ? '' : 's'}
                       </div>
                     )}

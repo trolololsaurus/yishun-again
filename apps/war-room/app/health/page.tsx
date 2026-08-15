@@ -30,11 +30,6 @@ const STATUS_CLS: Record<string, string> = {
   error:   'text-red',
 }
 
-// A health row is only worth showing while it is fresh. Without this window the
-// page happily rendered a green dot from a writer that had stopped running —
-// and after July 2026 it would also show the retired writer's display-name rows
-// ("Stomp") next to the live pass's stable-id rows ("stomp") as if they were
-// two different sources.
 const HEALTH_WINDOW_DAYS = 7
 
 export default async function HealthPage() {
@@ -74,13 +69,12 @@ export default async function HealthPage() {
 
   if (error) {
     return (
-      <div className="font-body text-red text-sm">
+      <div className="text-red text-sm">
         Failed to load health data: {error.message}
       </div>
     )
   }
 
-  // Latest row per source (rows ordered DESC — first hit per source is newest)
   const seen = new Set<string>()
   const scrapers: ScraperHealth[] = []
   for (const row of (allRows ?? [])) {
@@ -93,8 +87,8 @@ export default async function HealthPage() {
   if (scrapers.length === 0) {
     return (
       <div>
-        <h1 className="font-body font-bold text-yellow text-lg mb-6">PIPELINE HEALTH</h1>
-        <div className="font-body text-text-secondary text-sm">
+        <h1 className="font-bold text-yellow text-lg mb-6">PIPELINE HEALTH</h1>
+        <div className="text-text-secondary text-sm">
           No health data in the last {HEALTH_WINDOW_DAYS} days. Rows are written once per
           source per ingestion pass — if the daily pass is running, this should not be empty.
         </div>
@@ -115,28 +109,28 @@ export default async function HealthPage() {
   return (
     <div>
       <div className="flex items-baseline gap-4 mb-2">
-        <h1 className="font-body font-bold text-yellow text-lg">PIPELINE HEALTH</h1>
-        <span className="font-body text-text-secondary text-sm">as of {fetchedAt} SGT</span>
+        <h1 className="font-bold text-yellow text-lg">PIPELINE HEALTH</h1>
+        <span className="text-text-secondary text-sm">as of {fetchedAt} SGT</span>
       </div>
 
       {/* Lifecycle counters */}
       <div className="mb-8 border border-border bg-surface p-4">
-        <div className="font-body text-text-secondary mb-3 uppercase tracking-widest" style={{ fontSize: '10px' }}>
+        <div className="text-text-secondary mb-3 text-xs uppercase tracking-widest">
           Lifecycle
         </div>
-        <div className="flex gap-10 font-body text-sm">
+        <div className="flex gap-10 text-sm">
           <div>
-            <div className="text-text-secondary mb-1" style={{ fontSize: '10px' }}>DEVELOPING</div>
+            <div className="text-text-secondary mb-1 text-xs">DEVELOPING</div>
             <div className="text-cyan-400 font-bold text-base">{developingCount}</div>
           </div>
           <div>
-            <div className="text-text-secondary mb-1" style={{ fontSize: '10px' }}>NEAR TIMEOUT (&gt;150d)</div>
+            <div className="text-text-secondary mb-1 text-xs">NEAR TIMEOUT (&gt;150d)</div>
             <div className={`font-bold text-base ${approachingCount > 0 ? 'text-yellow' : 'text-text-secondary'}`}>
               {approachingCount}
             </div>
           </div>
           <div>
-            <div className="text-text-secondary mb-1" style={{ fontSize: '10px' }}>PATTERN ALERTS</div>
+            <div className="text-text-secondary mb-1 text-xs">PATTERN ALERTS</div>
             <div className={`font-bold text-base ${pendingAlerts > 0 ? 'text-orange-400' : 'text-text-secondary'}`}>
               {pendingAlerts}
             </div>
@@ -144,32 +138,55 @@ export default async function HealthPage() {
         </div>
       </div>
 
-      {/* Scraper status counters */}
-      <div className="flex gap-8 mb-8 font-body text-sm">
-        <span className="text-green font-bold">🟢 HEALTHY ({green})</span>
-        <span className="text-yellow font-bold">🟡 WARNING ({yellow})</span>
-        <span className="text-red font-bold">🔴 ERROR ({red})</span>
+      {/* Status legend + explainer */}
+      <div className="mb-6">
+        <div className="flex gap-8 mb-3 text-sm">
+          <span className="text-green font-bold">🟢 HEALTHY ({green})</span>
+          <span className="text-yellow font-bold">🟡 WARNING ({yellow})</span>
+          <span className="text-red font-bold">🔴 ERROR ({red})</span>
+        </div>
+        <div className="bg-surface border border-border p-4 text-xs text-text-secondary leading-relaxed max-w-2xl space-y-2">
+          <p>
+            <span className="text-green font-bold">HEALTHY</span> — scraper ran
+            and returned results normally in its last pass.
+          </p>
+          <p>
+            <span className="text-yellow font-bold">WARNING</span> — the source
+            returned 0 Yishun-matching items for 30+ consecutive runs. Usually
+            normal (most outlets don't cover Yishun daily), not a fault.
+          </p>
+          <p>
+            <span className="text-red font-bold">ERROR</span> — the scraper
+            failed: network timeout, HTTP error, blocked by the source, or a
+            parsing failure. The reason column shows what went wrong.
+          </p>
+          <p>
+            <span className="text-text-primary font-bold">7D AVG</span> — average
+            scrape duration over the last 7 days. A sudden spike suggests the
+            source is slow to respond or the scraper is retrying.
+          </p>
+        </div>
       </div>
 
       {/* Per-scraper table */}
       <div className="overflow-x-auto">
-        <table className="w-full font-body text-sm border-collapse">
+        <table className="w-full text-sm border-collapse">
           <thead>
-            <tr className="text-text-secondary border-b border-border" style={{ fontSize: '10px' }}>
-              <th className="text-left py-2 pr-6">SOURCE</th>
-              <th className="text-left py-2 pr-6">TYPE</th>
-              <th className="text-left py-2 pr-6">LAST RUN (SGT)</th>
-              <th className="text-right py-2 pr-6">ITEMS</th>
-              <th className="text-left py-2 pr-6">STATUS</th>
-              <th className="text-right py-2 pr-6">CONSEC. ZEROS</th>
-              <th className="text-right py-2">7D AVG</th>
+            <tr className="text-text-secondary border-b border-border text-xs uppercase tracking-widest">
+              <th className="text-left py-2 pr-6">Source</th>
+              <th className="text-left py-2 pr-6">Type</th>
+              <th className="text-left py-2 pr-6">Last run (SGT)</th>
+              <th className="text-right py-2 pr-6">Items</th>
+              <th className="text-left py-2 pr-6">Status</th>
+              <th className="text-right py-2 pr-6">Consec. zeros</th>
+              <th className="text-right py-2">7D avg</th>
             </tr>
           </thead>
           <tbody>
             {scrapers.map(s => (
               <tr key={s.id} className="border-b border-border hover:bg-surface transition-colors">
                 <td className="py-3 pr-6 text-text-primary">{s.source_name}</td>
-                <td className="py-3 pr-6 text-text-secondary uppercase" style={{ fontSize: '10px' }}>
+                <td className="py-3 pr-6 text-text-secondary text-xs uppercase">
                   {s.source_type}
                 </td>
                 <td className="py-3 pr-6 text-text-secondary">{fmtDate(s.scraped_at)}</td>
@@ -179,7 +196,7 @@ export default async function HealthPage() {
                     {STATUS_DOT[s.status]} {s.status.toUpperCase()}
                   </span>
                   {s.status_reason && (
-                    <div className="text-text-secondary mt-1" style={{ fontSize: '10px' }}>
+                    <div className="text-text-secondary mt-1 text-xs">
                       {s.status_reason}
                     </div>
                   )}

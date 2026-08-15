@@ -66,14 +66,14 @@ const VERDICT_CLS: Record<string, string> = {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section>
-      <h2 className="font-body text-text-secondary text-sm uppercase tracking-widest mb-4">{title}</h2>
+      <h2 className="text-text-secondary text-sm uppercase tracking-widest mb-4">{title}</h2>
       {children}
     </section>
   )
 }
 
 function Gap({ text }: { text: string }) {
-  return <div className="font-body text-text-secondary text-sm">{text}</div>
+  return <div className="text-text-secondary text-sm">{text}</div>
 }
 
 function Tile({ value, label, sub, tone }: {
@@ -84,10 +84,10 @@ function Tile({ value, label, sub, tone }: {
 }) {
   return (
     <div className="bg-surface border border-border px-6 py-4 text-center">
-      <div className={`font-body font-bold text-2xl ${tone ?? 'text-text-primary'}`}>{value}</div>
-      <div className="font-body text-text-secondary text-sm mt-1">{label}</div>
+      <div className={`font-bold text-2xl ${tone ?? 'text-text-primary'}`}>{value}</div>
+      <div className="text-text-secondary text-sm mt-1">{label}</div>
       {sub && (
-        <div className="font-body text-text-secondary mt-1" style={{ fontSize: '10px' }}>{sub}</div>
+        <div className="text-text-secondary mt-1 text-xs">{sub}</div>
       )}
     </div>
   )
@@ -118,16 +118,16 @@ export default async function MonthlyReportPage(props: Props) {
   return (
     <div className="space-y-10">
       <div>
-        <Link href="/reports" className="font-body text-text-secondary hover:text-text-primary text-sm">
+        <Link href="/reports" className="text-text-secondary hover:text-text-primary text-sm">
           ← Reports
         </Link>
         <div className="flex items-baseline gap-4 mt-4 mb-2 flex-wrap">
-          <h1 className="font-body font-bold text-yellow text-lg">MONTHLY REPORT</h1>
-          <span className="font-body text-text-secondary text-sm">
+          <h1 className="font-bold text-yellow text-lg">MONTHLY REPORT</h1>
+          <span className="text-text-secondary text-sm">
             {fmtDay(row.period_start)} – {fmtDay(row.period_end)}
           </span>
         </div>
-        <div className="font-body text-text-secondary text-sm">
+        <div className="text-text-secondary text-sm">
           Generated {fmtStamp(row.created_at)} SGT
           {body.period?.trigger ? ` · ${body.period.trigger}` : ''}
           {' · '}
@@ -138,7 +138,7 @@ export default async function MonthlyReportPage(props: Props) {
       {/* The 30-second read, exactly as it was emailed */}
       <Section title="Summary">
         <div className="bg-surface border border-border p-6 overflow-x-auto">
-          <pre className="font-body text-sm text-text-primary whitespace-pre-wrap leading-relaxed">
+          <pre className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed">
             {row.summary_text}
           </pre>
         </div>
@@ -161,7 +161,7 @@ export default async function MonthlyReportPage(props: Props) {
               </div>
 
               {publishing?.split_available === false && (
-                <div className="font-body text-text-secondary text-sm mb-4">
+                <div className="text-text-secondary text-sm mb-4">
                   training_signals was unreadable — the auto/operator split above is incomplete.
                 </div>
               )}
@@ -170,23 +170,23 @@ export default async function MonthlyReportPage(props: Props) {
                 ? <Gap text="Nothing was published in this period." />
                 : (
                   <>
-                    <div className="flex gap-6 flex-wrap font-body text-sm mb-4">
+                    <div className="flex gap-6 flex-wrap text-sm mb-4">
                       {Object.entries(publishing?.by_classification ?? {}).map(([cls, n]) => (
                         <span key={cls} className={classColor(cls)}>
                           {classIcon(cls)} {classLabel(cls)} {n}
                         </span>
                       ))}
                     </div>
-                    <div className="flex gap-6 flex-wrap font-body text-sm mb-6 text-text-secondary">
+                    <div className="flex gap-6 flex-wrap text-sm mb-6 text-text-secondary">
                       {Object.entries(publishing?.by_severity ?? {}).map(([sev, n]) => (
                         <span key={sev}>{severityDiamonds(Number(sev))} ×{n}</span>
                       ))}
                     </div>
 
                     <div className="overflow-x-auto">
-                      <table className="w-full font-body text-sm border-collapse">
+                      <table className="w-full text-sm border-collapse">
                         <thead>
-                          <tr className="border-b border-border text-text-secondary" style={{ fontSize: '10px' }}>
+                          <tr className="border-b border-border text-text-secondary text-xs">
                             <th className="text-left py-2 pr-4 uppercase tracking-widest">Incident</th>
                             <th className="text-left py-2 pr-4 uppercase tracking-widest">Type</th>
                             <th className="text-left py-2 pr-4 uppercase tracking-widest">Severity</th>
@@ -249,9 +249,9 @@ export default async function MonthlyReportPage(props: Props) {
                 ? <Gap text="No operator or agent decisions in this period." />
                 : (
                   <div className="overflow-x-auto">
-                    <table className="w-full font-body text-sm border-collapse">
+                    <table className="w-full text-sm border-collapse">
                       <thead>
-                        <tr className="border-b border-border text-text-secondary" style={{ fontSize: '10px' }}>
+                        <tr className="border-b border-border text-text-secondary text-xs">
                           <th className="text-left py-2 pr-4 uppercase tracking-widest">Action</th>
                           <th className="text-right py-2 uppercase tracking-widest">Count</th>
                         </tr>
@@ -297,7 +297,7 @@ export default async function MonthlyReportPage(props: Props) {
                         label="auto-publishes reverted"
                         tone={(learning?.auto_publish_reverted ?? 0) > 0 ? 'text-red' : undefined} />
                 </div>
-                <div className="font-body text-text-secondary text-sm">
+                <div className="text-text-secondary text-sm">
                   Snapshot captured {fmtStamp(learning?.captured_at)} SGT
                   {learning?.previous
                     ? ` · previous snapshot ${fmtStamp(learning.previous.captured_at)} SGT, agreement `
@@ -327,9 +327,9 @@ export default async function MonthlyReportPage(props: Props) {
                 </div>
 
                 <div className="overflow-x-auto">
-                  <table className="w-full font-body text-sm border-collapse">
+                  <table className="w-full text-sm border-collapse">
                     <thead>
-                      <tr className="border-b border-border text-text-secondary" style={{ fontSize: '10px' }}>
+                      <tr className="border-b border-border text-text-secondary text-xs">
                         <th className="text-left py-2 pr-4 uppercase tracking-widest">Source</th>
                         <th className="text-right py-2 pr-4 uppercase tracking-widest">Passes</th>
                         <th className="text-right py-2 pr-4 uppercase tracking-widest">Fetched</th>
@@ -352,7 +352,7 @@ export default async function MonthlyReportPage(props: Props) {
                               {s.blocked + s.unavailable}
                             </span>
                           </td>
-                          <td className="py-2 text-text-secondary" style={{ fontSize: '11px' }}>
+                          <td className="py-2 text-text-secondary text-xs">
                             {s.last_reason ?? '—'}
                           </td>
                         </tr>
@@ -380,7 +380,7 @@ export default async function MonthlyReportPage(props: Props) {
               </div>
 
               {reliability?.runs_readable === false && (
-                <div className="font-body text-text-secondary text-sm mb-4">
+                <div className="text-text-secondary text-sm mb-4">
                   agent_runs was unreadable — only the event counts below are trustworthy.
                 </div>
               )}
@@ -389,9 +389,9 @@ export default async function MonthlyReportPage(props: Props) {
                 ? <Gap text="No agent runs recorded in this period." />
                 : (
                   <div className="overflow-x-auto mb-6">
-                    <table className="w-full font-body text-sm border-collapse">
+                    <table className="w-full text-sm border-collapse">
                       <thead>
-                        <tr className="border-b border-border text-text-secondary" style={{ fontSize: '10px' }}>
+                        <tr className="border-b border-border text-text-secondary text-xs">
                           <th className="text-left py-2 pr-4 uppercase tracking-widest">Agent</th>
                           <th className="text-right py-2 pr-4 uppercase tracking-widest">Runs</th>
                           <th className="text-right py-2 pr-4 uppercase tracking-widest">Ok</th>
@@ -422,17 +422,16 @@ export default async function MonthlyReportPage(props: Props) {
                   </div>
                 )}
 
-              <div className="font-body text-text-secondary text-sm uppercase tracking-widest mb-2"
-                   style={{ fontSize: '10px' }}>
+              <div className="text-text-secondary text-xs uppercase tracking-widest mb-2">
                 Top error / anomaly events
               </div>
               {(reliability?.top_events ?? []).length === 0
                 ? <Gap text="No errors or anomalies recorded in this period." />
                 : (
                   <div className="overflow-x-auto">
-                    <table className="w-full font-body text-sm border-collapse">
+                    <table className="w-full text-sm border-collapse">
                       <thead>
-                        <tr className="border-b border-border text-text-secondary" style={{ fontSize: '10px' }}>
+                        <tr className="border-b border-border text-text-secondary text-xs">
                           <th className="text-left py-2 pr-4 uppercase tracking-widest">Event</th>
                           <th className="text-left py-2 pr-4 uppercase tracking-widest">Level</th>
                           <th className="text-right py-2 uppercase tracking-widest">Count</th>
@@ -475,9 +474,9 @@ export default async function MonthlyReportPage(props: Props) {
                 </div>
 
                 <div className="overflow-x-auto">
-                  <table className="w-full font-body text-sm border-collapse">
+                  <table className="w-full text-sm border-collapse">
                     <thead>
-                      <tr className="border-b border-border text-text-secondary" style={{ fontSize: '10px' }}>
+                      <tr className="border-b border-border text-text-secondary text-xs">
                         <th className="text-left py-2 pr-4 uppercase tracking-widest">Component</th>
                         <th className="text-left py-2 pr-4 uppercase tracking-widest">Worst</th>
                         <th className="text-left py-2 pr-4 uppercase tracking-widest">Last</th>
@@ -498,7 +497,7 @@ export default async function MonthlyReportPage(props: Props) {
                           </td>
                           <td className="py-2 pr-4 text-right text-text-secondary">{c.checks}</td>
                           <td className="py-2 pr-4 text-text-secondary">{fmtStamp(c.last_checked_at)}</td>
-                          <td className="py-2 text-text-secondary" style={{ fontSize: '11px' }}>
+                          <td className="py-2 text-text-secondary text-xs">
                             {c.message ?? '—'}
                           </td>
                         </tr>
@@ -517,9 +516,9 @@ export default async function MonthlyReportPage(props: Props) {
             ? <Gap text="No notifications were logged in this period." />
             : (
               <div className="overflow-x-auto">
-                <table className="w-full font-body text-sm border-collapse">
+                <table className="w-full text-sm border-collapse">
                   <thead>
-                    <tr className="border-b border-border text-text-secondary" style={{ fontSize: '10px' }}>
+                    <tr className="border-b border-border text-text-secondary text-xs">
                       <th className="text-left py-2 pr-4 uppercase tracking-widest">Kind</th>
                       <th className="text-right py-2 pr-4 uppercase tracking-widest">Sent</th>
                       <th className="text-right py-2 pr-4 uppercase tracking-widest">Suppressed</th>
@@ -548,7 +547,7 @@ export default async function MonthlyReportPage(props: Props) {
       </Section>
 
       <Section title="Previous period">
-        <div className="font-body text-text-secondary text-sm">
+        <div className="text-text-secondary text-sm">
           {prev.start && prev.end
             ? <>Compared against {fmtDay(prev.start)} – {fmtDay(prev.end)}: {fmtNum(prev.published)} published,{' '}
                {fmtNum(prev.auto_published)} auto-published, {fmtNum(prev.operator_decisions)} operator decisions,{' '}
@@ -559,7 +558,7 @@ export default async function MonthlyReportPage(props: Props) {
 
       {(body.warnings ?? []).length > 0 && (
         <Section title="Data gaps">
-          <ul className="font-body text-yellow text-sm space-y-1">
+          <ul className="text-yellow text-sm space-y-1">
             {(body.warnings ?? []).map((w, i) => <li key={i}>! {w}</li>)}
           </ul>
         </Section>

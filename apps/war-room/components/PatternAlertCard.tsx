@@ -53,15 +53,13 @@ export function PatternAlertCard({ item, relatedPreviews, siteUrl, onProcessed }
     <article className="bg-surface border border-orange-500/50 rounded">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-orange-500/30">
-        <span className="px-2 py-0.5 bg-orange-500 text-bg font-body font-bold uppercase"
-              style={{ fontSize: '10px' }}>
+        <span className="px-2 py-0.5 bg-orange-500 text-bg font-bold uppercase text-xs">
           PATTERN ALERT
         </span>
-        <span className="font-body font-bold text-orange-400 uppercase tracking-wide"
-              style={{ fontSize: '11px' }}>
+        <span className="font-bold text-orange-400 uppercase tracking-wide text-xs">
           {PATTERN_LABEL[patternType] ?? patternType}
         </span>
-        <span className="ml-auto font-body text-text-secondary text-sm">
+        <span className="ml-auto text-text-secondary text-sm">
           {new Date(item.created_at).toLocaleString('en-SG')}
         </span>
       </div>
@@ -69,22 +67,20 @@ export function PatternAlertCard({ item, relatedPreviews, siteUrl, onProcessed }
       {/* Pattern summary */}
       <div className="p-4 space-y-4">
         <div>
-          <div className="font-body text-text-secondary mb-1 uppercase tracking-widest"
-               style={{ fontSize: '10px' }}>
+          <div className="text-text-secondary mb-1 uppercase tracking-widest text-xs">
             {PATTERN_DESC[patternType] ?? 'Pattern detected'}
           </div>
-          <div className="font-body font-bold text-orange-300" style={{ fontSize: '18px' }}>
+          <div className="font-bold text-orange-300 text-lg">
             {patternValue}
           </div>
-          <div className="font-body text-text-secondary mt-1" style={{ fontSize: '12px' }}>
+          <div className="text-text-secondary mt-1 text-xs">
             {incidentIds.length} incidents · {windowDays}-day window
           </div>
         </div>
 
         {/* Incident list */}
         <div>
-          <div className="font-body text-text-secondary mb-2 uppercase tracking-widest"
-               style={{ fontSize: '10px' }}>
+          <div className="text-text-secondary mb-2 uppercase tracking-widest text-xs">
             Incidents in pattern
           </div>
           <ol className="space-y-1">
@@ -95,19 +91,16 @@ export function PatternAlertCard({ item, relatedPreviews, siteUrl, onProcessed }
               const href    = slug ? `${siteUrl}/incidents/${slug}` : undefined
               return (
                 <li key={incId} className="flex items-start gap-2">
-                  <span className="font-body text-text-secondary flex-none mt-0.5"
-                        style={{ fontSize: '11px' }}>
+                  <span className="text-text-secondary flex-none mt-0.5 text-xs">
                     {i + 1}.
                   </span>
                   {href ? (
                     <a href={href} target="_blank" rel="noopener noreferrer"
-                       className="font-body text-amber-lt hover:underline leading-snug"
-                       style={{ fontSize: '13px' }}>
+                       className="text-amber-lt hover:underline leading-snug text-sm">
                       {title}
                     </a>
                   ) : (
-                    <span className="font-body text-text-primary leading-snug"
-                          style={{ fontSize: '13px' }}>
+                    <span className="text-text-primary leading-snug text-sm">
                       {title}
                     </span>
                   )}
@@ -120,12 +113,12 @@ export function PatternAlertCard({ item, relatedPreviews, siteUrl, onProcessed }
 
       {/* Actions */}
       <div className="flex items-center gap-2 px-4 py-3 border-t border-orange-500/30 flex-wrap">
-        {error && <span className="font-body text-red text-sm w-full mb-1">{error}</span>}
+        {error && <span className="text-red text-sm w-full mb-1">{error}</span>}
 
         <button
           onClick={() => post('dismiss-alert')}
           disabled={loading}
-          className="px-3 py-2 border border-border text-text-secondary font-body text-sm hover:border-red hover:text-red transition-colors disabled:opacity-50"
+          className="px-3 py-2 border border-border text-text-secondary text-sm hover:border-red hover:text-red transition-colors disabled:opacity-50"
         >
           Dismiss
         </button>
@@ -135,7 +128,7 @@ export function PatternAlertCard({ item, relatedPreviews, siteUrl, onProcessed }
             <button
               onClick={() => post('note-profile')}
               disabled={loading}
-              className="px-3 py-2 border border-yellow text-yellow font-body text-sm hover:bg-yellow hover:text-bg transition-colors disabled:opacity-50"
+              className="px-3 py-2 border border-yellow text-yellow text-sm hover:bg-yellow hover:text-bg transition-colors disabled:opacity-50"
             >
               Note for Profile
             </button>
@@ -143,7 +136,7 @@ export function PatternAlertCard({ item, relatedPreviews, siteUrl, onProcessed }
           <button
             onClick={() => post('link-pattern')}
             disabled={loading}
-            className="px-4 py-2 bg-orange-600 text-white font-body text-sm font-bold hover:bg-orange-500 transition-colors disabled:opacity-50"
+            className="px-4 py-2 bg-orange-600 text-white text-sm font-bold hover:bg-orange-500 transition-colors disabled:opacity-50"
           >
             {loading ? '…' : 'Link Incidents ✓'}
           </button>

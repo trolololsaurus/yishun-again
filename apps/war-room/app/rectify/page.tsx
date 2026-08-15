@@ -82,7 +82,7 @@ export default async function RectifyPage(
       <Header count={items.length} />
       <LookupForm />
 
-      <p className="font-body text-text-secondary text-sm mb-2">
+      <p className="text-text-secondary text-sm mb-2">
         {includeOk
           ? 'Published incidents whose image failed, plus those that already have one so you can replace it. Every incident here is live and readable regardless.'
           : 'Published incidents whose image failed. They are live and readable already — only the picture is missing.'}
@@ -90,7 +90,7 @@ export default async function RectifyPage(
         listed read-only at the bottom so they are not invisible.
       </p>
 
-      <p className="font-body text-sm mb-6">
+      <p className="text-sm mb-6">
         {includeOk ? (
           <>
             <span className="text-text-secondary">Showing incidents that already have an image too. </span>
@@ -110,7 +110,7 @@ export default async function RectifyPage(
 
       {items.length === 0
         ? (
-          <p className="font-body text-text-secondary">
+          <p className="text-text-secondary">
             {includeOk ? 'No published incidents have an image yet.' : 'Nothing to rectify.'}
           </p>
         )
@@ -153,11 +153,10 @@ async function NoImagePanel() {
 
   return (
     <section className="mt-10 border-t border-border pt-6">
-      <h2 className="font-body font-bold text-text-secondary uppercase tracking-widest mb-2"
-          style={{ fontSize: '12px' }}>
+      <h2 className="font-bold text-text-secondary uppercase tracking-widest mb-2 text-xs">
         No image, and not getting one ({rows.length})
       </h2>
-      <p className="font-body text-text-secondary text-sm mb-4">
+      <p className="text-text-secondary text-sm mb-4">
         Listed so they are not invisible. These are live and readable like every other
         incident — only the picture is withheld. There are deliberately no controls here:
         guardrail&nbsp;#5 is not operator-overridable, and{' '}
@@ -165,10 +164,10 @@ async function NoImagePanel() {
       </p>
       <ul className="space-y-1">
         {rows.map(row => (
-          <li key={row.slug} className="font-body text-sm flex flex-wrap gap-2 items-baseline">
+          <li key={row.slug} className="text-sm flex flex-wrap gap-2 items-baseline">
             <span
-              className="uppercase tracking-widest flex-none text-text-secondary"
-              style={{ fontSize: '10px', minWidth: '8rem' }}
+              className="uppercase tracking-widest flex-none text-text-secondary text-xs"
+              style={{ minWidth: '8rem' }}
               title={row.image_status === 'suppressed'
                 ? 'Guardrail #5 — suicide or self-harm content'
                 : 'An operator chose to publish this without an image'}
@@ -229,7 +228,7 @@ async function LookupView({ query }: { query: string }) {
       <div>
         <Header count={items.length} />
         <LookupForm value={query} />
-        <p className="font-body text-text-secondary text-sm mb-6">
+        <p className="text-text-secondary text-sm mb-6">
           Showing the one incident matching that link.{' '}
           <Link href="/rectify" className="text-yellow hover:underline">Back to the queue</Link>
         </p>
@@ -273,13 +272,13 @@ function NotFound({ query, reason, slug }: { query: string; reason: RectifyBlock
     <div>
       <Header count={0} />
       <LookupForm value={query} />
-      <p className="font-body text-red text-sm mb-2">{message}</p>
+      <p className="text-red text-sm mb-2">{message}</p>
       {slug && (
-        <p className="font-body text-text-secondary text-sm mb-6">
+        <p className="text-text-secondary text-sm mb-6">
           Matched slug: <code>{slug}</code>
         </p>
       )}
-      <p className="font-body text-sm">
+      <p className="text-sm">
         <Link href="/rectify" className="text-yellow hover:underline">Back to the queue</Link>
       </p>
     </div>
@@ -290,7 +289,7 @@ function NotFound({ query, reason, slug }: { query: string; reason: RectifyBlock
 
 function Header({ count }: { count: number }) {
   return (
-    <h1 className="font-body font-bold text-yellow text-lg mb-2">
+    <h1 className="font-bold text-yellow text-lg mb-2">
       IMAGE RECTIFICATION <span className="text-text-secondary">({count})</span>
     </h1>
   )
@@ -305,16 +304,16 @@ function LookupForm({ value = '' }: { value?: string }) {
         name="url"
         defaultValue={value}
         placeholder="Paste an incident URL, a source article URL, or a slug"
-        className="flex-1 min-w-[22rem] bg-surface border border-border px-2 py-1 font-body text-sm text-text-primary placeholder:text-text-secondary"
+        className="flex-1 min-w-[22rem] bg-surface border border-border px-2 py-1 text-sm text-text-primary placeholder:text-text-secondary"
       />
       <button
         type="submit"
-        className="px-3 py-1 border border-border font-body text-sm text-yellow hover:bg-surface"
+        className="px-3 py-1 border border-border text-sm text-yellow hover:bg-surface"
       >
         Find
       </button>
       {value && (
-        <Link href="/rectify" className="font-body text-sm text-text-secondary hover:text-text-primary">
+        <Link href="/rectify" className="text-sm text-text-secondary hover:text-text-primary">
           Clear
         </Link>
       )}
@@ -325,9 +324,9 @@ function LookupForm({ value = '' }: { value?: string }) {
 function QueueError({ message }: { message: string }) {
   return (
     <div>
-      <h1 className="font-body font-bold text-yellow text-lg mb-6">IMAGE RECTIFICATION</h1>
-      <p className="font-body text-red">Could not load the queue: {message}</p>
-      <p className="font-body text-text-secondary text-sm mt-2">
+      <h1 className="font-bold text-yellow text-lg mb-6">IMAGE RECTIFICATION</h1>
+      <p className="text-red">Could not load the queue: {message}</p>
+      <p className="text-text-secondary text-sm mt-2">
         If this mentions <code>image_status</code>, migration{' '}
         <code>014_image_status.sql</code> has not been applied yet.
       </p>

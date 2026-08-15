@@ -48,8 +48,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={copy}
-      className="px-2 py-0.5 border border-border text-text-secondary font-body hover:border-yellow hover:text-yellow transition-colors"
-      style={{ fontSize: '11px' }}
+      className="px-2 py-0.5 border border-border text-text-secondary text-xs hover:border-yellow hover:text-yellow transition-colors"
     >
       {copied === 'ok' ? 'COPIED' : copied === 'fail' ? 'COPY FAILED' : 'COPY'}
     </button>
@@ -60,13 +59,13 @@ function PromptBlock({ label, text, note }: { label: string; text: string; note?
   return (
     <div>
       <div className="flex items-center gap-2 mb-1">
-        <span className="font-body text-text-secondary uppercase tracking-widest text-sm">{label}</span>
+        <span className="text-text-secondary uppercase tracking-widest text-sm">{label}</span>
         <CopyButton text={text} />
       </div>
       {note && (
-        <div className="font-body text-text-secondary mb-1" style={{ fontSize: '10px' }}>{note}</div>
+        <div className="text-text-secondary mb-1 text-xs">{note}</div>
       )}
-      <pre className="px-3 py-2 bg-bg border border-border text-text-primary font-body text-sm whitespace-pre-wrap break-words">
+      <pre className="px-3 py-2 bg-bg border border-border text-text-primary text-sm whitespace-pre-wrap break-words">
         {text}
       </pre>
     </div>
@@ -116,14 +115,14 @@ export function ArtPromptModal({ incidentId, title, onClose }: Props) {
         {/* Header */}
         <div className="flex items-start gap-3 px-4 py-3 border-b border-border">
           <div className="min-w-0">
-            <div className="font-body text-yellow font-bold uppercase tracking-widest text-sm">
+            <div className="text-yellow font-bold uppercase tracking-widest text-sm">
               Art Prompt
             </div>
-            <div className="font-body text-text-primary text-sm truncate">{title}</div>
+            <div className="text-text-primary text-sm truncate">{title}</div>
           </div>
           <button
             onClick={onClose}
-            className="ml-auto px-2 py-1 border border-border text-text-secondary font-body text-sm hover:border-red hover:text-red transition-colors"
+            className="ml-auto px-2 py-1 border border-border text-text-secondary text-sm hover:border-red hover:text-red transition-colors"
           >
             ✕
           </button>
@@ -131,18 +130,18 @@ export function ArtPromptModal({ incidentId, title, onClose }: Props) {
 
         {/* Body */}
         <div className="p-4 space-y-4">
-          {error && <div className="font-body text-red text-sm">{error}</div>}
-          {!data && !error && <div className="font-body text-text-secondary text-sm">Loading…</div>}
+          {error && <div className="text-red text-sm">{error}</div>}
+          {!data && !error && <div className="text-text-secondary text-sm">Loading…</div>}
 
           {data && (
             <>
-              <div className="flex gap-4 flex-wrap font-body text-text-secondary text-sm">
+              <div className="flex gap-4 flex-wrap text-text-secondary text-sm">
                 <span>Class: <span className="text-text-primary">{data.incident.custom_label ?? data.incident.classification}</span></span>
                 <span>Area: <span className="text-text-primary">{data.incident.area_name ?? '— (defaults to “Yishun”)'}</span></span>
                 {data.incident.block_number && <span>Blk {data.incident.block_number}</span>}
               </div>
 
-              <div className="font-body text-text-secondary text-sm">
+              <div className="text-text-secondary text-sm">
                 Image status: <span className="text-text-primary uppercase">{data.status}</span>
                 {data.status === 'suppressed' && ' — guardrail #5 (suicide / self-harm). Not retryable.'}
               </div>
@@ -154,7 +153,7 @@ export function ArtPromptModal({ incidentId, title, onClose }: Props) {
                   note="The full assembled prompt of the last attempt — style, composition and physical-coherence blocks, the Haiku-written scene, then palette and exclusions."
                 />
               ) : (
-                <div className="font-body text-text-secondary text-sm">
+                <div className="text-text-secondary text-sm">
                   No prompt recorded. Either this incident predates image generation, or it
                   was suppressed before any prompt was written.
                 </div>
@@ -162,11 +161,11 @@ export function ArtPromptModal({ incidentId, title, onClose }: Props) {
 
               {data.attempts.length > 1 && (
                 <div className="space-y-2">
-                  <div className="font-body text-text-secondary text-sm uppercase tracking-widest">
+                  <div className="text-text-secondary text-sm uppercase tracking-widest">
                     Attempts ({data.attempts.length})
                   </div>
                   {data.attempts.map(a => (
-                    <div key={a.n} className="font-body text-sm">
+                    <div key={a.n} className="text-sm">
                       <span className="text-text-primary">#{a.n} {a.outcome.toUpperCase()}</span>
                       {a.reason && <span className="text-text-secondary"> — {a.reason}</span>}
                     </div>
@@ -175,7 +174,7 @@ export function ArtPromptModal({ incidentId, title, onClose }: Props) {
               )}
 
               {!data.incident.pixel_art_url && (
-                <div className="font-body text-text-secondary border-t border-border pt-3" style={{ fontSize: '11px' }}>
+                <div className="text-text-secondary border-t border-border pt-3 text-xs">
                   This incident has no pixel art. Generation is dormant — the prompt above is
                   what would run if it were re-enabled.
                 </div>
