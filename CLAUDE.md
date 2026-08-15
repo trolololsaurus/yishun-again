@@ -391,8 +391,29 @@ reads it from the article (URL path, else meta tags).
   in its RSS**. Sitemaps carry no body, so a keyword-matching entry has its
   article fetched — recency is applied *before* that fetch.
 - `wp_search.py` (2): MustShareNews and The Independent answer
-  `?s=yishun&feed=rss2` with a dated RSS feed of search results over their whole
-  archive.
+  `?s=<term>&feed=rss2` with a dated RSS feed of search results over their whole
+  archive. Each site is searched for `yishun`, `khatib` and `chong pang`
+  (`SEARCH_TERMS`) and the results merged/deduped — a `?s=yishun` feed only holds
+  articles the publisher indexed on "yishun", so a subzone-only story never
+  appears in it and the downstream keyword filter never sees it.
+
+For the historical BACKFILL gap the live pass structurally cannot reach (stories
+on unscraped domains, or old ones off every feed/sitemap window), `tools/search_discovery.py`
+runs a web search ("yishun <year>") and emits a `seed_backfill.py` manifest of
+publisher URLs. It is a run-once operator tool, **not** a daily source (topic×year
+is static history). **Keyless by necessity:** every hosted search API died or went
+paid-only in 2025-26 (Google Custom Search closed to new users + dies 2027-01-01;
+Bing retired 2025-08-11; Brave/Tavily/Serper need a card), so it drives
+DuckDuckGo's HTML endpoint and parses it with bs4 (already a dep — no new pip
+requirement). Two guards matter: `_ddg_result_url` DECODES DDG's
+`duckduckgo.com/l/?uddg=` redirect back to the publisher URL (storing the wrapper
+would reintroduce the `news.google.com` problem the 2026-08-02 removal was about),
+and `filter_links` drops redirect wrappers, forum/signal hosts and social/junk
+noise. DDG rate-limits (HTTP 202) after a few quick queries — `search()` returns
+`[]` and the sweep continues rather than aborting; raise `--spacing` or re-run for
+a big sweep. The authoritative source_allowlist and Stage 1 both run downstream.
+If DDG throttling ever blocks real work, swap the one `search()` function for a
+paid backend. Guard: `test_search_discovery.py`.
 
 **SIGNAL — 2**: Reddit (r/singapore, r/singaporeraw) and EDMW/HWZ.
 
