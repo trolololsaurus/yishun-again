@@ -204,6 +204,50 @@ def _find_poi(*texts: Optional[str]) -> Optional[str]:
     return None
 
 
+# Places OneMap simply has no record for. Checked BEFORE the API call, so they
+# can never fall through to a fuzzy match. Every entry must be justified by a
+# named source in the comment — a hardcoded coordinate nobody can re-derive is
+# worse than no pin at all.
+_VERIFIED_COORDS: dict[str, tuple[float, float]] = {
+    # OpenStreetMap way "Yishun Dam" (natural=dam), the road along the northern
+    # edge of Lower Seletar Reservoir. OneMap returns NOTHING for it: searching
+    # "YISHUN DAM" fuzzy-matched a temple on Yishun Ring Road, 3.4 km west, and
+    # that wrong pin shipped on two published incidents.
+    "YISHUN DAM": (1.42509, 103.85747),
+}
+
+# Tokens too common to prove a result is the place we asked for — nearly every
+# record in the box contains them.
+_MATCH_STOPWORDS = {
+    "YISHUN", "SINGAPORE", "BLK", "BLOCK", "THE", "OF", "AND", "AT",
+}
+
+
+def _tokens(text: str) -> set[str]:
+    return set(re.findall(r"[A-Z0-9]+", (text or "").upper()))
+
+
+def _result_matches_query(query: str, result: dict) -> bool:
+    """
+    Does this OneMap hit actually correspond to what we searched for?
+
+    OneMap's search is fuzzy and ALWAYS ranks something first, so an unindexed
+    place silently resolves to an unrelated neighbour: "YISHUN DAM" returned
+    "NAM HONG SIANG THEON" on Yishun Ring Road, which is inside the Yishun
+    bounding box and therefore passed every check we had. A wrong pin is worse
+    than a missing one — it is indistinguishable from a correct one on the map —
+    so a result must share at least one distinctive token with the query.
+    """
+    want = _tokens(query) - _MATCH_STOPWORDS
+    if not want:
+        return True   # nothing distinctive was asked for; bounds check is all we have
+    hay = _tokens(" ".join(
+        str(result.get(k, "")) for k in
+        ("SEARCHVAL", "ROAD_NAME", "ADDRESS", "BLK_NO", "BUILDING")
+    ))
+    return bool(want & hay)
+
+
 def _abbrev_street(street: str) -> str:
     """OneMap address records use abbreviated street types ("YISHUN AVE 11")."""
     s = street.upper()
@@ -225,6 +269,10 @@ def _onemap_lookup(query: str, attempts: int = 3) -> Optional[tuple[float, float
     a 66-row backfill, OneMap intermittently dropped requests and those rows
     silently ended up with no pin even though their address was perfectly good.
     """
+    verified = _VERIFIED_COORDS.get(query.strip().upper())
+    if verified:
+        return verified
+
     for attempt in range(attempts):
         try:
             resp = httpx.get(
@@ -241,8 +289,13 @@ def _onemap_lookup(query: str, attempts: int = 3) -> Optional[tuple[float, float
             results = resp.json().get("results", [])
             if not results:
                 return None                       # real miss — don't retry
-            lat = float(results[0]["LATITUDE"])
-            lon = float(results[0]["LONGITUDE"])
+            hit = next((r for r in results if _result_matches_query(query, r)), None)
+            if hit is None:
+                logger.debug("OneMap hits for %r matched nothing relevant (top: %r)",
+                             query, results[0].get("SEARCHVAL"))
+                return None                       # fuzzy noise — don't retry
+            lat = float(hit["LATITUDE"])
+            lon = float(hit["LONGITUDE"])
             if _within_yishun(lat, lon):
                 logger.debug("Geocoded %r → (%.5f, %.5f)", query, lat, lon)
                 return (lat, lon)

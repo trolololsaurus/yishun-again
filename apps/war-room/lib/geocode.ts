@@ -132,7 +132,31 @@ function buildQueries(
   return queries
 }
 
+// Places OneMap has no record for — a hardcoded coordinate keyed on the exact
+// query, checked before the API call. Keep in sync with geocoding.py's
+// _VERIFIED_COORDS. Yishun Dam: OSM way (natural=dam); OneMap "YISHUN DAM"
+// fuzzy-matched a temple 3.4 km away.
+const VERIFIED_COORDS: Record<string, [number, number]> = {
+  'YISHUN DAM': [1.42509, 103.85747],
+}
+
+const MATCH_STOPWORDS = new Set(['YISHUN', 'SINGAPORE', 'BLK', 'BLOCK', 'THE', 'OF', 'AND', 'AT'])
+
+const toks = (s: string): Set<string> => new Set((s || '').toUpperCase().match(/[A-Z0-9]+/g) || [])
+
+// OneMap search is fuzzy and always ranks something first, so an unindexed
+// place silently resolves to an unrelated neighbour inside the box. Require a
+// distinctive shared token — a wrong pin is worse than a missing one.
+function resultMatchesQuery(query: string, r: any): boolean {
+  const want = [...toks(query)].filter(t => !MATCH_STOPWORDS.has(t))
+  if (want.length === 0) return true
+  const hay = toks([r.SEARCHVAL, r.ROAD_NAME, r.ADDRESS, r.BLK_NO, r.BUILDING].join(' '))
+  return want.some(t => hay.has(t))
+}
+
 async function onemapLookup(query: string): Promise<[number, number] | null> {
+  const verified = VERIFIED_COORDS[query.trim().toUpperCase()]
+  if (verified) return verified
   try {
     const params = new URLSearchParams({
       searchVal: query, returnGeom: 'Y', getAddrDetails: 'Y', pageNum: '1',
@@ -142,9 +166,10 @@ async function onemapLookup(query: string): Promise<[number, number] | null> {
     })
     if (!res.ok) return null
     const results = (await res.json())?.results ?? []
-    if (results.length > 0) {
-      const lat = parseFloat(results[0].LATITUDE)
-      const lon = parseFloat(results[0].LONGITUDE)
+    const hit = results.find((r: any) => resultMatchesQuery(query, r))
+    if (hit) {
+      const lat = parseFloat(hit.LATITUDE)
+      const lon = parseFloat(hit.LONGITUDE)
       if (!isNaN(lat) && !isNaN(lon) && withinYishun(lat, lon)) return [lat, lon]
     }
   } catch { /* network error / timeout — treat as no result */ }
