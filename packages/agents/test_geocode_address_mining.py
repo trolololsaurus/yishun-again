@@ -151,5 +151,25 @@ _DEAD = {
 check("no POI alias points at a known-dead OneMap query",
       not any(query in _DEAD for _, query in _POI_ALIASES))
 
+# -- Fuzzy-match guard: a wrong pin is worse than a missing one --------------
+# OneMap search always ranks SOMETHING first, so an unindexed place resolved to
+# an unrelated neighbour: "YISHUN DAM" returned a temple on Yishun Ring Road,
+# inside the Yishun box, 3.4 km from the dam — it shipped on two incidents.
+from classifiers.geocoding import _result_matches_query, _VERIFIED_COORDS
+check("relevance guard rejects an unrelated top hit",
+      not _result_matches_query("YISHUN DAM",
+          {"SEARCHVAL": "NAM HONG SIANG THEON", "ROAD_NAME": "YISHUN RING ROAD"}))
+check("relevance guard keeps the right hit",
+      _result_matches_query("YISHUN HAWKER CENTRE",
+          {"SEARCHVAL": "YISHUN PARK HAWKER CENTRE", "ROAD_NAME": "YISHUN AVENUE 11"}))
+check("a query of only stopwords is not rejected (bounds check still applies)",
+      _result_matches_query("BLK YISHUN", {"SEARCHVAL": "anything"}))
+
+# Yishun Dam is unindexed in OneMap; a verified coordinate stands in for it.
+check("Yishun Dam has a verified coordinate", "YISHUN DAM" in _VERIFIED_COORDS)
+_lat, _lon = _VERIFIED_COORDS["YISHUN DAM"]
+check("Yishun Dam coordinate is the real dam, not the temple",
+      abs(_lat - 1.42509) < 1e-3 and abs(_lon - 103.85747) < 1e-3)
+
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

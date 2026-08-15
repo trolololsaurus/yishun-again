@@ -830,8 +830,22 @@ time, both of which failed **silently**:
   never retries an empty result, so a genuine miss still falls straight through
   to the next query in the priority order.
 
-Guards: `test_geocode_address_mining.py` (29 checks, incl. slug mining and a
-dead-alias assertion).
+**A WRONG pin is worse than a missing one, and OneMap will hand you one.** Its
+search is fuzzy and always ranks *something* first, so an unindexed place
+resolves to an unrelated neighbour that still passes the Yishun bounds check —
+`YISHUN DAM` returned "Nam Hong Siang Theon", a temple on Yishun Ring Road
+3.4 km away, and that pin shipped on two published incidents. Two guards now
+sit in `_onemap_lookup` (both mirrored in the War Room's `lib/geocode.ts`):
+- **`_result_matches_query`** requires the accepted hit to share one
+  distinctive token (stopwords like `YISHUN`/`BLK` excluded) with the query,
+  so a fuzzy near-miss is rejected as if there were no result.
+- **`_VERIFIED_COORDS`** is a tiny hardcoded table for places OneMap has no
+  record of at all, checked *before* the API call. Only `YISHUN DAM` so far
+  (OpenStreetMap `natural=dam`). Every entry needs a named source in the
+  comment — a coordinate nobody can re-derive is worse than no pin.
+
+Guards: `test_geocode_address_mining.py` (34 checks, incl. slug mining, the
+dead-alias assertion, and the fuzzy-match / Yishun-Dam guards).
 
 **Co-located pins are fanned out at RENDER time, not in the data.** Several
 incidents at one block resolve to the same coordinate, so their markers stacked
