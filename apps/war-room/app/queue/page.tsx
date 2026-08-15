@@ -42,7 +42,7 @@ export default async function QueuePage() {
 
   if (queueResult.error) {
     return (
-      <div className="font-body text-red text-sm">
+      <div className="text-red text-sm">
         Failed to load queue: {queueResult.error.message}
       </div>
     )
@@ -153,16 +153,16 @@ export default async function QueuePage() {
 
   return (
     <div>
-      <h1 className="font-body font-bold text-yellow text-lg mb-6">QUEUE</h1>
+      <h1 className="font-bold text-yellow text-lg mb-6">QUEUE</h1>
 
       {hasHealthData && (
         <div className="mb-6 border border-border bg-surface p-4">
-          <div className="font-body text-text-secondary mb-3 uppercase tracking-widest" style={{ fontSize: '13px' }}>
+          <div className="text-text-secondary mb-3 uppercase tracking-widest text-sm">
             Last 24h
           </div>
 
           {hasAlerts && (
-            <div className="mb-3 font-body space-y-1.5" style={{ fontSize: '13px' }}>
+            <div className="mb-3 space-y-1.5 text-sm">
               {errorSources.map(r => (
                 <div key={r.source_name} className="text-red">
                   🔴 {r.source_name} — ERROR
@@ -186,26 +186,26 @@ export default async function QueuePage() {
                   articles served, so one outlet can go a month without a
                   Yishun story. Say so, rather than leaving the operator to
                   read a quiet source as a broken one. */}
-              <div className="text-text-secondary pt-1" style={{ fontSize: '12px' }}>
+              <div className="text-text-secondary pt-1 text-xs">
                 A long zero streak usually means no Yishun news from that outlet,
                 not a broken scraper. Real failures show as ERROR.
               </div>
             </div>
           )}
 
-          <div className="flex gap-10 font-body">
+          <div className="flex gap-10">
             <div>
-              <div className="text-text-secondary mb-1" style={{ fontSize: '13px' }}>SCRAPED</div>
+              <div className="text-text-secondary mb-1 text-sm">SCRAPED</div>
               <div className="text-text-primary font-bold text-lg">{scraped24h}</div>
             </div>
             <div>
-              <div className="text-text-secondary mb-1" style={{ fontSize: '13px' }}>PASSED S1</div>
+              <div className="text-text-secondary mb-1 text-sm">PASSED S1</div>
               <div className="text-text-primary font-bold text-lg">
                 {passedS1_24h > 0 ? passedS1_24h : '—'}
               </div>
             </div>
             <div>
-              <div className="text-text-secondary mb-1" style={{ fontSize: '13px' }}>QUEUED</div>
+              <div className="text-text-secondary mb-1 text-sm">QUEUED</div>
               <div className="text-text-primary font-bold text-lg">{queued24h}</div>
             </div>
           </div>

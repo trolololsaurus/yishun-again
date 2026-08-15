@@ -156,32 +156,31 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
         <span className={`text-lg ${CLASS_COLOR[classif] ?? ''}`}>
           {CLASS_ICON[classif]}
         </span>
-        <span className={`font-body font-bold text-sm ${CLASS_COLOR[classif] ?? ''}`}>
+        <span className={`font-bold text-sm ${CLASS_COLOR[classif] ?? ''}`}>
           {CLASS_LABEL[classif]}
         </span>
-        <span className="font-body text-text-secondary text-sm">
+        <span className="text-text-secondary text-sm">
           {severityDiamonds(severity)}
         </span>
         {hype > 0 && (
-          <span className="font-body text-yellow text-sm" title={`Hype meter ${hype}`}>
+          <span className="text-yellow text-sm" title={`Hype meter ${hype}`}>
             {hypeMeter(hype)}
           </span>
         )}
-        <span className={`ml-2 px-2 py-0.5 rounded font-body text-sm font-bold ${confidenceColor(conf)}`}>
+        <span className={`ml-2 px-2 py-0.5 rounded text-sm font-bold ${confidenceColor(conf)}`}>
           {confidenceLabel(conf)}
         </span>
         {milestoneLabel && (
-          <span className="px-2 py-0.5 border border-yellow text-yellow font-body font-bold uppercase"
-                style={{ fontSize: '10px' }}>
+          <span className="px-2 py-0.5 border border-yellow text-yellow font-bold uppercase text-xs">
             &#x26A1; {milestoneLabel}
           </span>
         )}
-        <span className="ml-auto font-body text-text-secondary text-sm">
+        <span className="ml-auto text-text-secondary text-sm">
           {new Date(item.created_at).toLocaleString('en-SG')}
         </span>
         <button
           onClick={() => setShowSource(s => !s)}
-          className="px-2 py-1 border border-border text-text-secondary font-body text-sm hover:border-yellow hover:text-yellow transition-colors"
+          className="px-2 py-1 border border-border text-text-secondary text-sm hover:border-yellow hover:text-yellow transition-colors"
         >
           {showSource ? 'Hide Source' : 'View Source'}
         </button>
@@ -193,18 +192,18 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
         {/* Raw source pane (read-only, only when expanded) */}
         {showSource && (
           <div className="p-4 overflow-auto max-h-[600px]">
-            <div className="font-body text-text-secondary text-sm mb-2 uppercase tracking-widest">
+            <div className="text-text-secondary text-sm mb-2 uppercase tracking-widest">
               Raw Source
             </div>
             <a
               href={safeHref(item.source_url)}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-yellow text-sm font-body hover:underline break-all"
+              className="text-yellow text-sm hover:underline break-all"
             >
               {item.source_url}
             </a>
-            <div className="mt-3 font-body text-sm text-text-secondary whitespace-pre-wrap leading-relaxed">
+            <div className="mt-3 text-sm text-text-secondary whitespace-pre-wrap leading-relaxed">
               {rawContent || '(No raw content stored)'}
             </div>
           </div>
@@ -215,10 +214,10 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
           {/* Milestone "triggered by" context — milestone posts only */}
           {triggeredByTitle && (
             <div className="border border-yellow/40 bg-yellow/5 p-3">
-              <div className="font-body text-yellow font-bold mb-2 uppercase" style={{ fontSize: '10px' }}>
+              <div className="text-yellow font-bold mb-2 uppercase text-xs">
                 Triggered by
               </div>
-              <div className="font-body text-text-primary text-sm">
+              <div className="text-text-primary text-sm">
                 {triggeredByTitle}
               </div>
               {triggeredByUrl && (
@@ -226,14 +225,13 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
                   href={safeHref(triggeredByUrl)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-yellow font-body hover:underline break-all"
-                  style={{ fontSize: '11px' }}
+                  className="text-yellow hover:underline break-all text-xs"
                 >
                   {triggeredByUrl}
                 </a>
               )}
               {triggeredDate && (
-                <div className="font-body text-text-secondary mt-1" style={{ fontSize: '10px' }}>
+                <div className="text-text-secondary mt-1 text-xs">
                   {triggeredDate}
                 </div>
               )}
@@ -242,7 +240,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
 
           {/* Title */}
           <div>
-            <label className="font-body text-text-secondary text-sm uppercase tracking-widest block mb-1">
+            <label className="text-text-secondary text-sm uppercase tracking-widest block mb-1">
               Title <span className="text-border">{title.length}/120</span>
             </label>
             <input
@@ -250,13 +248,13 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
               value={title}
               maxLength={120}
               onChange={e => setTitle(e.target.value)}
-              className="w-full px-3 py-2 bg-bg border border-border text-text-primary font-body text-base rounded focus:border-yellow focus:outline-none"
+              className="w-full px-3 py-2 bg-bg border border-border text-text-primary text-base rounded focus:border-yellow focus:outline-none"
             />
           </div>
 
           {/* Summary */}
           <div>
-            <label className="font-body text-text-secondary text-sm uppercase tracking-widest block mb-1">
+            <label className="text-text-secondary text-sm uppercase tracking-widest block mb-1">
               Summary <span className={summary.length < 500 || summary.length > 800 ? 'text-red' : 'text-green'}>
                 {summary.length} chars
               </span>
@@ -265,13 +263,13 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
               value={summary}
               onChange={e => setSummary(e.target.value)}
               rows={6}
-              className="w-full px-3 py-2 bg-bg border border-border text-text-primary font-body text-base rounded focus:border-yellow focus:outline-none resize-y"
+              className="w-full px-3 py-2 bg-bg border border-border text-text-primary text-base rounded focus:border-yellow focus:outline-none resize-y"
             />
           </div>
 
           {/* Classification */}
           <div>
-            <label className="font-body text-text-secondary text-sm uppercase tracking-widest block mb-2">
+            <label className="text-text-secondary text-sm uppercase tracking-widest block mb-2">
               Classification
             </label>
             <div className="flex gap-2">
@@ -280,7 +278,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
                   key={c}
                   onClick={() => setClassif(c)}
                   className={[
-                    'px-3 py-1.5 border font-body text-sm rounded transition-colors',
+                    'px-3 py-1.5 border text-sm rounded transition-colors',
                     classif === c
                       ? `border-current ${CLASS_COLOR[c]}`
                       : 'border-border text-text-secondary hover:border-text-secondary',
@@ -294,7 +292,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
 
           {/* Severity */}
           <div>
-            <label className="font-body text-text-secondary text-sm uppercase tracking-widest block mb-2">
+            <label className="text-text-secondary text-sm uppercase tracking-widest block mb-2">
               Severity
             </label>
             <div className="flex gap-2">
@@ -303,7 +301,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
                   key={n}
                   onClick={() => setSeverity(n)}
                   className={[
-                    'w-8 h-8 border font-body text-sm rounded transition-colors',
+                    'w-8 h-8 border text-sm rounded transition-colors',
                     severity === n
                       ? 'border-yellow text-yellow bg-yellow/10'
                       : 'border-border text-text-secondary hover:border-text-secondary',
@@ -332,31 +330,30 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
                   <div key={link.incident_id}
                        className="border border-yellow/30 bg-yellow/5 p-3 space-y-2">
                     <div className="flex items-center gap-2">
-                      <span className="font-body text-yellow font-bold uppercase" style={{ fontSize: '10px' }}>
+                      <span className="text-yellow font-bold uppercase text-xs">
                         POSSIBLE {link.link_type.replace('_', ' ').toUpperCase()}
                       </span>
-                      <span className="font-body text-text-secondary" style={{ fontSize: '11px' }}>
+                      <span className="text-text-secondary text-xs">
                         conf: {(link.confidence * 100).toFixed(0)}%
                       </span>
                     </div>
-                    <div className="font-body text-text-primary text-sm">
+                    <div className="text-text-primary text-sm">
                       {preview?.title ?? link.incident_id}
                     </div>
-                    <div className="font-body text-text-secondary" style={{ fontSize: '11px' }}>
+                    <div className="text-text-secondary text-xs">
                       {link.reason}
                     </div>
 
                     {isOpen ? (
                       <div className="space-y-2 pt-1 border-t border-yellow/20">
                         <div>
-                          <label className="font-body text-text-secondary uppercase tracking-widest block mb-1"
-                                 style={{ fontSize: '10px' }}>
+                          <label className="text-text-secondary uppercase tracking-widest block mb-1 text-xs">
                             Dismiss reason:
                           </label>
                           <select
                             value={dismissCategory}
                             onChange={e => setDismissCategory(e.target.value as DismissCategory)}
-                            className="w-full px-2 py-1.5 bg-bg border border-border text-text-primary font-body text-sm rounded focus:border-yellow focus:outline-none"
+                            className="w-full px-2 py-1.5 bg-bg border border-border text-text-primary text-sm rounded focus:border-yellow focus:outline-none"
                           >
                             <option value="">— select —</option>
                             {(Object.entries(DISMISS_CATEGORIES) as [DismissCategory, typeof DISMISS_CATEGORIES[DismissCategory]][]).map(([key, cat]) => (
@@ -364,14 +361,13 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
                             ))}
                           </select>
                           {dismissCategory && (
-                            <div className="font-body text-text-secondary mt-1" style={{ fontSize: '10px' }}>
+                            <div className="text-text-secondary mt-1 text-xs">
                               {DISMISS_CATEGORIES[dismissCategory].description}
                             </div>
                           )}
                         </div>
                         <div>
-                          <label className="font-body text-text-secondary uppercase tracking-widest block mb-1"
-                                 style={{ fontSize: '10px' }}>
+                          <label className="text-text-secondary uppercase tracking-widest block mb-1 text-xs">
                             Additional detail (optional):
                           </label>
                           <input
@@ -380,22 +376,20 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
                             maxLength={200}
                             onChange={e => setDismissDetail(e.target.value)}
                             placeholder="Free text, max 200 chars"
-                            className="w-full px-2 py-1.5 bg-bg border border-border text-text-primary font-body text-sm rounded focus:border-yellow focus:outline-none"
+                            className="w-full px-2 py-1.5 bg-bg border border-border text-text-primary text-sm rounded focus:border-yellow focus:outline-none"
                           />
                         </div>
                         <div className="flex gap-2">
                           <button
                             disabled={!dismissCategory}
                             onClick={() => handleDismissLink(link.incident_id, dismissCategory as DismissCategory, dismissDetail)}
-                            className="px-3 py-1 border border-red text-red font-body font-bold hover:bg-red hover:text-bg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                            style={{ fontSize: '11px' }}
+                            className="px-3 py-1 border border-red text-red font-bold text-xs hover:bg-red hover:text-bg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                           >
                             CONFIRM DISMISS
                           </button>
                           <button
                             onClick={cancelDismiss}
-                            className="px-3 py-1 border border-border text-text-secondary font-body hover:border-text-secondary transition-colors"
-                            style={{ fontSize: '11px' }}
+                            className="px-3 py-1 border border-border text-text-secondary text-xs hover:border-text-secondary transition-colors"
                           >
                             CANCEL
                           </button>
@@ -404,8 +398,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
                     ) : (
                       <button
                         onClick={() => openDismissForm(link.incident_id)}
-                        className="font-body text-text-secondary hover:text-red transition-colors"
-                        style={{ fontSize: '11px' }}
+                        className="text-text-secondary text-xs hover:text-red transition-colors"
                       >
                         DISMISS
                       </button>
@@ -417,7 +410,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
           )}
 
           {/* Corroboration + buzz */}
-          <div className="flex gap-6 font-body text-sm">
+          <div className="flex gap-6 text-sm">
             <span className="text-text-secondary">
               Corroborated: <span className="text-text-primary">{item.corroboration_count}</span>
             </span>
@@ -432,7 +425,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
           <div>
             <button
               onClick={() => setShowSourceLinks(s => !s)}
-              className="font-body text-text-secondary text-sm hover:text-text-primary"
+              className="text-text-secondary text-sm hover:text-text-primary"
             >
               {showSourceLinks ? '▲' : '▼'} Sources ({sourceUrls.length})
             </button>
@@ -451,7 +444,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
                       <div className="flex items-center gap-2">
                         {badge && (
                           <span
-                            className={`font-body text-xs font-bold ${badge.cls}`}
+                            className={`text-xs font-bold ${badge.cls}`}
                             title={`HTTP ${val?.status_code ?? 0}`}
                           >
                             {badge.icon} {badge.label}
@@ -461,7 +454,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
                           href={safeHref(url)}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className={`font-body text-sm hover:underline break-all ${
+                          className={`text-sm hover:underline break-all ${
                             badge?.label === 'Dead' ? 'text-text-secondary line-through' : 'text-yellow'
                           }`}
                         >
@@ -474,7 +467,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
                             href={safeHref(val.wayback_url)}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="font-body text-blue-400 text-xs hover:underline break-all"
+                            className="text-blue-400 text-xs hover:underline break-all"
                           >
                             ↳ Wayback: {val.wayback_url.slice(0, 80)}
                           </a>
@@ -492,7 +485,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
       {/* ── Action bar ───────────────────────────────────── */}
       <div className="flex items-center gap-3 px-4 py-3 border-t border-border">
         {error && (
-          <span className="font-body text-red text-sm">{error}</span>
+          <span className="text-red text-sm">{error}</span>
         )}
 
         <div className="ml-auto flex items-center gap-2">
@@ -501,7 +494,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
             <button
               onClick={() => setShowRejectMenu(r => !r)}
               disabled={loading}
-              className="px-3 py-2 border border-red text-red font-body text-sm hover:bg-red hover:text-bg transition-colors disabled:opacity-50"
+              className="px-3 py-2 border border-red text-red text-sm hover:bg-red hover:text-bg transition-colors disabled:opacity-50"
             >
               Reject ▾
             </button>
@@ -511,7 +504,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
                   <button
                     key={r.value}
                     onClick={() => handleReject(r.value)}
-                    className="block w-full text-left px-3 py-2 font-body text-sm text-text-secondary hover:bg-bg hover:text-red"
+                    className="block w-full text-left px-3 py-2 text-sm text-text-secondary hover:bg-bg hover:text-red"
                   >
                     {r.label}
                   </button>
@@ -527,7 +520,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
                     onChange={e => setRejectNote(e.target.value)}
                     onKeyDown={e => e.stopPropagation()}
                     placeholder="Optional note (for your review, not the model)"
-                    className="w-full bg-bg border border-border px-2 py-1 font-body text-xs text-text-secondary placeholder:text-text-secondary/50 focus:outline-none focus:border-red"
+                    className="w-full bg-bg border border-border px-2 py-1 text-xs text-text-secondary placeholder:text-text-secondary/50 focus:outline-none focus:border-red"
                   />
                 </div>
               </div>
@@ -538,7 +531,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
           <button
             onClick={handleApprove}
             disabled={loading}
-            className="px-4 py-2 bg-green text-bg font-body text-sm font-bold hover:opacity-90 transition-opacity disabled:opacity-50"
+            className="px-4 py-2 bg-green text-bg text-sm font-bold hover:opacity-90 transition-opacity disabled:opacity-50"
           >
             {loading ? '…' : isEdited ? 'Save & Approve' : 'Approve ✓'}
           </button>

@@ -109,20 +109,19 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
 
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-cyan-500/40">
-        <span className="px-2 py-0.5 bg-cyan-500 text-bg font-body font-bold uppercase"
-              style={{ fontSize: '10px' }}>
+        <span className="px-2 py-0.5 bg-cyan-500 text-bg font-bold uppercase text-xs">
           NEW UPDATE
         </span>
-        <span className={`font-body font-bold text-sm ${CLASS_COLOR[targetIncident.classification] ?? ''}`}>
+        <span className={`font-bold text-sm ${CLASS_COLOR[targetIncident.classification] ?? ''}`}>
           {CLASS_ICON[targetIncident.classification]} {CLASS_LABEL[targetIncident.classification]}
         </span>
-        <span className="font-body text-text-secondary text-sm">
+        <span className="text-text-secondary text-sm">
           {severityDiamonds(targetIncident.severity)}
         </span>
-        <span className={`ml-2 px-2 py-0.5 rounded font-body text-sm font-bold ${confidenceColor(conf)}`}>
+        <span className={`ml-2 px-2 py-0.5 rounded text-sm font-bold ${confidenceColor(conf)}`}>
           {confidenceLabel(conf)}
         </span>
-        <span className="ml-auto font-body text-text-secondary text-sm">
+        <span className="ml-auto text-text-secondary text-sm">
           {new Date(item.created_at).toLocaleString('en-SG')}
         </span>
       </div>
@@ -131,15 +130,15 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
 
         {/* Existing incident — read-only preview */}
         <div>
-          <div className="font-body text-text-secondary mb-2 uppercase tracking-widest" style={{ fontSize: '10px' }}>
+          <div className="text-text-secondary mb-2 uppercase tracking-widest text-xs">
             Existing Incident
           </div>
           <div className="border border-border bg-bg p-3 space-y-2">
-            <div className="font-body font-bold text-text-primary text-sm">{targetIncident.title}</div>
-            <div className="font-body text-text-secondary text-sm leading-relaxed line-clamp-3">
+            <div className="font-bold text-text-primary text-sm">{targetIncident.title}</div>
+            <div className="text-text-secondary text-sm leading-relaxed line-clamp-3">
               {targetIncident.summary}
             </div>
-            <div className="flex gap-4 font-body text-text-secondary" style={{ fontSize: '11px' }}>
+            <div className="flex gap-4 text-text-secondary text-xs">
               <span>{targetIncident.incident_date}</span>
               <span>{targetIncident.source_urls.length} source{targetIncident.source_urls.length !== 1 ? 's' : ''}</span>
               {targetIncident.update_count > 0 && (
@@ -151,13 +150,13 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
 
         {/* New source */}
         <div>
-          <div className="font-body text-text-secondary mb-2 uppercase tracking-widest" style={{ fontSize: '10px' }}>
+          <div className="text-text-secondary mb-2 uppercase tracking-widest text-xs">
             New Source
           </div>
           <div className="border border-border bg-bg p-3 space-y-1">
-            <div className="font-body text-text-primary text-sm">{headline}</div>
+            <div className="text-text-primary text-sm">{headline}</div>
             <a href={safeHref(newUrl)} target="_blank" rel="noopener noreferrer"
-               className="font-body text-yellow text-sm hover:underline break-all">
+               className="text-yellow text-sm hover:underline break-all">
               {newUrl}
             </a>
           </div>
@@ -165,7 +164,7 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
 
         {/* Updated summary — editable */}
         <div>
-          <label className="font-body text-text-secondary text-sm uppercase tracking-widest block mb-1">
+          <label className="text-text-secondary text-sm uppercase tracking-widest block mb-1">
             Updated Summary{' '}
             <span className={summary.length > 0 && (summary.length < 500 || summary.length > 800) ? 'text-red' : 'text-green'}>
               {summary.length} chars
@@ -176,14 +175,14 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
             onChange={e => setSummary(e.target.value)}
             rows={5}
             placeholder="Edit the merged summary before confirming, or leave blank to keep existing…"
-            className="w-full px-3 py-2 bg-bg border border-border text-text-primary font-body text-sm rounded focus:border-cyan-500 focus:outline-none resize-y"
+            className="w-full px-3 py-2 bg-bg border border-border text-text-primary text-sm rounded focus:border-cyan-500 focus:outline-none resize-y"
           />
         </div>
 
         {/* Possible related banners */}
         {visibleRelated.length > 0 && (
           <div className="space-y-2">
-            <div className="font-body text-text-secondary uppercase tracking-widest" style={{ fontSize: '10px' }}>
+            <div className="text-text-secondary uppercase tracking-widest text-xs">
               Agent-suggested links
             </div>
             {visibleRelated.map(link => {
@@ -192,33 +191,31 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
                 <div key={link.incident_id}
                      className="border border-yellow/30 bg-yellow/5 p-3 space-y-2">
                   <div className="flex items-start gap-2">
-                    <span className="font-body text-yellow font-bold uppercase" style={{ fontSize: '10px' }}>
+                    <span className="text-yellow font-bold uppercase text-xs">
                       POSSIBLE {link.link_type.replace('_', ' ').toUpperCase()}
                     </span>
-                    <span className="font-body text-text-secondary" style={{ fontSize: '11px' }}>
+                    <span className="text-text-secondary text-xs">
                       conf: {(link.confidence * 100).toFixed(0)}%
                     </span>
                   </div>
-                  <div className="font-body text-text-primary text-sm">
+                  <div className="text-text-primary text-sm">
                     {preview?.title ?? link.incident_id}
                   </div>
-                  <div className="font-body text-text-secondary leading-snug" style={{ fontSize: '11px' }}>
+                  <div className="text-text-secondary leading-snug text-xs">
                     {link.reason}
                   </div>
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleConfirmLink(link)}
                       disabled={loading}
-                      className="px-2 py-1 border border-yellow text-yellow font-body hover:bg-yellow hover:text-bg transition-colors disabled:opacity-50"
-                      style={{ fontSize: '11px' }}
+                      className="px-2 py-1 border border-yellow text-yellow text-xs hover:bg-yellow hover:text-bg transition-colors disabled:opacity-50"
                     >
                       CONFIRM LINK
                     </button>
                     <button
                       onClick={() => handleDismissLink(link)}
                       disabled={loading}
-                      className="px-2 py-1 border border-border text-text-secondary font-body hover:border-red hover:text-red transition-colors disabled:opacity-50"
-                      style={{ fontSize: '11px' }}
+                      className="px-2 py-1 border border-border text-text-secondary text-xs hover:border-red hover:text-red transition-colors disabled:opacity-50"
                     >
                       DISMISS
                     </button>
@@ -232,13 +229,13 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
 
       {/* Action bar */}
       <div className="flex items-center gap-3 px-4 py-3 border-t border-cyan-500/40">
-        {error && <span className="font-body text-red text-sm">{error}</span>}
+        {error && <span className="text-red text-sm">{error}</span>}
         <div className="ml-auto flex items-center gap-2">
           <div className="relative">
           <button
             onClick={() => setShowRejectMenu(r => !r)}
             disabled={loading}
-            className="px-3 py-2 border border-red text-red font-body text-sm hover:bg-red hover:text-bg transition-colors disabled:opacity-50"
+            className="px-3 py-2 border border-red text-red text-sm hover:bg-red hover:text-bg transition-colors disabled:opacity-50"
           >
             Reject Update ▾
           </button>
@@ -248,7 +245,7 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
                 <button
                   key={r.value}
                   onClick={() => handleRejectUpdate(r.value)}
-                  className="block w-full text-left px-3 py-2 font-body text-sm text-text-secondary hover:bg-bg hover:text-red"
+                  className="block w-full text-left px-3 py-2 text-sm text-text-secondary hover:bg-bg hover:text-red"
                 >
                   {r.label}
                 </button>
@@ -260,7 +257,7 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
                   maxLength={500}
                   onChange={e => setRejectNote(e.target.value)}
                   placeholder="Optional note (for your review, not the model)"
-                  className="w-full bg-bg border border-border px-2 py-1 font-body text-xs text-text-secondary placeholder:text-text-secondary/50 focus:outline-none focus:border-red"
+                  className="w-full bg-bg border border-border px-2 py-1 text-xs text-text-secondary placeholder:text-text-secondary/50 focus:outline-none focus:border-red"
                 />
               </div>
             </div>
@@ -269,14 +266,14 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
           <button
             onClick={handleSplit}
             disabled={loading}
-            className="px-3 py-2 border border-border text-text-secondary font-body text-sm hover:border-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+            className="px-3 py-2 border border-border text-text-secondary text-sm hover:border-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
           >
             Split into New
           </button>
           <button
             onClick={handleConfirmUpdate}
             disabled={loading}
-            className="px-4 py-2 bg-cyan-600 text-white font-body text-sm font-bold hover:bg-cyan-500 transition-colors disabled:opacity-50"
+            className="px-4 py-2 bg-cyan-600 text-white text-sm font-bold hover:bg-cyan-500 transition-colors disabled:opacity-50"
           >
             {loading ? '…' : 'Confirm Update ✓'}
           </button>

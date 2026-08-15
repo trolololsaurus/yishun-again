@@ -26,7 +26,7 @@ export function RectifyList({ initialItems }: { initialItems: RectifyItem[] }) {
   }
 
   if (items.length === 0) {
-    return <p className="font-body text-text-secondary">Nothing left in this session.</p>
+    return <p className="text-text-secondary">Nothing left in this session.</p>
   }
 
   return (
@@ -132,7 +132,7 @@ function RectifyCard({
     <article className="bg-surface border border-border rounded">
       <div className="px-4 py-3 border-b border-border flex items-start justify-between gap-4">
         <div>
-          <div className="font-body text-text-primary">
+          <div className="text-text-primary">
             <span className={classColor(item.classification, item.custom_label)}>
               {classIcon(item.classification, item.custom_label)}{' '}
               {classLabel(item.classification, item.custom_label)}
@@ -141,21 +141,20 @@ function RectifyCard({
           </div>
           <Link
             href={`/incidents/${item.slug}`}
-            className="font-body text-text-primary hover:text-yellow"
+            className="text-text-primary hover:text-yellow"
           >
             {item.title}
           </Link>
-          <div className="font-body text-text-secondary" style={{ fontSize: '11px' }}>
+          <div className="text-text-secondary text-xs">
             {[item.area_name, item.block_number].filter(Boolean).join(' · ') || '—'}
           </div>
         </div>
         {/* Colour by meaning. This was always text-red, so a successful render
             announced itself in the failure colour. */}
         <span
-          className={`font-body uppercase tracking-widest ${
+          className={`uppercase tracking-widest text-xs ${
             (result?.status ?? item.image_status) === 'ok' ? 'text-green' : 'text-red'
           }`}
-          style={{ fontSize: '11px' }}
         >
           {result?.status ?? item.image_status ?? 'unknown'}
         </span>
@@ -171,7 +170,7 @@ function RectifyCard({
               className="w-full border border-border"
             />
             {reviewing && (
-              <p className="font-body text-text-secondary" style={{ fontSize: '11px' }}>
+              <p className="text-text-secondary text-xs">
                 Rendered just now. Keep it, or adjust the prompt below and regenerate.
               </p>
             )}
@@ -183,18 +182,16 @@ function RectifyCard({
             operator actually needs in order to edit the prompt usefully. */}
         {shown.length > 0 && (
           <div className="space-y-2">
-            <div className="font-body text-text-secondary uppercase tracking-widest"
-                 style={{ fontSize: '11px' }}>
+            <div className="text-text-secondary uppercase tracking-widest text-xs">
               Attempts ({shown.length})
             </div>
             {shown.map(a => (
               <details key={a.n} className="border border-border rounded">
-                <summary className="px-2 py-1 font-body cursor-pointer" style={{ fontSize: '11px' }}>
+                <summary className="px-2 py-1 cursor-pointer text-xs">
                   <span className="text-text-primary">#{a.n} {a.outcome.toUpperCase()}</span>
                   {a.reason && <span className="text-text-secondary"> — {a.reason}</span>}
                 </summary>
-                <pre className="px-2 py-2 bg-bg border-t border-border font-body whitespace-pre-wrap text-text-secondary"
-                     style={{ fontSize: '11px' }}>{a.prompt}</pre>
+                <pre className="px-2 py-2 bg-bg border-t border-border whitespace-pre-wrap text-text-secondary text-xs">{a.prompt}</pre>
               </details>
             ))}
           </div>
@@ -205,8 +202,7 @@ function RectifyCard({
             say "one snake, not two". This box is short, always starts empty,
             and is APPENDED to the prompt rather than replacing it. */}
         <div>
-          <label className="font-body text-text-secondary uppercase tracking-widest block mb-1"
-                 style={{ fontSize: '11px' }}>
+          <label className="text-text-secondary uppercase tracking-widest block mb-1 text-xs">
             What to change
           </label>
           <textarea
@@ -215,9 +211,9 @@ function RectifyCard({
             rows={3}
             maxLength={2000}
             placeholder={'e.g. Only one snake.\nPut the python in the foreground.\nFewer people.'}
-            className="w-full px-3 py-2 bg-bg border border-border text-text-primary font-body text-sm rounded focus:border-yellow focus:outline-none resize-y placeholder:text-text-secondary/50"
+            className="w-full px-3 py-2 bg-bg border border-border text-text-primary text-sm rounded focus:border-yellow focus:outline-none resize-y placeholder:text-text-secondary/50"
           />
-          <div className="font-body text-text-secondary" style={{ fontSize: '11px' }}>
+          <div className="text-text-secondary text-xs">
             {draft.trim()
               ? 'Added to the prompt below — the rest of it is kept.'
               : 'No prompt stored yet. Leave this empty and press Generate to have one written for you.'}
@@ -227,8 +223,7 @@ function RectifyCard({
         {/* The full prompt, collapsed. Available for real rewrites, out of the
             way for the 90% case above. */}
         <details className="border border-border rounded">
-          <summary className="px-2 py-1 font-body text-text-secondary cursor-pointer"
-                   style={{ fontSize: '11px' }}>
+          <summary className="px-2 py-1 text-text-secondary cursor-pointer text-xs">
             Full prompt ({draft.length} / {MAX_PROMPT_CHARS} chars) — edit directly
           </summary>
           <div className="px-2 py-2 border-t border-border">
@@ -237,9 +232,9 @@ function RectifyCard({
               onChange={e => setDraft(e.target.value)}
               rows={12}
               maxLength={MAX_PROMPT_CHARS}
-              className="w-full px-3 py-2 bg-bg border border-border text-text-primary font-body text-sm rounded focus:border-yellow focus:outline-none resize-y"
+              className="w-full px-3 py-2 bg-bg border border-border text-text-primary text-sm rounded focus:border-yellow focus:outline-none resize-y"
             />
-            <div className="font-body text-text-secondary" style={{ fontSize: '11px' }}>
+            <div className="text-text-secondary text-xs">
               {draft.trim()
                 ? 'Rendered as one attempt, with no automatic softening.'
                 : 'Empty — a prompt will be composed for you, then run through the full softening ladder.'}
@@ -247,8 +242,8 @@ function RectifyCard({
           </div>
         </details>
 
-        {error   && <p className="font-body text-red text-sm">{error}</p>}
-        {warning && <p className="font-body text-yellow text-sm">{warning}</p>}
+        {error   && <p className="text-red text-sm">{error}</p>}
+        {warning && <p className="text-yellow text-sm">{warning}</p>}
       </div>
 
       {/* Two modes. Before a render the question is "make me an image"; after
@@ -264,7 +259,7 @@ function RectifyCard({
             <button
               onClick={() => onResolved(item.id)}
               disabled={busy !== null}
-              className="px-4 py-2 bg-green text-bg font-body text-sm font-bold rounded disabled:opacity-40"
+              className="px-4 py-2 bg-green text-bg text-sm font-bold rounded disabled:opacity-40"
             >
               Keep image
             </button>
@@ -272,7 +267,7 @@ function RectifyCard({
             <button
               onClick={() => post('rectify', { prompt: composeSubmission() })}
               disabled={busy !== null}
-              className="px-4 py-2 border border-yellow text-yellow font-body text-sm rounded disabled:opacity-40"
+              className="px-4 py-2 border border-yellow text-yellow text-sm rounded disabled:opacity-40"
               title="Discard this render and generate another from the prompt below"
             >
               {busy === 'rectify' ? 'Regenerating…' : 'Reject & regenerate'}
@@ -284,7 +279,7 @@ function RectifyCard({
               ? { prompt: composeSubmission() }
               : undefined)}
             disabled={busy !== null}
-            className="px-4 py-2 bg-green text-bg font-body text-sm font-bold rounded disabled:opacity-40"
+            className="px-4 py-2 bg-green text-bg text-sm font-bold rounded disabled:opacity-40"
           >
             {busy === 'rectify'
               ? 'Rendering…'
@@ -295,7 +290,7 @@ function RectifyCard({
         <button
           onClick={() => (confirmNoImage ? post('no-image') : setConfirmNoImage(true))}
           disabled={busy !== null}
-          className="px-4 py-2 border border-red text-red font-body text-sm rounded disabled:opacity-40"
+          className="px-4 py-2 border border-red text-red text-sm rounded disabled:opacity-40"
         >
           {/* The incident is already published — that is what the page header
               says. Naming this "Publish without image" implied the opposite. */}
@@ -305,13 +300,13 @@ function RectifyCard({
         <button
           onClick={() => onDismiss(item.id)}
           disabled={busy !== null}
-          className="px-4 py-2 font-body text-sm text-text-secondary hover:text-text-primary disabled:opacity-40"
+          className="px-4 py-2 text-sm text-text-secondary hover:text-text-primary disabled:opacity-40"
         >
           Decide later
         </button>
 
         {confirmNoImage && (
-          <span className="font-body text-text-secondary" style={{ fontSize: '11px' }}>
+          <span className="text-text-secondary text-xs">
             Terminal — future backfills will skip this incident.
           </span>
         )}

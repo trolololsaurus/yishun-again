@@ -108,7 +108,7 @@ export default function IncidentsPage() {
     }
   }
 
-  if (error?.view === view) return <div className="font-body text-red text-sm">{error.message}</div>
+  if (error?.view === view) return <div className="text-red text-sm">{error.message}</div>
 
   const incidents = pageData?.data ?? []
   const count      = pageData?.count ?? 0
@@ -117,7 +117,7 @@ export default function IncidentsPage() {
 
   return (
     <div>
-      <h1 className="font-body font-bold text-yellow text-lg mb-6">
+      <h1 className="font-bold text-yellow text-lg mb-6">
         INCIDENTS <span className="text-text-secondary">({count})</span>
       </h1>
 
@@ -209,7 +209,7 @@ export default function IncidentsPage() {
       {/* Kept below the table rather than replacing it: re-sorting should not
           blank the screen an operator is reading. */}
       {loading && (
-        <div className="font-body text-text-secondary text-sm mt-4">Loading…</div>
+        <div className="text-text-secondary text-sm mt-4">Loading…</div>
       )}
 
       {totalPages > 1 && (

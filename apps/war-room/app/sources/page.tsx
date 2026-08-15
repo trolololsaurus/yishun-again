@@ -35,18 +35,18 @@ export default function SourcesPage() {
     setUpdating(null)
   }
 
-  if (loading) return <div className="font-body text-text-secondary text-sm">Loading…</div>
+  if (loading) return <div className="text-text-secondary text-sm">Loading…</div>
 
   const unapproved = sources.filter(s => !s.approved_by_operator)
   const approved   = sources.filter(s =>  s.approved_by_operator)
 
   return (
     <div>
-      <h1 className="font-body font-bold text-yellow text-lg mb-6">SOURCES</h1>
+      <h1 className="font-bold text-yellow text-lg mb-6">SOURCES</h1>
 
       {unapproved.length > 0 && (
         <section className="mb-8">
-          <h2 className="font-body text-red text-sm uppercase tracking-widest mb-3">
+          <h2 className="text-red text-sm uppercase tracking-widest mb-3">
             ⚠ Awaiting Approval ({unapproved.length})
           </h2>
           <SourceTable sources={unapproved} updating={updating} onPatch={patch} />
@@ -54,7 +54,7 @@ export default function SourcesPage() {
       )}
 
       <section>
-        <h2 className="font-body text-text-secondary text-sm uppercase tracking-widest mb-3">
+        <h2 className="text-text-secondary text-sm uppercase tracking-widest mb-3">
           Active Sources ({approved.length})
         </h2>
         <SourceTable sources={approved} updating={updating} onPatch={patch} />
@@ -78,7 +78,7 @@ function SourceTable({
   }
 
   return (
-    <table className="w-full font-body text-sm border-collapse">
+    <table className="w-full text-sm border-collapse">
       <thead>
         <tr className="border-b border-border text-text-secondary">
           <th className="text-left py-2 pr-4">Name</th>
@@ -102,7 +102,7 @@ function SourceTable({
                 {src.name}
               </a>
               {src.discovery_notes && (
-                <div className="text-text-secondary mt-0.5" style={{ fontSize: '10px' }}>
+                <div className="text-text-secondary mt-0.5 text-xs">
                   {src.discovery_notes.slice(0, 80)}
                 </div>
               )}

@@ -48,7 +48,7 @@ export function Nav() {
         })}
       </ul>
 
-      <div className="p-4 border-t border-border text-text-secondary font-body" style={{ fontSize: '9px' }}>
+      <div className="p-4 border-t border-border text-text-secondary text-xs">
         PROTECTED · CF ACCESS
       </div>
     </nav>

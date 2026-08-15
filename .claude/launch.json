@@ -2,16 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "web",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "apps/web", "run", "dev"],
-      "port": 3000,
-      "autoPort": false
-    },
-    {
       "name": "war-room",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "apps/war-room", "run", "dev"],
+      "runtimeArgs": ["run", "dev", "--prefix", "apps/war-room"],
       "port": 3001
     }
   ]
