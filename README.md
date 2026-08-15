@@ -43,7 +43,7 @@ docs/              Spec, autonomy runbook, pipeline change records
 | Stage 1 filter | Gemini API | `gemini-3.1-flash-lite` |
 | Stage 2 classify + write | Anthropic API | `claude-haiku-4-5-20251001` |
 | Image gen | Gemini image API | `gemini-3.1-flash-lite-image` |
-| Scheduling | Cloud Scheduler → `POST /orchestrator/daily` | 14:58 SGT daily |
+| Scheduling | Cloud Scheduler → `POST /orchestrator/daily` | 02:58 & 14:58 SGT (twice daily) |
 
 `langgraph` is pinned in `requirements.txt` but nothing imports it — the
 orchestration is hand-rolled in `ops/daily.py` and `ingestion/orchestrator.py`.
