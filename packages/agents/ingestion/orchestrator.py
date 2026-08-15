@@ -262,6 +262,14 @@ def _emit(stage2_input, item, is_dateless, edmw_signal_count, primary_candidate,
         item["learning_flag"] = learning_flag
         notes.append(f"{primary_candidate.url}: {learning_flag}")
 
+    # write_stage2 does not pass source_articles through to its return value,
+    # so build_queue_row's timeline synthesis never sees the per-article dates
+    # for multi-source clusters — only the primary's URL gets a date entry.
+    # Carry them from the stage2 INPUT into the draft so every kept source URL
+    # gets its publication date recorded.
+    if "source_articles" in stage2_input and "source_articles" not in draft:
+        draft["source_articles"] = stage2_input["source_articles"]
+
     is_update = consolidation_result.action == "update"
     row = build_queue_row(
         item, draft, consolidation_result,
