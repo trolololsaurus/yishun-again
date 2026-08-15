@@ -250,8 +250,8 @@ threshold. All leave it `pending` for the operator; none reject anything:
 | `oversized_cluster_unproven` | A grouping call merged > `CLUSTER_MAX_SIZE` articles | **Automatically**, once the grouper earns it (`AUTONOMY.md` §5b) |
 | `unapproved_source_domain` | `source_allowlist` | Operator approves the domain |
 
-**The pipeline is autonomous as of July 2026.** One Cloud Scheduler job at
-**14:58 SGT daily** POSTs `/orchestrator/daily`, which runs twelve agents in a
+**The pipeline is autonomous as of July 2026.** One Cloud Scheduler job runs
+**twice daily at 02:58 and 14:58 SGT** and POSTs `/orchestrator/daily`, which runs twelve agents in a
 fixed order (`ops/daily.py`): recalibration → ingestion → auto-publish →
 integrity → supervisor → learning monitor → backend health → pattern detection →
 lifecycle (Mondays) → source discovery (first Monday) → maintenance digest →

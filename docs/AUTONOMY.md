@@ -10,9 +10,9 @@ operator when something actually needs a person."
 
 ## 1. What runs, when
 
-One Cloud Scheduler job at **14:58 SGT daily** POSTs to `/orchestrator/daily` on
-the `yishun-agents` Cloud Run service. That single endpoint runs twelve steps in
-a fixed order (`packages/agents/ops/daily.py`):
+One Cloud Scheduler job runs **twice daily at 02:58 and 14:58 SGT** and POSTs to
+`/orchestrator/daily` on the `yishun-agents` Cloud Run service. That single
+endpoint runs twelve steps in a fixed order (`packages/agents/ops/daily.py`):
 
 | # | Agent | Module | Cadence | Requirement |
 |---|---|---|---|---|
