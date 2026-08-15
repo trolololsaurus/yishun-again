@@ -43,10 +43,13 @@ REQUEST_TIMEOUT = 25
 _READ_CAP = 2_000_000
 _CONTENT_LIMIT = 3_000
 
-# One query term per source. "yishun" alone is the right breadth here: this is a
-# site-search, so the publisher's own relevance ranking does the rest, and extra
-# terms mostly return the same articles at the cost of another round-trip.
-SEARCH_TERM = "yishun"
+# Query terms per source. A site-search on `?s=yishun` only returns articles the
+# publisher's index matched on "yishun", so a story that names ONLY a subzone
+# (Khatib, Chong Pang) is never in that feed and the downstream keyword filter
+# never gets a chance at it. The subzone terms are searched separately and the
+# results merged/deduped by link — a handful of extra round-trips (throttled and
+# cached via polite_get) for the recall the single-term search structurally missed.
+SEARCH_TERMS = ["yishun", "khatib", "chong pang"]
 
 _BLOCK_MARKERS = (
     "unusual traffic", "/sorry/", "captcha", "recaptcha",
@@ -61,26 +64,38 @@ class WordPressSearchSource:
     source_type = "msm"
 
     def __init__(self, name: str, source_name: str, base_url: str, *,
-                 term: str = SEARCH_TERM, enabled: bool = True):
+                 terms: list[str] = SEARCH_TERMS, enabled: bool = True):
         self.name = name
         self.source_name = source_name
         self.base_url = base_url.rstrip("/")
-        self.term = term
+        self.terms = terms
         self.enabled = enabled
 
-    @property
-    def feed_url(self) -> str:
-        return f"{self.base_url}/?s={urllib.parse.quote(self.term)}&feed=rss2"
+    def feed_url(self, term: str) -> str:
+        return f"{self.base_url}/?s={urllib.parse.quote(term)}&feed=rss2"
 
     def fetch(self, since: date | None) -> list[Candidate]:
         """
-        `since` is advisory — the orchestrator re-applies RecencyFilter — and is
-        used here only to avoid re-emitting entries the watermark already
-        covers. Dateless entries are never dropped (INGESTION_DESIGN §5.1).
+        Search each term's feed and merge, deduped by link. `since` is advisory —
+        the orchestrator re-applies RecencyFilter — and is used here only to avoid
+        re-emitting entries the watermark already covers. Dateless entries are
+        never dropped (INGESTION_DESIGN §5.1).
         """
-        url = self.feed_url
+        candidates: list[Candidate] = []
+        seen: set[str] = set()
+        for term in self.terms:
+            self._fetch_term(term, since, seen, candidates)
+        logger.info("%s: %d term(s) -> %d candidate(s)",
+                    self.name, len(self.terms), len(candidates))
+        return candidates
+
+    def _fetch_term(self, term: str, since: date | None,
+                    seen: set[str], candidates: list[Candidate]) -> None:
+        url = self.feed_url(term)
         # Shares the per-host spacing, 403 back-off and per-pass cache with
         # every other publisher request — see scrapers.fetch_strategy.polite_get.
+        # Same-host terms share the trip state, so once one 403s the rest fail
+        # fast rather than hammering a rate-limited host.
         from scrapers.fetch_strategy import polite_get
         status, raw = polite_get(url, timeout=REQUEST_TIMEOUT, cap=_READ_CAP)
         if status in (403, 429):
@@ -99,8 +114,6 @@ class WordPressSearchSource:
         if feed.bozo and not feed.entries:
             raise SourceUnavailableError(f"{self.name}: search feed parse failed")
 
-        candidates: list[Candidate] = []
-        seen: set[str] = set()
         skipped_stale = 0
 
         for entry in feed.entries:
@@ -142,9 +155,8 @@ class WordPressSearchSource:
                 discovered_via=self.name,
             ))
 
-        logger.info("%s: %d feed entries, %d stale -> %d candidate(s)",
-                    self.name, len(feed.entries), skipped_stale, len(candidates))
-        return candidates
+        logger.info("%s[%s]: %d feed entries, %d stale",
+                    self.name, term, len(feed.entries), skipped_stale)
 
 
 # ── Registry ─────────────────────────────────────────────────────────────────

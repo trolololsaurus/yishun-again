@@ -123,8 +123,12 @@ check("no duplicate source ids in the live registry",
 # ── WordPressSearchSource URL construction ───────────────────────────────────
 s = wp.WordPressSearchSource("t", "T", "https://example.sg/")
 check("feed_url uses the WP search-feed form",
-      s.feed_url == "https://example.sg/?s=yishun&feed=rss2")
-check("trailing slash on base_url is normalised", "//?s=" not in s.feed_url)
+      s.feed_url("yishun") == "https://example.sg/?s=yishun&feed=rss2")
+check("subzone term is searched too (khatib in the term list)",
+      "khatib" in s.terms)
+check("multi-word term is url-encoded",
+      s.feed_url("chong pang") == "https://example.sg/?s=chong%20pang&feed=rss2")
+check("trailing slash on base_url is normalised", "//?s=" not in s.feed_url("yishun"))
 
 print()
 print(f"{passed} passed, {failed} failed")

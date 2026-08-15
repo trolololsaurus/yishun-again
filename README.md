@@ -79,9 +79,12 @@ agents backend `/art/generate`. `art/suppression.py` short-circuits both for
   Google-News sitemap. A much wider window than the front-page feed (Straits
   Times: 462 sitemap entries against 44 in RSS). Mothership publishes no news
   sitemap; Shin Min serves neither robots.txt nor a sitemap.
-- **2 WordPress search adapters** (`wp_search.py`) — `?s=yishun&feed=rss2` over
-  MustShareNews and The Independent, which searches their whole archive.
-  Mothership ignores `?s=`, so it is not covered.
+- **2 WordPress search adapters** (`wp_search.py`) — `?s=<term>&feed=rss2` over
+  MustShareNews and The Independent, which searches their whole archive. Each is
+  queried for `yishun`, `khatib` and `chong pang` (a `?s=yishun` feed only
+  contains articles the publisher indexed on "yishun", so a subzone-only story is
+  never in it), results merged and deduped by link. Mothership ignores `?s=`, so
+  it is not covered.
 - **2 signal sources** — Reddit (r/singapore, r/singaporeraw) and EDMW/HWZ.
 
 A source must supply `published_at` to be registered: a dateless candidate
