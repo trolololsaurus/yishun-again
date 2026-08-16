@@ -54,12 +54,13 @@ def q(qid, *, url, title="Yishun cat rescued from tree", summary="A cat was resc
 
 def inc(iid, *, urls, title="Yishun cat rescued from tree", summary="A cat was rescued.",
         d="2026-07-10", slug="yishun-cat-rescue-jul-2026", corroboration=None,
-        classification="clown", severity=2, published="2026-07-11T00:00:00Z"):
+        classification="clown", severity=2, published="2026-07-11T00:00:00Z",
+        source_timeline=None):
     """A published incidents row."""
     return {"id": iid, "created_at": published, "published_at": published,
             "incident_date": d, "title": title, "summary": summary, "slug": slug,
             "classification": classification, "severity": severity,
-            "source_urls": urls,
+            "source_urls": urls, "source_timeline": source_timeline or [],
             "corroboration_count": len(urls) if corroboration is None else corroboration}
 
 
@@ -265,6 +266,33 @@ check("missing date NOT flagged when _date_fallback marks it for the operator (Q
       "missing_incident_date" not in codes(QQ("q1", url=CNA_A, d="", slug="yishun-cat-rescue",
                                                 date_fallback=True)))
 
+# ── incident_date_after_source: event dated after the article that reports it ─
+# The check that would have caught the two backfill rows (a 2018 story dated
+# 2026, a June story dated September) that no other date guard did.
+check("_day_precision_source_dates reads timeline dates",
+      ig._day_precision_source_dates([{"date": "2018-03-29"}], []) == [date(2018, 3, 29)])
+check("_day_precision_source_dates reads a full /YYYY/MM/DD/ URL",
+      date(2018, 3, 27) in ig._day_precision_source_dates([], ["https://mothership.sg/2018/03/27/x/"]))
+check("_day_precision_source_dates IGNORES a month-only /YYYY/MM/ URL (no false day-1)",
+      ig._day_precision_source_dates([], ["https://mothership.sg/2018/03/x/"]) == [])
+check("incident_date after its only (latest) source is flagged",
+      "incident_date_after_source" in codes(II("i1", urls=[CNA_A], d="2017-09-29",
+          source_timeline=[{"date": "2017-06-01", "source_url": CNA_A}])))
+check("NOT flagged when a source is dated on/after the event (opening w/ same-day report)",
+      "incident_date_after_source" not in codes(II("i1", urls=[CNA_A], d="2010-03-29",
+          source_timeline=[{"date": "2007-06-11"}, {"date": "2010-11-15"}])))
+check("NOT flagged within a 1-day timezone tolerance",
+      "incident_date_after_source" not in codes(II("i1", urls=[CNA_A], d="2018-03-30",
+          source_timeline=[{"date": "2018-03-29"}])))
+check("NOT flagged when no day-precision source date exists (cannot verify)",
+      "incident_date_after_source" not in codes(II("i1", urls=[CNA_A], d="2017-09-29")))
+check("full-date URL alone (no timeline) still catches it",
+      "incident_date_after_source" in codes(II("i1", urls=["https://mothership.sg/2018/03/27/x/"],
+          d="2018-06-01")))
+check("a clean incident (event before its source) is not flagged",
+      "incident_date_after_source" not in codes(II("i1", urls=[CNA_A], d="2018-03-20",
+          source_timeline=[{"date": "2018-03-29"}])))
+
 # QA H8 — the drift that under-counted the lightning meter
 f = finding(II("i1", urls=[CNA_A, ST_A], corroboration=1), "corroboration_drift")
 check("corroboration_count drift detected", f is not None)
@@ -359,8 +387,8 @@ print("\n corrections:")
 
 all_codes = {"dupe_url_published", "dupe_title_confirmed", "dupe_title_published",
              "no_source_urls", "future_incident_date", "ancient_incident_date",
-             "missing_incident_date", "repeated_source_url", "bad_severity",
-             "bad_classification", "slug_date_conflict", "signal_url_cited",
+             "missing_incident_date", "incident_date_after_source", "repeated_source_url",
+             "bad_severity", "bad_classification", "slug_date_conflict", "signal_url_cited",
              "unknown_source_domain", "dead_source_url"}
 samples = [
     ig.find_duplicate_urls([], [II("i1", urls=[CNA_A]), II("i2", urls=[CNA_A])]),

@@ -120,7 +120,7 @@ _QUEUE_COLUMNS = (
 )
 _INCIDENT_COLUMNS = (
     "id,created_at,published_at,incident_date,title,summary,slug,classification,"
-    "severity,source_urls,corroboration_count"
+    "severity,source_urls,corroboration_count,source_timeline"
 )
 
 
@@ -165,6 +165,34 @@ def _as_date(value) -> date | None:
         return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
     except ValueError:
         return None
+
+
+def _day_precision_source_dates(source_timeline, source_urls) -> list[date]:
+    """
+    Publication dates of an incident's sources, at DAY precision only —
+    source_timeline entry dates plus full `/YYYY/MM/DD/` (or `storyYYYYMMDD`)
+    paths in the URLs. Month-only URL paths (`/2026/08/`) are deliberately
+    excluded: read as the 1st they manufacture a false "after source" verdict
+    (the exact bug that turned an 8-item audit into 51 false positives).
+    """
+    out: list[date] = []
+    for e in (source_timeline or []):
+        dd = _as_date((e or {}).get("date"))
+        if dd:
+            out.append(dd)
+    for u in (source_urls or []):
+        for m in re.finditer(r"/(\d{4})/(\d{2})/(\d{2})/", u or ""):
+            try:
+                out.append(date(int(m.group(1)), int(m.group(2)), int(m.group(3))))
+            except ValueError:
+                pass
+        m = re.search(r"story(20\d{2})(\d{2})(\d{2})", u or "")
+        if m:
+            try:
+                out.append(date(int(m.group(1)), int(m.group(2)), int(m.group(3))))
+            except ValueError:
+                pass
+    return out
 
 
 def norm_url(url: str) -> str:
@@ -268,6 +296,7 @@ def incident_record(row: dict) -> dict:
         "primary_url":         urls[0] if urls else "",
         "urls":                urls,
         "raw_urls":            list(row.get("source_urls") or []),
+        "source_timeline":     row.get("source_timeline") or [],
         "date":                _as_date(row.get("incident_date")),
         "created_at":          str(row.get("published_at") or row.get("created_at") or ""),
         "slug":                row.get("slug") or "",
@@ -640,6 +669,23 @@ def check_row_integrity(rec: dict, today: date,
             code="ancient_incident_date", level="anomaly",
             message=f"incident_date {d} predates {EARLIEST_PLAUSIBLE} — parse failure or fabrication",
             detail={"incident_date": str(d)}, **where))
+    elif published:
+        # A plausible past date — but it must not post-date its own coverage. An
+        # event cannot be dated after the most recent article that reports it.
+        # This is the standing-archive twin of stage2_writer._sanitise_event_date,
+        # which runs only at ingestion and which the backfill path bypasses — the
+        # two rows this first caught (a 2018 story dated 2026, a June story dated
+        # September) were both backfill. Compared to the LATEST source, not the
+        # earliest: a genuine opening legitimately post-dates a pre-event
+        # announcement, but nothing post-dates its own most recent coverage.
+        src = _day_precision_source_dates(rec.get("source_timeline"), rec.get("raw_urls"))
+        latest = max(src) if src else None
+        if latest and (d - latest).days > 1:
+            findings.append(Finding(
+                code="incident_date_after_source", level="anomaly",
+                message=f"incident_date {d} post-dates its most recent source {latest} "
+                        f"by {(d - latest).days}d — event dated after it was reported",
+                detail={"incident_date": str(d), "latest_source": str(latest)}, **where))
 
     # ── QA H8: corroboration_count vs its own sources ───────────────────────
     # Expected is the DISTINCT count, matching build_queue_row: a URL repeated
