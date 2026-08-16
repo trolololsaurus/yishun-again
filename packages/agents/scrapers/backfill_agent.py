@@ -729,6 +729,21 @@ def _build_incident_row(draft: dict, item: dict) -> Optional[dict]:
     published_at  = parsed_iso
     incident_date = parsed_iso[:10]   # "YYYY-MM-DD"
 
+    # Date sanity (write-time twin of ops.integrity's incident_date_after_source):
+    # incident_date is inherited from item["date"]; a corrupt one that post-dates
+    # the most recent source reporting the story is a fabrication, not history
+    # (a 2018 AsiaOne story that reached the archive dated 2026). Downgrade to the
+    # queue like a missing date rather than auto-publishing a wrong date. ISO
+    # dates compare chronologically as strings.
+    _src_dates = [str(e.get("date"))[:10] for e in (item.get("source_timeline") or []) if e.get("date")]
+    _src_dates = [x for x in _src_dates if len(x) == 10 and x[4] == "-" and x[7] == "-"]
+    if _src_dates and incident_date > max(_src_dates):
+        logger.warning(
+            "Backfill: incident_date %s post-dates its most recent source %s for '%s' "
+            "— downgrading to QUEUE (item date looks fabricated)",
+            incident_date, max(_src_dates), draft.get("title", "")[:60])
+        return None
+
     hype = 1 if item.get("source_type") == "reference" else draft.get("hype_meter", 0)
 
     # Every corroborating source, de-duplicated and order-preserving. Previously
