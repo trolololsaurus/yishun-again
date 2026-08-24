@@ -1,5 +1,7 @@
 # yishun-again
 
+Yishun - The Hive of Scum and Villiany
+
 Satirical, semi-autonomous incident archive for Yishun, Singapore.
 An agent pipeline scrapes Singapore news, drafts write-ups, and queues them for
 operator review. Operator approves → incident publishes. Confidence ≥ 0.95 → auto-publishes.
