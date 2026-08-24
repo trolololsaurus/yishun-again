@@ -490,12 +490,10 @@ Batch tier (§1) is **not** used on this path — see
 `docs/EDGE_CASES_AND_HARDENING.md` §1.1. Batch turnaround is up to 24 hours and
 cannot back an approve click.
 
-`IMAGE_USE_BATCH=false` is declared in `.env.example` and read by **nothing**:
-`art/generate_image.py` has no batch branch, so today every call is standard
-tier by construction. That is the correct behaviour for this path; it is
-recorded here so nobody assumes a switch exists that would need flipping, or
-that setting it to `true` would do anything. Batch remains a bulk-archive-only
-idea, unimplemented.
+`art/generate_image.py` has no batch branch — every call is standard tier by
+construction. Batch remains a bulk-archive-only idea, unimplemented.
+`IMAGE_USE_BATCH` has been removed from `.env.example` (2026-08-24) since
+nothing reads it.
 
 ### 6.1 Generate before insert — not fire-and-forget
 

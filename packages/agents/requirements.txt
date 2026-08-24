@@ -12,9 +12,6 @@ pydantic-settings==2.3.0
 # ── Scheduling (spec: APScheduler 3.x) ─────────────────────────────────────
 APScheduler==3.10.4
 
-# ── Agent orchestration ─────────────────────────────────────────────────────
-langgraph==0.4.0
-
 # ── AI APIs ─────────────────────────────────────────────────────────────────
 # Stage 2 writer — claude-haiku-4-5-20251001 (classify) / claude-sonnet-4-6 (write)
 anthropic==0.40.0
@@ -55,5 +52,3 @@ Pillow>=10.3.0
 # ── Supabase (agent writes — secret key, bypasses RLS) ──────────────────────
 supabase==2.30.1
 
-# ── Observability ───────────────────────────────────────────────────────────
-structlog==24.1.0

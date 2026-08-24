@@ -25,17 +25,10 @@ URL that will not exist until tomorrow.
 | Operator approve, auto-publish | **Standard** | $0.0336 | Synchronous, blocks insert, seconds not hours |
 | Bulk archive backfill | **Batch** | $0.0168 | One-off, no user waiting, tolerates 24h |
 
-`IMAGE_USE_BATCH` must **not** apply to the interactive path. Either scope the
-flag to the backfill tool only, or delete it from the live path entirely. At
-~5 images/day the standard-tier premium is about $2.50/month — irrelevant.
-
-Amend `ART_PIPELINE.md` §1 and B2 accordingly.
-
-**Landed.** `ART_PIPELINE.md` §1 now marks batch pricing backfill-only and §6
-states `IMAGE_USE_BATCH` defaults to `false`, scoped to bulk archive backfill.
-Nothing in `packages/agents/` reads the flag and `art/generate_image.py` has no
-batch call at all, so the interactive path cannot take the batch tier even by
-misconfiguration.
+**Resolved (2026-08-24).** `IMAGE_USE_BATCH` has been removed from `.env.example`
+— nothing in `packages/agents/` ever read it and `art/generate_image.py` has no
+batch branch. The interactive path is standard-tier only. At ~5 images/day the
+premium is ~$2.50/month — irrelevant.
 
 ## 1.2 The suppression gate depends on a model-generated field
 

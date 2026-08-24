@@ -45,11 +45,9 @@ the dead `pipeline.py`.
   `consolidation/` module (§5.4). The file no longer exists.
 - **End state: ONE forward pipeline.** No LangGraph graph, no orphaned `pipeline.py`, no third
   path. (Owner directive: "don't keep dead code and useless agents.")
-- Residue worth knowing: `langgraph==0.4.0` is still pinned in
-  `packages/agents/requirements.txt`, but **nothing in the codebase imports it** — there is no
-  first-party `StateGraph` reference left. Orchestration is hand-rolled in `ops/daily.py`
-  (cadence) and `ingestion/orchestrator.py` (the pass). Any doc still calling LangGraph "the
-  orchestrator" is describing a dependency, not the design.
+- `langgraph` has been removed from `packages/agents/requirements.txt` (2026-08-24 — never
+  imported). Orchestration is hand-rolled in `ops/daily.py` (cadence) and
+  `ingestion/orchestrator.py` (the pass).
 
 Rationale for fresh-build over refactoring the LangGraph graph in place: the graph is married to
 the broken in-process-APScheduler trigger (§1 / TechSpec §11.2) and to the LangGraph framework

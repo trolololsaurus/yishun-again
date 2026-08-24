@@ -44,7 +44,7 @@ yishun-again/
 │   │   ├── classifiers/    # Corroboration + severity scoring
 │   │   ├── writers/        # Incident draft generation
 │   │   ├── art/            # Scene writer + Gemini image gen + R2 upload
-│   │   ├── cards/          # Share card generation
+│   │   ├── cards/          # Deleted — share cards are OG meta tags (no code)
 │   │   ├── orchestrator/   # Herald (milestone) agent
 │   │   └── ops/            # Autonomy layer — see docs/AUTONOMY.md
 │   │       ├── daily.py            # THE daily chain (Cloud Scheduler entry)
@@ -201,13 +201,10 @@ trusting this table.
 | Scheduling | Cloud Scheduler (APScheduler is off in prod) | — |
 | CSS | Tailwind CSS | 3.x |
 
-**There is no LangGraph orchestrator.** `langgraph==0.4.0` is pinned in
-`requirements.txt` but **nothing in the codebase imports it** — no `langgraph`,
-no `StateGraph`, anywhere in first-party code. Orchestration is hand-rolled in
-`ops/daily.py` (the daily chain) and `ingestion/orchestrator.py` (the pass).
-This table used to claim "LangGraph 0.1.x" as the orchestrator, which was wrong
-twice over: wrong version, and wrong about it being used at all. Treat the pin
-as an unused dependency, and do not write code that assumes a graph runtime.
+**There is no LangGraph orchestrator.** `langgraph` has been removed from
+`requirements.txt` (2026-08-24 — it was never imported). Orchestration is
+hand-rolled in `ops/daily.py` (the daily chain) and `ingestion/orchestrator.py`
+(the pass). Do not write code that assumes a graph runtime.
 
 FastAPI is pinned to 0.115.14 rather than the 0.110.x this table used to name —
 bumped for the starlette CVE-2024-47874 fix.

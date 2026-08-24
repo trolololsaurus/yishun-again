@@ -57,8 +57,7 @@ yishun-again/
 │   │   │                       #   lifecycle, patterns, geocoding
 │   │   ├── consolidation/      # new / update / phenomenon routing + queue row
 │   │   ├── art/                # Image prompt (Haiku) + Gemini image + guardrail #5
-│   │   ├── cards/              # EMPTY — share cards are OG meta tags (§6.5),
-│   │   │                       #   no image is generated for them
+│   │   ├── cards/              # DELETED — share cards are OG meta tags (§6.5)
 │   │   ├── ops/                # Autonomy layer — see docs/AUTONOMY.md
 │   │   └── orchestrator/       # Milestone herald agent
 │   └── db/                     # Supabase schema, migrations, types
@@ -93,7 +92,7 @@ yishun-again/
 | Agent hosting | Google Cloud Run | — | `asia-southeast1`, `--min-instances=0` |
 | Stage 1 filter | Gemini API | — | `gemini-3.1-flash-lite` (migrated from Groq, July 2026 — see §4.2) |
 | Stage 2 writer | Anthropic API | — | `claude-haiku-4-5-20251001` for **both** calls (classify and write). `STAGE2_WRITE_MODEL` rolls the write call back to Sonnet — see §4.3. |
-| Orchestrator | *(none — hand-rolled)* | — | ⚠️ `langgraph==0.4.0` is still pinned in `requirements.txt` but **nothing imports it**. There is no `StateGraph` anywhere in the repo: the daily chain is `ops/daily.py` and the pass is `ingestion/orchestrator.py`, both plain Python. Treat LangGraph as an unused dependency, not as the orchestrator. |
+| Orchestrator | *(none — hand-rolled)* | — | `langgraph` removed from `requirements.txt` 2026-08-24 (never imported). Daily chain: `ops/daily.py`. Pass: `ingestion/orchestrator.py`. Both plain Python. |
 | Image gen | Gemini API | `gemini-3.1-flash-lite-image` | Nano Banana 2 Lite, $0.0336/img. No GPU, no weights. Model id is read from `IMAGE_MODEL`, never hardcoded. See `docs/ART_PIPELINE.md` |
 | Scheduling | Cloud Scheduler → HTTP | — | One job POSTs `/orchestrator/daily` at 14:58 SGT. APScheduler 3.x is still a dependency and `main.py` still builds a single-job scheduler, but it is **off in production** (`ENABLE_INPROCESS_SCHEDULER=false`) because Cloud Run scales to zero and in-process timers never fire — see §11.2. |
 | CSS | Tailwind CSS | 3.x | Pixel art + retro tabloid theme |
@@ -1161,7 +1160,7 @@ built, never had a working trigger — see §11.2).
 replaced the LangGraph forward pipeline. `main.py` is repointed, the LangGraph graph
 (`orchestrator/orchestrator.py::run_graph()`) and the orphaned `pipeline.py` are both
 **deleted** — `orchestrator/` now contains only `herald_agent.py`, and nothing in the
-repo imports `langgraph` or constructs a `StateGraph`. End state reached: ONE forward
+repo ever imported `langgraph` or constructed a `StateGraph`. End state reached: ONE forward
 pipeline. (The old LangGraph `queue_insert` node did NO consolidation routing — every
 candidate became a fresh `pending` card — so this cutover is also what brought
 duplicate-reinforcement, timeline-enrichment and phenomenon-linking to the live pipeline.)
@@ -2147,8 +2146,6 @@ CF_R2_ACCESS_KEY_ID=
 CF_R2_SECRET_ACCESS_KEY=
 CF_R2_BUCKET_NAME=yishun-assets
 
-# Cloudflare Stream (Phase 2)
-CF_STREAM_TOKEN=
 
 # Modal.run — REMOVED 2026-08-02. The SDXL/Modal/LoRA art pipeline was torn down
 # in July 2026 and nothing in the codebase reads these. Do not re-add them.
@@ -2573,8 +2570,8 @@ Step 8a: ✅ Scraper health Phase A
 Step 8b: ✅ Schema additions (deaths, injuries, milestones)
 Step 8c: ✅ Milestone Herald Agent
 Step 9:  ✅ Orchestrator — hand-rolled, NOT LangGraph (see §Tech Stack).
-         The 6-node LangGraph graph named here was removed; `langgraph==0.4.0`
-         is still pinned in requirements.txt but nothing imports it.
+         The 6-node LangGraph graph named here was removed; `langgraph`
+         removed from requirements.txt 2026-08-24 (was never imported).
 Step 10: ✅ Next.js frontend — map, Chaos Panel, feed, detail pages
 Step 11: ✅ Frontend wired to Supabase — live data confirmed
 Step 12: ✅ Share card + UTM logging

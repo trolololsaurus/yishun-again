@@ -94,8 +94,7 @@ Reddit URL; taxi-driver-murders and infant-murder wrong incident_dates).
   replaces the retired LangGraph `run_graph()` and the deleted `pipeline.py`. Herald preserved;
   Learning Loop Phase-1 live (and provably cannot override system-prompt guardrails — verified).
   Orchestration is hand-rolled — `ingestion/orchestrator.py` for the pass, `ops/daily.py` for the
-  chain. `langgraph==0.4.0` is still pinned in `requirements.txt` but **nothing in the codebase
-  imports it**; treat any doc calling LangGraph "the orchestrator" as stale.
+  chain. `langgraph` has been removed from `requirements.txt` (2026-08-24 — it was never imported).
 - ~~**TRIGGER is the gating item for live autonomy.**~~ ✅ **CLOSED (verified
   2026-07-30).** Cloud Scheduler fires `POST /orchestrator/daily` at 14:58 SGT.
   `baseline_report.py` shows 88 `agent_runs` across 7 agents in a 14-day window,
