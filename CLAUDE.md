@@ -94,8 +94,8 @@ collection (the module-level `SystemExit` aborts the run). Run them directly:
 for f in test_*.py; do ./.venv/Scripts/python.exe "$f" || echo "FAIL $f"; done
 ```
 
-All are offline — no network, no API keys, no DB. There are **39 test files** and
-they all pass as of 2026-08-09; a red file is a real regression, not a flake.
+All are offline — no network, no API keys, no DB. There are **40 test files** and
+they all pass as of 2026-08-26; a red file is a real regression, not a flake.
 
 The web app has tests too, added 2026-08-04 — `apps/web/lib/utils.test.ts`, run
 with `npm test` from `apps/web`. There is no test framework installed: it uses
@@ -104,11 +104,11 @@ of `./utils.ts` carries the extension. It covers the three pure helpers that
 decide what an incident page *says* (`sharedLocationLabel`, `dateFromUrl`,
 `toParagraphs`), where a silent break is a factual error on a published page.
 
-The War Room has two of its own, same runner, no `npm test` script — invoke
+The War Room has three of its own, same runner, no `npm test` script — invoke
 them directly from the repo root:
 
 ```bash
-node --test apps/war-room/lib/utils.paragraphs.test.ts apps/war-room/lib/utils.incidentRef.test.ts
+node --test apps/war-room/lib/utils.paragraphs.test.ts apps/war-room/lib/utils.incidentRef.test.ts apps/war-room/lib/utils.updateMerge.test.ts
 ```
 
 `utils.paragraphs.test.ts` is a PARITY guard: it reads both `lib/utils.ts`
@@ -117,6 +117,10 @@ duplicates the web app's paragraph splitting **and** its
 `canonicalUrl`/`uniqueSources` source counting (there is no `packages/shared`
 wired into either app). Change one copy and it goes red — change both or
 neither. `utils.incidentRef.test.ts` covers `/rectify`'s URL lookup box.
+`utils.updateMerge.test.ts` guards `applyUpdate`/`revertUpdate` — an applied
+update and its undo must round-trip exactly (`revert(apply(x)) == x`); its Python
+mirror is `_compute_merge` in `ops/auto_publish.py`, guarded by
+`test_auto_merge_eligibility.py`.
 
 Note for Windows: the console codepage is cp1252, so a `check()` label containing
 CJK or Tamil raises `UnicodeEncodeError` before the assertion result prints. Keep
@@ -246,6 +250,17 @@ threshold. All leave it `pending` for the operator; none reject anything:
 | `casualty_mismatch` | `filters/casualty_check` — source language vs the model's deaths/injuries | Never automatically — same |
 | `oversized_cluster_unproven` | A grouping call merged > `CLUSTER_MAX_SIZE` articles | **Automatically**, once the grouper earns it (`AUTONOMY.md` §5b) |
 | `unapproved_source_domain` | `source_allowlist` | Operator approves the domain |
+
+**Auto-MERGE of `update` rows is a separate, opt-in gate** (`AUTONOMY.md` §2b),
+off by default (`AUTO_MERGE_ENABLED`). An `update` row applies a new source to an
+already-published incident; when enabled it auto-applies only when BOTH the draft
+confidence AND the consolidation `_match_confidence` clear 0.95 and the appended
+source survives the allowlist. It snapshots the pre-merge state
+(`raw_content._undo_snapshot`) so the operator can undo it from the War Room
+queue's "Recently merged updates" panel (`/api/queue/[id]/revert-update`).
+Migration 018 is required. `check_update_eligibility` / `_apply_merge` in
+`ops/auto_publish.py`; the merge math (`_compute_merge`) mirrors `applyUpdate` in
+`apps/war-room/lib/utils.ts`.
 
 **The pipeline is autonomous as of July 2026.** One Cloud Scheduler job runs
 **twice daily at 02:58 and 14:58 SGT** and POSTs `/orchestrator/daily`, which runs twelve agents in a

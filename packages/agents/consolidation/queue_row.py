@@ -216,6 +216,15 @@ def build_queue_row(
     }
     row["raw_content"]["agent_role_proposed"] = agent_role
 
+    # The consolidation same-event confidence. This is the axis the autonomous
+    # auto-merge (ops/auto_publish.py) gates on — how sure the grouper is that
+    # this candidate updates `matched_incident_id`, distinct from the Stage 2
+    # draft confidence (`agent_confidence`) which is about write quality. Without
+    # persisting it here the auto-merge has nothing to gate on and always holds.
+    if consolidation is not None and consolidation.action == "update":
+        row["raw_content"]["_match_confidence"] = consolidation.match_confidence
+        row["raw_content"]["_match_reason"] = consolidation.match_reason
+
     if include_related_incidents and consolidation is not None and consolidation.related_incidents:
         row["raw_content"]["agent_related_incidents"] = [
             {

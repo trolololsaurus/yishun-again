@@ -45,10 +45,16 @@ A row failing any of these is not rejected — it is left `pending` for the
 operator, exactly as before. The failure mode of this agent is "a human looks
 at it", never "it disappears".
 
-`update` rows (merges into an existing story) are also left for review: they
-take a different write path (append to `source_timeline`, bump
-`corroboration_count`) whose failure mode is corrupting an already-published
-incident rather than adding a new one. Auto-merge is a separate decision.
+`update` rows (merges into an existing story) take a different write path
+(append to `source_urls`/`source_timeline`, recompute dates) whose failure mode
+is corrupting an already-published incident rather than adding a new one — so
+auto-merge is a SEPARATE decision, gated behind `AUTO_MERGE_ENABLED` (default
+OFF). When off, every update row is left for review exactly as before. When on,
+a merge auto-applies only when BOTH the draft confidence (`agent_confidence`) and
+the consolidation same-event confidence (`_match_confidence`) clear their
+thresholds AND the appended source survives the allowlist — and it snapshots the
+pre-merge state so the operator can undo it (revert-update). See
+check_update_eligibility / _apply_merge and docs/AUTONOMY.md.
 """
 
 import logging
@@ -75,6 +81,36 @@ def _threshold() -> float:
 # high-confidence rows, cap the blast radius at one pass's worth. The excess
 # stays pending and a human sees it.
 MAX_AUTO_PUBLISH_PER_RUN = int(os.getenv("AUTO_PUBLISH_MAX_PER_RUN", "25"))
+
+# ── Autonomous merge (auto-apply an UPDATE row) ──────────────────────────────
+# Applying a merge mutates an ALREADY-PUBLISHED incident, and a wrong merge is
+# near-invisible (one extra URL in a source list) and hits the source-integrity
+# constraint, so this ships DARK: default off, flip AUTO_MERGE_ENABLED on when
+# ready. Two thresholds because two different confidences must both be high:
+#   AUTO_MERGE_CONFIDENCE       — the Stage 2 draft confidence (write quality)
+#   AUTO_MERGE_MATCH_CONFIDENCE — the consolidation same-event confidence (the
+#                                 wrong-merge axis; the strict one). Held if the
+#                                 row predates _match_confidence being persisted.
+# The undo net (PR #1: revert-update + _undo_snapshot) is the safety floor that
+# makes this acceptable — do not enable this without migration 018 applied.
+AUTO_MERGE_ENABLED = os.getenv("AUTO_MERGE_ENABLED", "false").strip().lower() in ("1", "true", "on", "yes")
+
+
+def _merge_threshold() -> float:
+    try:
+        return float(os.getenv("AUTO_MERGE_CONFIDENCE", "0.95"))
+    except ValueError:
+        return 0.95
+
+
+def _merge_match_threshold() -> float:
+    try:
+        return float(os.getenv("AUTO_MERGE_MATCH_CONFIDENCE", "0.95"))
+    except ValueError:
+        return 0.95
+
+
+MAX_AUTO_MERGE_PER_RUN = int(os.getenv("AUTO_MERGE_MAX_PER_RUN", "25"))
 
 # Art generation is opt-in per environment. It is the only step here that spends
 # money per row, so it defaults OFF and an unconfigured deployment publishes
@@ -302,6 +338,59 @@ def check_eligibility(item: dict, threshold: float,
     return True, "eligible"
 
 
+def check_update_eligibility(item: dict, draft_threshold: float, match_threshold: float):
+    """
+    Gate for auto-applying an UPDATE row (merge a new source into an existing
+    published incident). Returns (eligible, reason).
+
+    Same fail-open direction as check_eligibility: an ineligible row is LEFT for
+    the operator, never rejected. Two confidences must BOTH clear — the Stage 2
+    draft confidence (write quality) and the consolidation same-event confidence
+    (the wrong-merge axis, the strict one) — and the appended source must be a
+    verifiable publisher URL. confirm-update trusts the operator for that last
+    check; the autonomous path has no operator, so it re-runs the allowlist here.
+    """
+    rc = item.get("raw_content") or {}
+
+    if item.get("status") != "update":
+        return False, "not_update"
+    if rc.get("notification_type"):
+        return False, "notification_row"
+    if not item.get("update_target_incident_id"):
+        return False, "no_update_target"
+
+    confidence = item.get("agent_confidence")
+    if confidence is None:
+        return False, "no_confidence"
+    if float(confidence) < draft_threshold:
+        return False, "below_threshold"
+
+    # Same-event confidence. Missing -> hold: a row written before
+    # _match_confidence was persisted (queue_row.py) cannot be auto-merged safely.
+    match_conf = rc.get("_match_confidence")
+    if match_conf is None:
+        return False, "no_match_confidence"
+    if float(match_conf) < match_threshold:
+        return False, "match_below_threshold"
+
+    new_url = item.get("source_url")
+    if not new_url:
+        return False, "no_source_url"
+    try:
+        from classifiers.source_allowlist import check_source_urls
+        verdict = check_source_urls([new_url])
+        # A signal or redirect URL is stripped entirely -> nothing verifiable to add.
+        if len(verdict.get("kept") or []) < 1:
+            return False, "source_not_verifiable"
+        if verdict.get("unapproved"):
+            return False, "unapproved_source_domain"
+    except Exception as exc:                      # noqa: BLE001
+        logger.warning("auto_merge: allowlist check failed, routing to review: %s", exc)
+        return False, "allowlist_check_failed"
+
+    return True, "eligible"
+
+
 # ── Publish ─────────────────────────────────────────────────────────────────
 
 def _generate_art(incident: dict, run: AgentRun, budget) -> dict:
@@ -454,6 +543,147 @@ def _publish(item: dict, client, run: AgentRun, budget=None) -> str | None:
     return incident_id
 
 
+# ── Merge (auto-apply an update) ─────────────────────────────────────────────
+
+def _compute_merge(existing: dict, new_url: str, source_name: str,
+                   headline: str, new_date):
+    """
+    Pure mirror of applyUpdate() in apps/war-room/lib/utils.ts, with the summary
+    edit omitted (auto-merge never rewrites the summary). Returns
+    (updates, snapshot). If you change one, change the other — parity is asserted
+    by test_auto_merge_eligibility.py against the same fixtures the TS test uses.
+    """
+    existing_urls = existing.get("source_urls") or []
+    existing_timeline = existing.get("source_timeline")
+    if not isinstance(existing_timeline, list):
+        existing_timeline = []
+    existing_date = existing.get("incident_date")
+    existing_count = existing.get("update_count") or 0
+    existing_developing = bool(existing.get("is_developing"))
+
+    snapshot = {
+        "source_urls":       existing_urls,
+        "source_timeline":   existing_timeline,
+        "update_count":      existing_count,
+        "incident_date":     existing_date,
+        "first_reported_at": existing.get("first_reported_at"),
+        "is_developing":     existing_developing,
+        "summary":           existing.get("summary"),
+    }
+
+    merged_urls = existing_urls if new_url in existing_urls else [*existing_urls, new_url]
+    nd = new_date or existing_date or existing.get("first_reported_at") or None
+    merged_timeline = [
+        *existing_timeline,
+        {"date": nd or existing_date, "source_url": new_url,
+         "source_name": source_name, "headline": headline},
+    ]
+
+    updated_date = existing_date if (existing_date and nd and existing_date > nd) else (nd or existing_date)
+    existing_first = existing.get("first_reported_at") or existing_date
+    first_reported = existing_first if (existing_first and nd and existing_first < nd) else (existing_first or nd)
+
+    updates = {
+        "source_urls":       merged_urls,
+        "source_timeline":   merged_timeline,
+        "is_developing":     True,
+        "update_count":      existing_count + 1,
+        "incident_date":     updated_date,
+        "first_reported_at": first_reported,
+    }
+    return updates, snapshot
+
+
+def _apply_merge(item: dict, client, run: AgentRun) -> str | None:
+    """
+    Port of the War Room confirm-update route. Merges the row's source into
+    `update_target_incident_id` and returns that id, or None on failure. Writes
+    the pre-merge snapshot into raw_content._undo_snapshot so the operator can
+    undo it (revert-update). Claims the queue row BEFORE mutating the incident,
+    same ordering (and same reasoning) as _publish/confirm-update.
+    """
+    rc = item.get("raw_content") or {}
+    target = item.get("update_target_incident_id")
+
+    try:
+        res = (client.table("incidents")
+               .select("id,source_urls,source_timeline,update_count,"
+                       "incident_date,first_reported_at,is_developing,summary")
+               .eq("id", target).single().execute())
+        existing = res.data
+    except Exception as exc:                      # noqa: BLE001
+        run.error_("merge_fetch_failed", f"target {target}: {exc}", queue_id=item.get("id"))
+        return None
+    if not existing:
+        run.warn("merge_target_missing", f"incident {target} not found", queue_id=item.get("id"))
+        return None
+
+    new_url = item.get("source_url")
+    source_name = rc.get("source_name") or item.get("source_type") or "unknown"
+    headline = (item.get("proposed_title") or rc.get("title") or "")[:200]
+    new_date = rc.get("date") or rc.get("published_at") or None
+
+    updates, snapshot = _compute_merge(existing, new_url, source_name, headline, new_date)
+
+    # Claim BEFORE mutating (QA H2 reasoning): a failed status write must never
+    # leave the incident merged but the row re-confirmable. CAS on status=update.
+    try:
+        claimed = (client.table("war_room_queue").update({
+            "status":       "update_approved",
+            "incident_id":  target,
+            "processed_at": datetime.now(timezone.utc).isoformat(),
+            "raw_content":  {**rc, "_undo_snapshot": snapshot},
+        }).eq("id", item["id"]).eq("status", "update").select("id").execute())
+    except Exception as exc:                      # noqa: BLE001
+        run.error_("merge_claim_failed", f"queue {item['id']}: {exc}", queue_id=item.get("id"))
+        return None
+    if not claimed.data:
+        # An operator confirmed/rejected it between the fetch and now — leave it.
+        return None
+
+    try:
+        client.table("incidents").update(updates).eq("id", target).execute()
+    except Exception as exc:                      # noqa: BLE001
+        # Give the claim back so a human can retry once the cause is fixed.
+        try:
+            (client.table("war_room_queue")
+             .update({"status": "update", "incident_id": None, "processed_at": None})
+             .eq("id", item["id"]).eq("status", "update_approved").execute())
+        except Exception as rel_exc:              # noqa: BLE001
+            run.anomaly("merge_unclaim_failed",
+                        f"queue {item['id']} stuck update_approved — reconcile by hand: {rel_exc}")
+        run.error_("merge_update_failed", f"incident {target}: {exc}", queue_id=item.get("id"))
+        return None
+
+    _log_merge_signal(item, target, client, run)
+    return target
+
+
+def _log_merge_signal(item: dict, incident_id: str, client, run: AgentRun) -> None:
+    """The autonomous merge IS training data — sibling of _log_training_signal.
+    decided_by='agent' keeps it out of the operator agreement-rate maths."""
+    rc = item.get("raw_content") or {}
+    try:
+        client.table("training_signals").insert({
+            "incident_id": incident_id,
+            "queue_id": item.get("id"),
+            "action": "auto_update",
+            "decision": "auto_approve",
+            "decided_by": "agent",
+            "source_url": item.get("source_url"),
+            "source_type": item.get("source_type"),
+            "proposed_classification": item.get("proposed_classification"),
+            "proposed_severity": item.get("proposed_severity"),
+            "original_draft": item.get("proposed_summary"),
+            "agent_confidence": item.get("agent_confidence"),
+            "agent_confidence_was": item.get("agent_confidence"),
+            "agent_role_proposed": rc.get("agent_role_proposed") or "update",
+            "operator_note": f"Auto-merged into {incident_id} (match {rc.get('_match_confidence')}).",
+        }).execute()
+    except Exception as exc:                      # noqa: BLE001
+        run.error_("merge_signal_failed", f"incident {incident_id}: {exc}")
+
+
 def _link_related(item: dict, incident_id: str, client, run: AgentRun) -> None:
     rc = item.get("raw_content") or {}
     for link in (rc.get("agent_related_incidents") or []):
@@ -509,7 +739,7 @@ def _log_training_signal(item: dict, incident_id: str, client, run: AgentRun) ->
 
 def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler") -> dict:
     """Auto-publish eligible rows, then notify about the rest. Never raises."""
-    stats = {"considered": 0, "published": 0, "skipped": 0, "failed": 0,
+    stats = {"considered": 0, "published": 0, "merged": 0, "skipped": 0, "failed": 0,
              "needs_review": 0, "reasons": {}, "dry_run": dry_run}
 
     if not agent_enabled(AGENT):
@@ -518,6 +748,8 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
         return stats
 
     threshold = _threshold()
+    merge_threshold = _merge_threshold()
+    merge_match_threshold = _merge_match_threshold()
 
     with AgentRun(AGENT, trigger=trigger) as arun:
         arun.stat("threshold", threshold)
@@ -580,7 +812,46 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
             art_budget = AttemptBudget()
 
         published_titles: list[str] = []
+        merged_titles: list[str] = []
         for item in rows:
+            # ── Auto-merge branch (update rows) ──────────────────────────────
+            # Only when AUTO_MERGE_ENABLED; otherwise update rows fall through to
+            # the publish path below and are skipped there as 'not_pending',
+            # exactly as before this feature existed.
+            if AUTO_MERGE_ENABLED and item.get("status") == "update":
+                if stats["merged"] >= MAX_AUTO_MERGE_PER_RUN:
+                    arun.anomaly("merge_per_run_cap_hit",
+                                 f"stopped at {MAX_AUTO_MERGE_PER_RUN} auto-merges this pass")
+                    continue
+                mok, mreason = check_update_eligibility(item, merge_threshold, merge_match_threshold)
+                stats["reasons"][mreason] = stats["reasons"].get(mreason, 0) + 1
+                if not mok:
+                    stats["skipped"] += 1
+                    # A high-confidence merge a guardrail stopped is worth a look;
+                    # a routine below-threshold one is not.
+                    if mreason not in ("below_threshold", "match_below_threshold",
+                                       "no_match_confidence", "not_update", "notification_row"):
+                        arun.warn("merge_gate_blocked",
+                                  f"{(item.get('proposed_title') or '')[:70]}: {mreason}",
+                                  queue_id=item.get("id"), confidence=item.get("agent_confidence"))
+                    continue
+                if dry_run:
+                    stats["merged"] += 1
+                    merged_titles.append((item.get("proposed_title") or "")[:80])
+                    arun.info("would_merge", f"[dry-run] {(item.get('proposed_title') or '')[:70]}")
+                    continue
+                merged_id = _apply_merge(item, client, arun)
+                if merged_id:
+                    stats["merged"] += 1
+                    merged_titles.append((item.get("proposed_title") or "")[:80])
+                    arun.success("auto_merged",
+                                 f"{(item.get('proposed_title') or '')[:70]} -> {merged_id} "
+                                 f"(match={(item.get('raw_content') or {}).get('_match_confidence')})",
+                                 incident_id=merged_id, queue_id=item.get("id"))
+                else:
+                    stats["failed"] += 1
+                continue
+
             if stats["published"] >= MAX_AUTO_PUBLISH_PER_RUN:
                 arun.anomaly("per_run_cap_hit",
                              f"stopped at {MAX_AUTO_PUBLISH_PER_RUN} auto-publishes; "
@@ -618,15 +889,17 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
 
         stats["needs_review"] = stats["skipped"] - stats["reasons"].get("notification_row", 0)
         arun.stat("published", stats["published"])
+        arun.stat("merged", stats["merged"])
         arun.stat("needs_review", stats["needs_review"])
         arun.stat("skip_reasons", stats["reasons"])
+        merge_note = f", auto-merged {stats['merged']}" if AUTO_MERGE_ENABLED else ""
         arun.set_summary(
-            f"auto-published {stats['published']}, {stats['needs_review']} left for review "
+            f"auto-published {stats['published']}{merge_note}, {stats['needs_review']} left for review "
             f"(threshold {threshold})"
         )
 
         if not dry_run:
-            _notify_review_queue(rows, stats, threshold, published_titles, client)
+            _notify_review_queue(rows, stats, threshold, published_titles, merged_titles, client)
 
     return stats
 
@@ -649,7 +922,7 @@ def _notify_schema_blocked(why: str, client) -> None:
     )
 
 
-def _notify_review_queue(rows, stats, threshold, published_titles, client) -> None:
+def _notify_review_queue(rows, stats, threshold, published_titles, merged_titles, client) -> None:
     """
     Req #4 — one email when cards below the threshold are waiting.
 
@@ -676,6 +949,13 @@ def _notify_review_queue(rows, stats, threshold, published_titles, client) -> No
         lines += [f"Auto-published without review this pass ({len(published_titles)}):"]
         lines += [f"  + {t}" for t in published_titles[:10]]
         lines += [""]
+
+    # Merges mutate a LIVE incident, so surface them for a look — each is
+    # undoable from the "Recently merged updates" panel in the War Room queue.
+    if merged_titles:
+        lines += [f"Auto-merged into existing incidents this pass ({len(merged_titles)}):"]
+        lines += [f"  ~ {t}" for t in merged_titles[:10]]
+        lines += ["  (undo any of these from the War Room queue's Recently-merged panel)", ""]
 
     lines.append("Waiting for you:")
     for r in sorted(pending_for_review,
