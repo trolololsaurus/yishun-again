@@ -818,6 +818,78 @@ curl -X POST -H "X-Ops-Token: $OPS_TOKEN" https://<service-url>/discovery/run
 `AUTO_PUBLISH_CONFIDENCE=2.0` is the panic switch: unreachable, so everything
 routes to the War Room, and nothing else about the pass changes.
 
+### Enable / roll back auto-merge (§2b)
+
+Auto-merge (auto-applying an `update` row into a live incident) is **off by
+default** and is the only autonomous path that mutates an already-published
+incident, so enabling it is a deliberate operator action with a clean rollback.
+
+**Preconditions — both must be true, or enabling does nothing useful:**
+- **Migration 018 applied.** Without it the `_undo_snapshot` write path is fine
+  but the training-signal insert (`action='auto_update'`) is rejected, and a
+  later undo (`status='update_reverted'`) is rejected too — you would have merges
+  you cannot cleanly undo. Verify: `war_room_queue_status_check` lists
+  `update_reverted`.
+- **The agents backend is deployed with the auto-merge code** (`_compute_merge`,
+  `check_update_eligibility`, and `_match_confidence` persistence in
+  `consolidation/queue_row.py`). Until that deploy lands, `_match_confidence` is
+  never written, so every candidate is held as `no_match_confidence` and nothing
+  merges regardless of the flag.
+
+**Dry-run first — see what WOULD merge, changing nothing:**
+```bash
+curl -X POST -H "X-Ops-Token: $OPS_TOKEN" "https://<service-url>/orchestrator/daily?dry_run=true"
+# then read the auto_publish run: agent_runs.stats.merged + stats.reasons,
+# and agent_events level=info action=would_merge for the specific rows.
+```
+`dry_run` still evaluates the gate but never writes — a would-merge that surprises
+you is caught here, not on the live incident.
+
+**Enable:**
+```bash
+gcloud run services update yishun-agents --region asia-southeast1 \
+  --update-env-vars AUTO_MERGE_ENABLED=true
+# Optional, all have safe defaults:
+#   AUTO_MERGE_CONFIDENCE=0.95        draft-quality bar
+#   AUTO_MERGE_MATCH_CONFIDENCE=0.95  same-event bar (the strict, wrong-merge axis)
+#   AUTO_MERGE_MAX_PER_RUN=25         blast-radius cap per pass
+```
+Takes effect on the next scheduled pass (02:58 / 14:58 SGT) — no redeploy.
+
+**Watch the first few passes:**
+| Signal | Where |
+|---|---|
+| How many merged, and why others held | `agent_runs.stats.merged`, `stats.reasons` for `auto_publish` |
+| Each applied merge | `agent_events` level=success action=`auto_merged` (incident id + match conf) |
+| The reversible record | War Room → QUEUE → "Recently merged updates" panel |
+| The learning signal | `training_signals` where `action='auto_update'`, `decided_by='agent'` |
+
+**Roll back — three levers, coarsest last:**
+1. **Undo one bad merge** (the common case) — War Room QUEUE → "Recently merged
+   updates" → **Undo**, or `POST /api/queue/{id}/revert-update`. Restores the
+   pre-merge snapshot exactly (`source_urls`, timeline, dates, `update_count`,
+   summary) and records `action='update_reverted'`. The incident stays published;
+   only the wrongly-attached source is removed.
+2. **Throttle without a flag flip** — raise the bar so fewer (or no) merges
+   auto-apply while the rest route to review:
+   ```bash
+   gcloud run services update yishun-agents --region asia-southeast1 \
+     --update-env-vars AUTO_MERGE_MATCH_CONFIDENCE=2.0   # unreachable = all held
+   ```
+   This is the merge analog of the `AUTO_PUBLISH_CONFIDENCE=2.0` panic switch.
+3. **Stop auto-merge entirely** — `AUTO_MERGE_ENABLED=false` (or unset). Every
+   `update` row goes back to the operator, exactly as before the feature existed.
+   ```bash
+   gcloud run services update yishun-agents --region asia-southeast1 \
+     --update-env-vars AUTO_MERGE_ENABLED=false
+   ```
+   `AGENT_DISABLED=auto_publish` also stops it, but that halts new-incident
+   auto-publish too — prefer the flag when you only want to stop merges.
+
+Merges already applied before a rollback are **not** reverted by any of the three
+— use lever 1 on each. They are safe to leave: a merge is an added source on a
+real incident, not a new publish.
+
 ### Where to look when something is wrong
 
 | Question | Where |
@@ -838,7 +910,10 @@ routes to the War Room, and nothing else about the pass changes.
 Auto-publish handles new incidents above the confidence bar. Everything below
 remains a person's job, by design:
 
-- **`update` rows** — merging new reporting into a published story
+- **`update` rows** — merging new reporting into a published story. Human-only
+  by default, but this is the one item on this list with an opt-in autonomous
+  path: `AUTO_MERGE_ENABLED` (§2b, §7 runbook) auto-applies a high-confidence
+  merge. Off unless deliberately enabled; every applied merge stays reversible
 - **Acting on pattern alerts and lifecycle conclusions** — since 2026-07-30 the
   agents that *raise* these actually run (§1), but what they produce is a
   sentinel row asking a question. `check_eligibility` skips them
