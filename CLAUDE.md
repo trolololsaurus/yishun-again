@@ -616,6 +616,19 @@ status vocabulary. Without 014 the War Room rectify queue errors out — it sele
 those columns directly. Art generation runs on the operator approve path, so
 these are not optional.
 
+**018 (undo an applied update)** — adds `'update_reverted'` to
+`war_room_queue.status` and `'auto_update'` + `'update_reverted'` to
+`training_signals.action`. A confirmed update (merge) mutates a live incident;
+`confirm-update` now snapshots the pre-merge state into
+`raw_content._undo_snapshot` and the War Room queue page shows a "Recently
+merged updates" panel with an Undo (`/api/queue/[id]/revert-update`), which
+restores the snapshot. `'auto_update'` is reserved for the autonomous auto-merge
+(PR #2, still dark). ⚠️ Same failure mode as 009/011: without the action values
+the revert/auto-merge training-signal insert is silently rejected — the mutation
+still happens, only the learning signal is lost. Merge math lives once in
+`apps/war-room/lib/utils.ts` (`applyUpdate`/`revertUpdate`); guard
+`apps/war-room/lib/utils.updateMerge.test.ts`.
+
 **RLS note:** `incidents` anon reads are filtered to `is_published = TRUE`
 (`anon_read_published_incidents`), so the **publishable key cannot see drafts at all** —
 only the War Room (secret key) can. Any read-only audit run with the anon key will

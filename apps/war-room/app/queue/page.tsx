@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import { QueueList } from '@/components/QueueList'
 import { BackfillBanner } from '@/components/BackfillBanner'
+import { RecentMerges, type MergedRow } from '@/components/RecentMerges'
 import { isoDaysAgo } from '@/lib/utils'
 import type { QueueItem, IncidentPreview, AgentRelatedIncident } from '@/lib/types'
 
@@ -8,8 +9,9 @@ export const revalidate = 0
 
 export default async function QueuePage() {
   const since24h = isoDaysAgo(1)
+  const since7d  = isoDaysAgo(7)
 
-  const [queueResult, healthResult, queuedCountResult, backfillSummaryResult] = await Promise.all([
+  const [queueResult, healthResult, queuedCountResult, backfillSummaryResult, recentMergesResult] = await Promise.all([
     supabase
       .from('war_room_queue')
       .select('*')
@@ -38,6 +40,14 @@ export default async function QueuePage() {
       .like('source_url', '\\_backfill\\_summary\\_%')
       .order('created_at', { ascending: false })
       .limit(1),
+    // Applied updates from the last 7 days, for the Undo panel.
+    supabase
+      .from('war_room_queue')
+      .select('id, incident_id, source_url, proposed_title, processed_at, raw_content')
+      .eq('status', 'update_approved')
+      .gte('processed_at', since7d)
+      .order('processed_at', { ascending: false })
+      .limit(50),
   ])
 
   if (queueResult.error) {
@@ -145,6 +155,31 @@ export default async function QueuePage() {
   const backfillHighConf  = backfillPendingItems.filter(i => (i.agent_confidence ?? 0) >= 0.85)
   const backfillLowConf   = backfillPendingItems.filter(i => (i.agent_confidence ?? 0) < 0.6)
 
+  // ── Recently-merged updates (Undo panel) ───────────────────────────────────
+  const mergeRows = recentMergesResult.data ?? []
+  const mergeIncidentIds = [...new Set(mergeRows.map(m => m.incident_id).filter(Boolean) as string[])]
+  const mergeIncidents: Record<string, { title: string; slug: string }> = {}
+  if (mergeIncidentIds.length > 0) {
+    const { data: mi } = await supabase
+      .from('incidents')
+      .select('id,title,slug')
+      .in('id', mergeIncidentIds)
+    for (const r of mi ?? []) mergeIncidents[r.id] = { title: r.title, slug: r.slug }
+  }
+  const recentMerges: MergedRow[] = mergeRows.map(m => {
+    const rc = (m.raw_content ?? {}) as Record<string, unknown>
+    const inc = m.incident_id ? mergeIncidents[m.incident_id] : undefined
+    return {
+      id:            m.id,
+      incidentTitle: inc?.title ?? '(incident not found)',
+      incidentSlug:  inc?.slug ?? null,
+      sourceUrl:     m.source_url,
+      headline:      m.proposed_title ?? '',
+      processedAt:   m.processed_at,
+      hasSnapshot:   !!rc._undo_snapshot,
+    }
+  })
+
   // Filter summary sentinel rows out of the main queue list
   const displayItems = queueItems.filter(i => {
     const rc = i.raw_content as Record<string, unknown>
@@ -222,6 +257,8 @@ export default async function QueuePage() {
           lowConfIds={backfillLowConf.map(i => i.id)}
         />
       )}
+
+      <RecentMerges initial={recentMerges} siteUrl={process.env.NEXT_PUBLIC_SITE_URL ?? ''} />
 
       <QueueList
         initialItems={displayItems}
