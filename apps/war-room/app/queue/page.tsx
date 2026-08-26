@@ -43,7 +43,7 @@ export default async function QueuePage() {
     // Applied updates from the last 7 days, for the Undo panel.
     supabase
       .from('war_room_queue')
-      .select('id, incident_id, source_url, proposed_title, processed_at, raw_content')
+      .select('id, incident_id, source_url, proposed_title, processed_at, agent_confidence, raw_content')
       .eq('status', 'update_approved')
       .gte('processed_at', since7d)
       .order('processed_at', { ascending: false })
@@ -169,14 +169,17 @@ export default async function QueuePage() {
   const recentMerges: MergedRow[] = mergeRows.map(m => {
     const rc = (m.raw_content ?? {}) as Record<string, unknown>
     const inc = m.incident_id ? mergeIncidents[m.incident_id] : undefined
+    const mc = rc._match_confidence
     return {
-      id:            m.id,
-      incidentTitle: inc?.title ?? '(incident not found)',
-      incidentSlug:  inc?.slug ?? null,
-      sourceUrl:     m.source_url,
-      headline:      m.proposed_title ?? '',
-      processedAt:   m.processed_at,
-      hasSnapshot:   !!rc._undo_snapshot,
+      id:              m.id,
+      incidentTitle:   inc?.title ?? '(incident not found)',
+      incidentSlug:    inc?.slug ?? null,
+      sourceUrl:       m.source_url,
+      headline:        m.proposed_title ?? '',
+      processedAt:     m.processed_at,
+      hasSnapshot:     !!rc._undo_snapshot,
+      matchConfidence: typeof mc === 'number' ? mc : null,
+      draftConfidence: m.agent_confidence ?? null,
     }
   })
 
