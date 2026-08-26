@@ -382,7 +382,8 @@ export const CHAOS_SCALE = 300
 /**
  * Chaos Index, 0-100.
  *
- * Per-incident points are unchanged (dagger x3.0, clown x1.5, heart x-1.0,
+ * Per-incident points: dagger x3.0, clown x1.0 (was 1.5 — clowns are the
+ * majority class most years and were inflating the index), heart x-1.0,
  * multiplied by severity) — the same values Stage 2 stores as
  * chaos_contribution. What changed is the curve.
  *
@@ -404,7 +405,7 @@ export const CHAOS_SCALE = 300
 export function computeChaosScore(incidents: Array<{ classification: string; severity: number | null }>): number {
   const raw = incidents.reduce((sum, inc) => {
     const weight = inc.classification === 'dagger' ? 3.0
-                 : inc.classification === 'clown'  ? 1.5
+                 : inc.classification === 'clown'  ? 1.0
                  : inc.classification === 'heart'  ? -1.0 : 0
     return sum + (inc.severity ?? 0) * weight   // QA M3: null/undefined severity → 0, not NaN
   }, 0)

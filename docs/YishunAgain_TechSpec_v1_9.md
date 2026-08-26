@@ -756,7 +756,7 @@ Given source content, return JSON only:
   "seo_description": string (max 155 chars),
   "tags": string[],
   "confidence": float (0.0-1.0),
-  "chaos_contribution": float (1-5 scale, Daggers weighted 3x, Clowns 1.5x, Hearts -1x),
+  "chaos_contribution": float (1-5 scale, Daggers weighted 3x, Clowns 1x, Hearts -1x),
   "hype_meter": integer 0-5
   // 0 = signal only, no MSM
   // 1 = 1 MSM source confirmed
@@ -1660,7 +1660,7 @@ def compute_chaos_index(year: int) -> float:
     """
     Weights:
     - dagger (DARK EVENTS):  severity * 3.0
-    - clown  (ABSURDITIES):  severity * 1.5
+    - clown  (ABSURDITIES):  severity * 1.0
     - heart  (GOOD VIBES):   severity * -1.0 (positive news reduces score)
     
     Normalised to 0–100 by a saturating curve (rebalanced July 2026):
@@ -1688,7 +1688,7 @@ def compute_chaos_index(year: int) -> float:
         if inc.classification == 'dagger':
             raw_score += inc.severity * 3.0
         elif inc.classification == 'clown':
-            raw_score += inc.severity * 1.5
+            raw_score += inc.severity * 1.0
         elif inc.classification == 'heart':
             raw_score -= inc.severity * 1.0
     

@@ -280,7 +280,7 @@ Given source content, return JSON only:
   "seo_description": string (max 155 chars),
   "tags": string[],
   "confidence": float (0.0-1.0),
-  "chaos_contribution": float (1-5 scale, Daggers weighted 3x, Clowns 1.5x, Hearts -1x),
+  "chaos_contribution": float (1-5 scale, Daggers weighted 3x, Clowns 1x, Hearts -1x),
   "hype_meter": integer 0-5
   // 0 = EDMW/Reddit signal only, no MSM
   // 1 = 1 MSM source confirmed
@@ -365,7 +365,7 @@ def _compute_hype_meter(source_urls: list[str]) -> int:
 
 def _compute_chaos_contribution(classification: str, severity: int) -> float:
     """Deterministic chaos contribution formula from spec §7."""
-    multipliers = {"dagger": 3.0, "clown": 1.5, "heart": -1.0}
+    multipliers = {"dagger": 3.0, "clown": 1.0, "heart": -1.0}  # clown was 1.5, inflated the index
     return round(severity * multipliers.get(classification, 1.0), 2)
 
 

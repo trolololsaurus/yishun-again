@@ -322,7 +322,7 @@ invalid value:
 the aggregate is computed; `/api/chaos` and the SSR homepage both call it):
 ```
 raw   = Σ (severity × weight), floored at 0
-  dagger ×3.0 · clown ×1.5 · heart ×−1.0 · custom/culture ×0
+  dagger ×3.0 · clown ×1.0 (was ×1.5, inflated the index) · heart ×−1.0 · custom/culture ×0
 score = round(100 × (1 − e^(−raw / CHAOS_SCALE)))        CHAOS_SCALE = 300
 ```
 > Weights corrected July 2026 — this block previously said `dagger ×2.0 · clown
