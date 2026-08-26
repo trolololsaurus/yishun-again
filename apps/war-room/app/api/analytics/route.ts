@@ -1,41 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-
-// PostgREST caps unbounded selects at 1000 rows with no error, so every
-// aggregate on this page silently under-reported once a table passed 1000
-// rows (utm_events gets there quickly). Page through explicitly.
-const PAGE = 1000
-const MAX_PAGES = 50   // 50k-row ceiling keeps a runaway table from wedging the dashboard
-
-async function fetchAllRows<T>(
-  table: string,
-  columns: string,
-): Promise<{ rows: T[]; truncated: boolean }> {
-  const rows: T[] = []
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const { data, error } = await supabase
-      .from(table)
-      .select(columns)
-      .range(page * PAGE, page * PAGE + PAGE - 1)
-    if (error) {
-      console.error(`analytics — ${table} fetch failed:`, error)
-      return { rows, truncated: true }
-    }
-    rows.push(...((data ?? []) as T[]))
-    if (!data || data.length < PAGE) return { rows, truncated: false }
-  }
-  console.warn(`analytics — ${table} truncated at ${MAX_PAGES * PAGE} rows`)
-  return { rows, truncated: true }
-}
-
-function tally<T>(rows: T[], key: (row: T) => string): Record<string, number> {
-  const counts: Record<string, number> = {}
-  for (const row of rows) {
-    const k = key(row)
-    counts[k] = (counts[k] ?? 0) + 1
-  }
-  return counts
-}
+import { fetchAllRows, tally } from '@/lib/analyticsAggregate'
 
 export async function GET() {
   const [utmRes, geoRes, referrerRes, trainingRes, queueRes] =

@@ -466,6 +466,24 @@ async def autonomy_report(_: None = Depends(_require_ops_token)):
     return await loop.run_in_executor(None, get_graduation_report)
 
 
+@app.get("/analytics/cloudflare", tags=["ops"])
+async def cloudflare_traffic(
+    days: int = Query(7, ge=1, le=30),
+    _: None = Depends(_require_ops_token),
+):
+    """Zone-level Cloudflare traffic (visits/requests/country/referrer/device)
+    for the last `days` days. Edge/CDN data, not a client-side beacon — see
+    classifiers/cf_analytics.py for exactly what that means and why."""
+    import asyncio
+    from classifiers.cf_analytics import get_traffic_summary
+
+    if not os.getenv("CF_ZONE_ID") or not os.getenv("CF_ANALYTICS_API_TOKEN"):
+        raise HTTPException(status_code=503, detail="CF_ZONE_ID / CF_ANALYTICS_API_TOKEN not configured")
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_traffic_summary, days)
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8080"))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)

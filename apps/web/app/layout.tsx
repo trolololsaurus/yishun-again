@@ -2,9 +2,10 @@ import type { Metadata } from 'next'
 import { Suspense } from 'react'
 import './globals.css'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import { Nav }       from '@/components/Nav'
-import { UTMLogger } from '@/components/UTMLogger'
-import { SITE_URL }  from '@/lib/site'
+import { Nav }             from '@/components/Nav'
+import { UTMLogger }       from '@/components/UTMLogger'
+import { PageViewTracker } from '@/components/PageViewTracker'
+import { SITE_URL }        from '@/lib/site'
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -24,6 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="h-full bg-bg text-text-primary flex flex-col overflow-hidden">
         <Nav />
         <Suspense fallback={null}><UTMLogger /></Suspense>
+        <PageViewTracker />
         <main className="flex-1 min-h-0 flex flex-col overflow-y-auto">{children}</main>
       </body>
     </html>

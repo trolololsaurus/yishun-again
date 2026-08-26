@@ -6,6 +6,7 @@ import { supabase }      from '@/lib/supabase'
 import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, fmtDate, formatDuration, formatDurationGap, lastVerdictEntry, verdictNoun, collapseTimelineByDate, sharedLocationLabel, dateFromUrl, toParagraphs, uniqueSources, canonicalUrl, foreignSourceNote } from '@/lib/utils'
 import { ShareButton }   from './ShareButton'
 import { UTMLogger }     from '@/components/UTMLogger'
+import { PageViewTracker } from '@/components/PageViewTracker'
 import { SITE_URL }      from '@/lib/site'
 import { PUBLIC_INCIDENT_COLUMNS } from '@/lib/publicColumns'
 import type { Incident, IncidentLink, RelatedIncident, SourceTimelineEntry } from '@/lib/types'
@@ -447,7 +448,7 @@ export default async function IncidentPage({ params }: Props) {
 
       {/* Share */}
       <div className="flex items-center gap-4 border-t border-border pt-4">
-        <ShareButton url={shareUrl} title={incident.title} />
+        <ShareButton url={shareUrl} title={incident.title} incidentId={incident.id} />
         <Link href="/" className="font-body text-text-secondary hover:text-text-primary"
               style={{ fontSize: '14px' }}>
           ← Back to map
@@ -456,6 +457,7 @@ export default async function IncidentPage({ params }: Props) {
 
       <Suspense fallback={null}>
         <UTMLogger incidentId={incident.id} />
+        <PageViewTracker incidentId={incident.id} />
       </Suspense>
     </article>
   )

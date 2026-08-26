@@ -1,11 +1,23 @@
 'use client'
 
 import { useState } from 'react'
+import { getSessionId, sendTrackingBeacon } from '@/lib/tracking'
 
-export function ShareButton({ url, title }: { url: string; title: string }) {
+export function ShareButton({ url, title, incidentId }: { url: string; title: string; incidentId: string }) {
   const [copied, setCopied] = useState(false)
 
+  function logShare() {
+    sendTrackingBeacon({
+      id:          crypto.randomUUID(),
+      session_id:  getSessionId(),
+      incident_id: incidentId,
+      path:        window.location.pathname,
+      event_type:  'share',
+    })
+  }
+
   async function handleShare() {
+    logShare()
     try {
       await navigator.clipboard.writeText(url)
       setCopied(true)
