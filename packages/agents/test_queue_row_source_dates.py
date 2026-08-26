@@ -38,9 +38,12 @@ def check(name, cond):
     failed += 0 if cond else 1
 
 
-ST = "https://www.straitstimes.com/singapore/man-hurt-in-yishun-fight"
-CNA = "https://www.channelnewsasia.com/singapore/yishun-fight-12345"
-REDDIT = "https://www.reddit.com/r/singapore/comments/abc/man_hurt_in_yishun/"
+# Canonical forms (no www, no trailing slash) — build_queue_row now stores the
+# canonical_url of every source, so these constants match the stored output and
+# are idempotent under canonicalisation.
+ST = "https://straitstimes.com/singapore/man-hurt-in-yishun-fight"
+CNA = "https://channelnewsasia.com/singapore/yishun-fight-12345"
+REDDIT = "https://reddit.com/r/singapore/comments/abc/man_hurt_in_yishun"
 
 BASE_DRAFT = {
     "title": "Man hurt in Yishun fight",
@@ -155,6 +158,27 @@ check("an article outside the kept source_urls is not timelined",
 with allowlist(set()):
     row = qr.build_queue_row({**item, "date": ""}, {**BASE_DRAFT, "source_urls": []})
 check("no dates anywhere leaves the timeline empty", timeline_of(row) == [])
+
+# -- Canonical dedup keys: the yishun-bicycle-basket bug ----------------------
+# One Stomp article, scraped twice with different ?ref= tracking params. Dedup
+# canonicalises the probe but compares against the RAW stored key, so the second
+# spelling slipped through. build_queue_row now stores the canonical form as
+# both source_url (the queue dedup key) and inside source_urls, so a later probe
+# for the other ?ref= matches.
+STOMP_A = "https://www.stomp.sg/singapore-seen/man-basket-yishun?ref=home-editors-picks"
+STOMP_B = "https://www.stomp.sg/singapore-seen/man-basket-yishun?ref=home-singapore-seen"
+STOMP_CANON = "https://stomp.sg/singapore-seen/man-basket-yishun"
+with allowlist({STOMP_CANON}):
+    row_a = qr.build_queue_row(
+        {"url": STOMP_A, "date": "2026-08-24", "source_name": "Stomp",
+         "title": "t", "source_type": "msm"},
+        {**BASE_DRAFT, "source_urls": [STOMP_A]})
+check("queue source_url is stored canonical (the dedup key)",
+      row_a["source_url"] == STOMP_CANON)
+check("source_urls is stored canonical",
+      row_a["raw_content"]["source_urls"] == [STOMP_CANON])
+check("a different ?ref= spelling canonicalises to the SAME stored key",
+      qr.canonical_url(STOMP_B) == row_a["source_url"])
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

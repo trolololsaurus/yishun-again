@@ -11,6 +11,7 @@ build_queue_row() instead of defining its own copy.
 import logging
 
 from classifiers.source_allowlist import (
+    canonical_url,
     check_source_urls,
     collapse_same_article,
     dedupe_urls,
@@ -57,6 +58,32 @@ def build_queue_row(
     status = "update" if is_update else "pending"
     update_target_id = None
     agent_role = "initial"
+
+    # Canonicalise every URL that becomes a dedup KEY, at the one funnel all
+    # candidates pass through, BEFORE anything reads them. `dedup.is_duplicate`
+    # canonicalises the incoming probe but PostgREST compares it against the RAW
+    # stored strings, so a story queued as `?ref=home-editors-picks` and
+    # re-scraped as `?ref=home-singapore-seen` slips the check — different
+    # tracking param, exact-match miss — and lands in the queue as a bogus
+    # "update" that then merges the same Stomp article in twice
+    # (yishun-bicycle-basket-passenger-aug-2026, 2026-08-26). Storing the
+    # canonical form as the key closes it for every future row, and it flows to
+    # incidents.source_urls too because approve copies raw_content.source_urls.
+    # Shallow copies so the caller's dicts (watermark/notes use `item` after)
+    # are untouched. Done here, before the raw_content spread, so source_url,
+    # source_urls, source_articles and the timeline keys all stay consistent.
+    item = dict(item)
+    draft = dict(draft)
+    if item.get("url"):
+        item["url"] = canonical_url(item["url"])
+    for _d in (item, draft):
+        if _d.get("source_urls"):
+            _d["source_urls"] = [canonical_url(u) if u else u for u in _d["source_urls"]]
+    if draft.get("source_articles"):
+        draft["source_articles"] = [
+            {**a, "url": canonical_url(a["url"])} if a.get("url") else a
+            for a in draft["source_articles"]
+        ]
 
     # Corroboration = distinct non-signal source URLs backing this draft. This was
     # hardcoded to 1, so multi-source stories reached the operator (and publish)
