@@ -98,7 +98,7 @@ The full set, in the order `check_eligibility` applies them:
 
 | Gate | Skip reason logged | Why |
 |---|---|---|
-| `status = 'pending'` | `not_pending` | `update` rows merge into a live incident — a different write path whose failure mode is corrupting an existing story. Auto-merge is a separate decision, not yet taken |
+| `status = 'pending'` | `not_pending` | `update` rows merge into a live incident — a different write path (§2b) whose failure mode is corrupting an existing story. Auto-merge is a separate decision, gated behind `AUTO_MERGE_ENABLED` (default OFF); with it off, update rows are held here exactly as before |
 | Not a sentinel row | `notification_row` | Pattern alerts and lifecycle notices are operator prompts, not incidents |
 | A confidence, at or above the bar | `no_confidence`, `below_threshold` | The threshold itself |
 | Title and summary present | `missing_title`, `missing_summary` | The human approve route's own 422 preconditions |
@@ -165,6 +165,54 @@ category is given a placeholder so the reject path can finish and alert. Guard:
 Every auto-publish writes a `training_signals` row with `action='auto_approve'`,
 `decided_by='agent'`. That flag is what keeps the agent from grading its own
 homework — see §4.
+
+### 2b. Auto-merge: applying an update unattended (`AUTO_MERGE_ENABLED`, default OFF)
+
+An `update` row merges a new source into an **already-published** incident
+(appends to `source_urls`/`source_timeline`, bumps `update_count`, recomputes the
+dates). That is a live-incident mutation, and a wrong merge is near-invisible —
+one extra URL in a source list — and hits the source-integrity constraint. So it
+is a **separate, opt-in decision**, off by default. With `AUTO_MERGE_ENABLED`
+unset, every update row is held for the operator, unchanged.
+
+When on, a merge auto-applies only when **both** confidences clear **and** the
+appended source is verifiable. `check_update_eligibility` (same fail-open
+direction — a miss is *held*, never rejected):
+
+| Gate | Skip reason | Why |
+|---|---|---|
+| It is an update row with a target | `not_update`, `no_update_target` | Nothing to merge into otherwise |
+| Draft confidence ≥ `AUTO_MERGE_CONFIDENCE` (0.95) | `below_threshold` | Write quality |
+| Same-event confidence ≥ `AUTO_MERGE_MATCH_CONFIDENCE` (0.95) | `no_match_confidence`, `match_below_threshold` | The wrong-merge axis — the strict one. `_match_confidence` is the consolidation grouper's certainty this candidate updates *that* incident, persisted by `consolidation/queue_row.py`. Missing ⇒ held: a row written before it was persisted is never merged blind |
+| Appended source survives the allowlist | `source_not_verifiable`, `unapproved_source_domain`, `allowlist_check_failed` | `confirm-update` trusts the operator here; the autonomous path has no operator, so it **re-runs** the guard. A signal/redirect URL disqualifies the merge; an unapproved domain holds it |
+
+Two confidences, not one, because they answer different questions: `agent_confidence`
+is "is the draft well-written", `_match_confidence` is "is this the same event".
+A merge needs both, and the match one is what the earlier evaluation flagged as
+the real risk.
+
+Safety properties mirror auto-publish:
+
+- **Undo net.** Before mutating, `_apply_merge` snapshots the pre-merge incident
+  state into `raw_content._undo_snapshot`; the War Room queue's "Recently merged
+  updates" panel offers a one-click Undo (`/api/queue/[id]/revert-update`), which
+  restores the snapshot. **Do not enable auto-merge without migration 018
+  applied** — the snapshot vocabulary and the `auto_update` / `update_reverted`
+  training actions live there.
+- **Claim before mutate.** The queue row is CAS-claimed `update → update_approved`
+  before the incident is touched; a race with an operator confirm/reject loses the
+  claim harmlessly. An incident-update failure releases the claim back to `update`.
+- **Blast radius cap.** `AUTO_MERGE_MAX_PER_RUN` (25) bounds one pass.
+- **Never edits the summary.** The auto path only does the mechanical merge; the
+  operator-editable summary rewrite (`confirm-update`'s optional field) is never
+  invoked unattended.
+
+Every auto-merge writes `training_signals` `action='auto_update'`,
+`decided_by='agent'`; every operator undo writes `action='update_reverted'` — the
+false-merge correction the learning loop reads. The merge math lives once in
+`_compute_merge`, a pure mirror of `applyUpdate()` in
+`apps/war-room/lib/utils.ts` (change one, change the other). Guards:
+`test_auto_merge_eligibility.py`, `apps/war-room/lib/utils.updateMerge.test.ts`.
 
 ---
 

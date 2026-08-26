@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { validateUUID } from '@/lib/utils'
+import { validateUUID, applyUpdate } from '@/lib/utils'
 
 interface ConfirmUpdateBody {
   updated_summary?: string
@@ -31,10 +31,11 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     return NextResponse.json({ error: 'Queue item has no update_target_incident_id' }, { status: 400 })
   }
 
-  // Fetch the existing published incident
+  // Fetch the existing published incident. `summary` is selected so the undo
+  // snapshot can restore it (an operator edit below replaces it).
   const { data: existing, error: incFetchErr } = await supabase
     .from('incidents')
-    .select('id,source_urls,source_timeline,update_count,incident_date,first_reported_at,is_developing')
+    .select('id,source_urls,source_timeline,update_count,incident_date,first_reported_at,is_developing,summary')
     .eq('id', targetId)
     .single()
 
@@ -47,68 +48,30 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   const sourceName  = (rc.source_name as string) ?? item.source_type ?? 'unknown'
   const headline    = (item.proposed_title ?? (rc.title as string) ?? '').slice(0, 200)
 
-  // Merge source_urls — deduplicate
-  const existingUrls: string[] = existing.source_urls ?? []
-  const mergedUrls = existingUrls.includes(newSourceUrl)
-    ? existingUrls
-    : [...existingUrls, newSourceUrl]
-
-  // Append to source_timeline
-  const existingTimeline: unknown[] = Array.isArray(existing.source_timeline)
-    ? existing.source_timeline
-    : []
-
-  // Date of the merged source — the candidate's REAL article date, never
-  // "today". Stamping new Date() corrupted incident_date (rows floated to the
-  // top of the feed dated today) and littered the timeline with merge-day
-  // stamps. Prefer the queue item's own date; fall back to the incident's
-  // existing date so a merge can never push the date into the future.
-  const existingDate = existing.incident_date ?? null
-  const newDate =
-    (rc.date as string) ||
-    (rc.published_at as string) ||
-    existingDate ||
-    existing.first_reported_at ||
-    null
-
-  const newTimelineEntry = {
-    date:        newDate ?? existingDate,
-    source_url:  newSourceUrl,
-    source_name: sourceName,
+  // applyUpdate owns the merge math (source_urls, timeline, dates, update_count)
+  // and returns the pre-merge snapshot the undo route restores from. See
+  // lib/utils.ts — the autonomous auto-merge (PR #2) mirrors it in Python.
+  const { updates, snapshot } = applyUpdate(existing, {
+    newSourceUrl,
+    sourceName,
     headline,
-  }
-  const mergedTimeline = [...existingTimeline, newTimelineEntry]
-
-  // incident_date = latest known date, first_reported_at = earliest known date.
-  // Both clamp to real dates only — newDate is never "today".
-  const updatedDate      = existingDate && newDate && existingDate > newDate ? existingDate : (newDate ?? existingDate)
-  const existingFirstDate = existing.first_reported_at ?? existingDate
-  const firstReportedAt  = existingFirstDate && newDate && existingFirstDate < newDate
-    ? existingFirstDate
-    : (existingFirstDate ?? newDate)
-
-  const updates: Record<string, unknown> = {
-    source_urls:      mergedUrls,
-    source_timeline:  mergedTimeline,
-    is_developing:    true,
-    update_count:     (existing.update_count ?? 0) + 1,
-    incident_date:    updatedDate,
-    first_reported_at: firstReportedAt,
-  }
-
-  // Use operator-edited summary if provided
+    newDate: (rc.date as string) || (rc.published_at as string) || null,
+    updatedSummary: body.updated_summary,
+  })
   const updatedSummary = (body.updated_summary ?? '').trim()
-  if (updatedSummary) updates.summary = updatedSummary
 
   // Claim the queue item BEFORE mutating the incident. The old order updated
   // the incident first and never checked the queue update's error — a failed
   // (or raced) status write left the item re-confirmable, appending duplicate
   // timeline entries and double-counting update_count. Losing the claim here
   // costs nothing; losing it after the mutation corrupts the incident.
+  // The snapshot rides in raw_content so the undo route can restore the exact
+  // pre-merge state.
   const { data: claimed, error: claimErr } = await supabase.from('war_room_queue').update({
     status:       'update_approved',
     incident_id:  targetId,
     processed_at: new Date().toISOString(),
+    raw_content:  { ...rc, _undo_snapshot: snapshot },
   }).eq('id', id).eq('status', 'update').select('id')
 
   if (claimErr) {

@@ -228,6 +228,123 @@ export function safeHref(url: string | null | undefined): string {
   return '#'
 }
 
+// ── Applying and reverting an update (merge) ─────────────────────────────────
+//
+// A confirmed update mutates an ALREADY-PUBLISHED incident: it appends the new
+// source URL + a timeline entry, flips is_developing, bumps update_count and
+// recomputes the dates. `applyUpdate` is the single source of that math — the
+// confirm-update route calls it, and (PR #2) the autonomous auto-merge mirrors
+// it in Python. `revertUpdate` is its inverse, and it is deliberately a plain
+// RESTORE of the pre-merge snapshot rather than a surgical un-append: the route
+// does NOT re-add a source_url it already held, so reconstructing the reversal
+// by removing the URL would delete a citation the incident had before the merge.
+// Snapshotting the prior arrays wholesale is both simpler and correct.
+//
+// Guard: apps/war-room/lib/utils.updateMerge.test.ts (revert(apply(x)) == x).
+
+export interface IncidentMergeState {
+  source_urls:       string[] | null
+  source_timeline:   unknown[] | null
+  update_count:      number | null
+  incident_date:     string | null
+  first_reported_at: string | null
+  is_developing:     boolean | null
+  summary:           string | null
+}
+
+export interface MergeInput {
+  newSourceUrl: string
+  sourceName:   string
+  headline:     string
+  /** The candidate's REAL article date — never "today". null if unknown. */
+  newDate:      string | null
+  /** Operator-edited summary. Empty/undefined keeps the existing summary. */
+  updatedSummary?: string
+}
+
+/** Everything needed to restore the incident to its exact pre-merge state. */
+export interface UpdateSnapshot {
+  source_urls:       string[]
+  source_timeline:   unknown[]
+  update_count:      number
+  incident_date:     string | null
+  first_reported_at: string | null
+  is_developing:     boolean
+  summary:           string | null
+}
+
+export function applyUpdate(
+  existing: IncidentMergeState,
+  input: MergeInput,
+): { updates: Record<string, unknown>; snapshot: UpdateSnapshot } {
+  const existingUrls: string[] = existing.source_urls ?? []
+  const existingTimeline: unknown[] = Array.isArray(existing.source_timeline)
+    ? existing.source_timeline
+    : []
+  const existingDate = existing.incident_date ?? null
+  const existingCount = existing.update_count ?? 0
+  const existingDeveloping = existing.is_developing ?? false
+
+  // Snapshot BEFORE mutating — the arrays are captured by reference to the old
+  // values, so the patch below (which builds new arrays) never mutates them.
+  const snapshot: UpdateSnapshot = {
+    source_urls:       existingUrls,
+    source_timeline:   existingTimeline,
+    update_count:      existingCount,
+    incident_date:     existingDate,
+    first_reported_at: existing.first_reported_at ?? null,
+    is_developing:     existingDeveloping,
+    summary:           existing.summary ?? null,
+  }
+
+  // Merge source_urls — never store the same citation twice.
+  const mergedUrls = existingUrls.includes(input.newSourceUrl)
+    ? existingUrls
+    : [...existingUrls, input.newSourceUrl]
+
+  // Date of the merged source — never "today". Fall back to the incident's own
+  // date so a merge can never push incident_date into the future.
+  const newDate = input.newDate || existingDate || existing.first_reported_at || null
+
+  const mergedTimeline = [
+    ...existingTimeline,
+    { date: newDate ?? existingDate, source_url: input.newSourceUrl, source_name: input.sourceName, headline: input.headline },
+  ]
+
+  // incident_date = latest known date, first_reported_at = earliest known date.
+  const updatedDate = existingDate && newDate && existingDate > newDate ? existingDate : (newDate ?? existingDate)
+  const existingFirstDate = existing.first_reported_at ?? existingDate
+  const firstReportedAt = existingFirstDate && newDate && existingFirstDate < newDate
+    ? existingFirstDate
+    : (existingFirstDate ?? newDate)
+
+  const updates: Record<string, unknown> = {
+    source_urls:       mergedUrls,
+    source_timeline:   mergedTimeline,
+    is_developing:     true,
+    update_count:      existingCount + 1,
+    incident_date:     updatedDate,
+    first_reported_at: firstReportedAt,
+  }
+  const updatedSummary = (input.updatedSummary ?? '').trim()
+  if (updatedSummary) updates.summary = updatedSummary
+
+  return { updates, snapshot }
+}
+
+/** The patch that restores an incident to its pre-merge snapshot. */
+export function revertUpdate(snap: UpdateSnapshot): Record<string, unknown> {
+  return {
+    source_urls:       snap.source_urls,
+    source_timeline:   snap.source_timeline,
+    update_count:      snap.update_count,
+    incident_date:     snap.incident_date,
+    first_reported_at: snap.first_reported_at,
+    is_developing:     snap.is_developing,
+    summary:           snap.summary,
+  }
+}
+
 // ── Paragraph rendering ──────────────────────────────────────────────────────
 //
 // PORTED VERBATIM from apps/web/lib/utils.ts. Keep the two byte-identical.
