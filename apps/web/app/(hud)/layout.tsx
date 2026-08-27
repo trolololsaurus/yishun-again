@@ -85,9 +85,16 @@ export default async function HudLayout({ children }: { children: React.ReactNod
         {/* Left column — the route's page (feed or map) fills the width. On
             mobile it reserves 128px at the bottom so content clears the collapsed
             bottom sheet (which is position:fixed and would otherwise overlap).
-            The collapsed sheet is ~122px now that it carries the YEAR selector. */}
+            The collapsed sheet is ~122px now that it carries the YEAR selector.
+
+            Both Feed and Map read useSearchParams() to apply filters, which SSR
+            doesn't have access to. Wrapping them in Suspense ensures the server
+            renders static markup while the client hydrates with URL params — avoiding
+            a hydration mismatch (React error #418) that forces a full tree re-render. */}
         <div className="flex-1 min-w-0 flex flex-col overflow-hidden pb-[128px] md:pb-0">
-          {children}
+          <Suspense fallback={null}>
+            {children}
+          </Suspense>
         </div>
 
         {/* Desktop sidebar — 280px, hidden on mobile where the bottom sheet
