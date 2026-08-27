@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase'
-import { isoDaysAgo } from '@/lib/utils'
+import { isoDaysAgo, isDiscoverySource, primaryIdOf } from '@/lib/utils'
 import type { ScraperHealth } from '@/lib/types'
 
 export const revalidate = 0
@@ -96,9 +96,19 @@ export default async function HealthPage() {
     )
   }
 
-  const green  = scrapers.filter(s => s.status === 'ok').length
-  const yellow = scrapers.filter(s => s.status === 'warning').length
-  const red    = scrapers.filter(s => s.status === 'error').length
+  // A discovery adapter (sitemap/search) in error is NOT an outlet outage when
+  // the outlet's primary scraper is healthy this window — the recent-news spine
+  // is intact, only the deeper archive window is degraded. Demote it out of the
+  // red ERROR tier so red means "the outlet's own feed failed" (see queue panel
+  // and lib/utils.isDiscoverySource for the full rationale).
+  const okIds = new Set(scrapers.filter(s => s.status === 'ok').map(s => s.source_name))
+  const isDemoted = (s: ScraperHealth): boolean =>
+    s.status === 'error' && isDiscoverySource(s.source_name) && okIds.has(primaryIdOf(s.source_name))
+
+  const green      = scrapers.filter(s => s.status === 'ok').length
+  const yellow     = scrapers.filter(s => s.status === 'warning').length
+  const red        = scrapers.filter(s => s.status === 'error' && !isDemoted(s)).length
+  const discovery  = scrapers.filter(isDemoted).length
 
   const fetchedAt = new Date().toLocaleString('en-SG', {
     timeZone:  'Asia/Singapore',
@@ -144,6 +154,9 @@ export default async function HealthPage() {
           <span className="text-green font-bold">🟢 HEALTHY ({green})</span>
           <span className="text-yellow font-bold">🟡 WARNING ({yellow})</span>
           <span className="text-red font-bold">🔴 ERROR ({red})</span>
+          {discovery > 0 && (
+            <span className="text-text-secondary font-bold">🔵 DISCOVERY ONLY ({discovery})</span>
+          )}
         </div>
         <div className="bg-surface border border-border p-4 text-xs text-text-secondary leading-relaxed max-w-2xl space-y-2">
           <p>
@@ -159,6 +172,13 @@ export default async function HealthPage() {
             <span className="text-red font-bold">ERROR</span> — the scraper
             failed: network timeout, HTTP error, blocked by the source, or a
             parsing failure. The reason column shows what went wrong.
+          </p>
+          <p>
+            <span className="text-text-primary font-bold">🔵 DISCOVERY ONLY</span> — a
+            secondary discovery adapter (a publisher's own sitemap or WP search,
+            id ending <code>_sitemap</code>/<code>_search</code>) failed while
+            the outlet's primary feed is HEALTHY. The outlet is still covered;
+            only its deeper archive window is degraded — not an outage.
           </p>
           <p>
             <span className="text-text-primary font-bold">7D AVG</span> — average
@@ -192,13 +212,25 @@ export default async function HealthPage() {
                 <td className="py-3 pr-6 text-text-secondary">{fmtDate(s.scraped_at)}</td>
                 <td className="py-3 pr-6 text-right text-text-primary">{s.items_found}</td>
                 <td className="py-3 pr-6">
-                  <span className={`${STATUS_CLS[s.status]} font-bold`}>
-                    {STATUS_DOT[s.status]} {s.status.toUpperCase()}
-                  </span>
-                  {s.status_reason && (
-                    <div className="text-text-secondary mt-1 text-xs">
-                      {s.status_reason}
-                    </div>
+                  {isDemoted(s) ? (
+                    <>
+                      <span className="text-text-secondary font-bold">🔵 DISCOVERY ONLY</span>
+                      <div className="text-text-secondary mt-1 text-xs">
+                        {s.status_reason ? `${s.status_reason} · ` : ''}
+                        {primaryIdOf(s.source_name)} primary feed OK, outlet still covered
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <span className={`${STATUS_CLS[s.status]} font-bold`}>
+                        {STATUS_DOT[s.status]} {s.status.toUpperCase()}
+                      </span>
+                      {s.status_reason && (
+                        <div className="text-text-secondary mt-1 text-xs">
+                          {s.status_reason}
+                        </div>
+                      )}
+                    </>
                   )}
                 </td>
                 <td className="py-3 pr-6 text-right">
