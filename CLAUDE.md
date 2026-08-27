@@ -49,7 +49,7 @@ yishun-again/
 │   │   └── ops/            # Autonomy layer — see docs/AUTONOMY.md
 │   │       ├── daily.py            # THE daily chain (Cloud Scheduler entry)
 │   │       ├── activity.py         # agent_runs / agent_events logging
-│   │       ├── notify.py           # operator email + dedup ledger
+│   │       ├── notify.py           # operator alerting (Telegram) + dedup ledger
 │   │       ├── auto_publish.py     # >=0.95 confidence gate
 │   │       ├── learning_monitor.py # confidence/agreement deltas
 │   │       ├── supervisor.py       # scraper fleet watchdog
@@ -94,8 +94,8 @@ collection (the module-level `SystemExit` aborts the run). Run them directly:
 for f in test_*.py; do ./.venv/Scripts/python.exe "$f" || echo "FAIL $f"; done
 ```
 
-All are offline — no network, no API keys, no DB. There are **40 test files** and
-they all pass as of 2026-08-26; a red file is a real regression, not a flake.
+All are offline — no network, no API keys, no DB. There are **44 test files** and
+they all pass as of 2026-08-27; a red file is a real regression, not a flake.
 
 The web app has tests too, added 2026-08-04 — `apps/web/lib/utils.test.ts`, run
 with `npm test` from `apps/web`. There is no test framework installed: it uses
@@ -715,18 +715,19 @@ under-count by the number of unpublished drafts.
 > - **#4** — closed in `filters/stage2_writer.py::_classify`: `political: true`
 >   forces `confidence = 0.0` before the merge, and `write_stage2` prepends the
 >   operator-visible reject marker (QA C1). Since 2026-07-30 it also **alerts** —
->   marker, operator email and a `warning` `agent_events` row — because a
->   silently-zeroed row was indistinguishable from any other low-confidence row.
+>   marker, an operator alert (Telegram since 2026-08-27, email before that) and a
+>   `warning` `agent_events` row — because a silently-zeroed row was
+>   indistinguishable from any other low-confidence row.
 >   **Since 2026-08-02 the guardrail is evaluated BEFORE field validation.** It
 >   used to sit below the classification coercion, and
 >   `result["classification"].lower()` threw `AttributeError` on
 >   `"classification": null` — which is what the model returns on a political
 >   story, because it is being told to reject rather than categorise. The
 >   candidate died on an exception, so confidence was never forced to 0, the
->   marker was never prepended, and neither the email nor the `agent_events` row
->   ever fired. The guardrail was unreachable for a subset of exactly the content
->   it exists to catch. **Never move the political check back below field
->   validation.**
+>   marker was never prepended, and neither the operator alert nor the
+>   `agent_events` row ever fired. The guardrail was unreachable for a subset
+>   of exactly the content it exists to catch. **Never move the political
+>   check back below field validation.**
 >   **Also since 2026-08-02: `write_stage2` SKIPS the writer model entirely when
 >   `political` is true.** It used to call `_write_draft` unconditionally, asking
 >   the model to write tabloid copy about an "incident" that by definition isn't

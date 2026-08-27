@@ -18,7 +18,7 @@ endpoint runs twelve steps in a fixed order (`packages/agents/ops/daily.py`):
 |---|---|---|---|---|
 | 1 | Recalibration | `classifiers/recalibration.py` | daily | §5.5 |
 | 2 | Ingestion pass | `ingestion/orchestrator.py` | daily | — |
-| 3 | Auto-publish + review email | `ops/auto_publish.py` | daily | #3, #4 |
+| 3 | Auto-publish + review alert | `ops/auto_publish.py` | daily | #3, #4 |
 | 4 | Integrity (dupes, hallucinations) | `ops/integrity.py` | daily | #10 |
 | 5 | Supervisor (scraper fleet) | `ops/supervisor.py` | daily | #9 |
 | 6 | Learning monitor (deltas) | `ops/learning_monitor.py` | daily | #5 |
@@ -216,7 +216,7 @@ false-merge correction the learning loop reads. The merge math lives once in
 
 ---
 
-## 3. What lands in your inbox, and what does not
+## 3. What you get alerted on, and what does not
 
 Alerting nobody reads is worse than none, because the one message that mattered
 gets filtered with the rest. Every alert is therefore deduped and throttled, and
@@ -230,13 +230,13 @@ once-a-pass.
 
 | Kind | Sent when | Window | Dedup key |
 |---|---|---|---|
-| `review_queue` | Cards below the threshold are waiting (req #4) | 180 min | `review_queue:<date>` — one email a day at one pass a day |
+| `review_queue` | Cards below the threshold are waiting (req #4) | 180 min | `review_queue:<date>` — one alert a day at one pass a day |
 | `anomaly` | Supervisor finds a *serious* fleet problem (req #9); integrity finds something needing a human (req #10); guardrail #4 flags political content | 60 min default — supervisor overrides to 1440 | `supervisor:<date>:<broken sources>`, `integrity:<date>`, `political:<url>` |
 | `maintenance` | Something broke, with a plain-English suggested fix (req #11) | 1440 min | `maintenance:<date>` |
 | `health` | A backend component is down, or the cost guard tripped (req #12) | 60 min | `health:<components down>` |
 | `monthly_report` | 1st of the month (req #13) | Never throttled | one a month by construction |
 
-A single flaky source is **logged, not emailed**. "Serious" is defined in
+A single flaky source is **logged, not alerted on**. "Serious" is defined in
 `ops/supervisor.py` and is exactly four shapes, all of which mean the archive has
 stopped updating and will not fix itself: ≥ 3 sources anomalous in one pass;
 *every* registered source failing (only counted with ≥ 3 sources registered, or
@@ -447,7 +447,7 @@ the note under §3's alert table.
 > the one `pipeline_state` uses. The old writer used display names (`Stomp`, `The
 > Straits Times`) while the supervisor cross-references the two tables by this
 > key, so two spellings of one source count it **twice** toward the "≥ 3 sources
-> anomalous" email threshold: one broken source could mail as if it were three.
+> anomalous" alert threshold: one broken source could alert as if it were three.
 
 **`ZERO_STREAK_WARNING` in `ingestion/health.py` was raised 3 → 30 on
 2026-08-02.** `items_found` counts candidates that survived the Yishun keyword
