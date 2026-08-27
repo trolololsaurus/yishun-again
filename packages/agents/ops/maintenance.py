@@ -145,15 +145,16 @@ _DIAGNOSES: tuple[dict, ...] = (
     },
     {
         "id": "notify_failed",
-        "title": "Operator email could not be sent",
-        "any": ("resend http", "operator_email", "resend_api_key", "notify:"),
+        "title": "Operator Telegram alert could not be sent",
+        "any": ("telegram http", "telegram_chat_id", "telegram_bot_token", "notify:"),
         "needs_source": None,
         "what": "An alert was recorded in the notifications ledger but the send failed. The "
                 "content is not lost — but it means an alert you should have seen never "
-                "reached the inbox.",
-        "fix": "Check RESEND_API_KEY and OPERATOR_EMAIL on Cloud Run, and the Resend "
-               "dashboard for a bounce or a domain-verification failure. The unsent alerts "
-               "are readable in the War Room notifications view.",
+                "reached Telegram.",
+        "fix": "Check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID on Cloud Run, and that the "
+               "operator has started a chat with the bot (a bot cannot message a user who "
+               "has never messaged it first). The unsent alerts are readable in the War Room "
+               "notifications view.",
     },
 )
 

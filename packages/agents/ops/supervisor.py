@@ -82,11 +82,32 @@ STALE_HOURS = 48
 # offered before any filtering — and not on what survived to the queue. A source
 # that fetches nothing for five passes running has stopped seeing the page it
 # used to parse.
+#
+# That assumption holds for PRIMARY sources, whose `fetched` counts the raw
+# listing page. It does NOT hold for DISCOVERY-tier sources (news_sitemap.py,
+# wp_search.py, ids suffixed `_sitemap`/`_search`): their `fetched` is already
+# post-keyword-filter (see NewsSitemapSource.fetch — `candidates` is built after
+# `content_matches_keywords`), same as CLAUDE.md's documented `scraper_health`
+# semantics. A small town legitimately produces zero keyword matches across a
+# sitemap of hundreds of entries for a week or more running (CLAUDE.md: "Tamil
+# Murasu or Berita Harian can go a month" — same shape, worse for discovery
+# since it's already filtered). Applying the primary-tier threshold to this tier
+# is exactly the false-alarm pattern this check exists to avoid; it fired as
+# "19 sources anomalous" on 2026-08-26, nearly all discovery-tier. Give that
+# tier a much longer leash instead of exempting it outright, so a genuinely dead
+# sitemap (HTTP change, markup change) still eventually alerts.
 ZERO_STREAK_ANOMALY = 5
+DISCOVERY_ZERO_STREAK_ANOMALY = 30
 
 # How far back to look when computing that streak. Must comfortably exceed
-# ZERO_STREAK_ANOMALY, or the threshold is unreachable by construction.
-ZERO_STREAK_PASSES = 12
+# DISCOVERY_ZERO_STREAK_ANOMALY, or that threshold is unreachable by construction.
+ZERO_STREAK_PASSES = 35
+
+
+def _is_discovery(source_name: str) -> bool:
+    """Discovery-tier source ids end in `_sitemap` or `_search` (see
+    ingestion/sources/news_sitemap.py and wp_search.py's id tuples)."""
+    return source_name.endswith(("_sitemap", "_search"))
 
 # An ingestion pass is minutes, not hours. Still 'running' after 90 minutes
 # means the row was never closed — i.e. the process died.
@@ -294,8 +315,9 @@ def classify_findings(*, pipeline_state, streaks=(), stuck=(), now=None) -> list
 
     for row in streaks or []:
         zeros = int(row.get("consecutive_zeros") or 0)
-        if zeros >= ZERO_STREAK_ANOMALY:
-            name = row.get("source_name") or "?"
+        name = row.get("source_name") or "?"
+        threshold = DISCOVERY_ZERO_STREAK_ANOMALY if _is_discovery(name) else ZERO_STREAK_ANOMALY
+        if zeros >= threshold:
             findings.append(_finding(
                 "anomaly", "zero_streak",
                 f"{name}: fetched 0 items on {zeros} consecutive passes — the "

@@ -265,9 +265,9 @@ log.
 > again. Base new alerts on run history.
 
 Every attempted send is a row in `notifications` **before** the send, so a
-provider outage loses the delivery, not the alert. With no `RESEND_API_KEY`
+provider outage loses the delivery, not the alert. With no `TELEGRAM_BOT_TOKEN`
 configured, alerts are recorded with status `disabled` and remain visible in the
-War Room — the pipeline never blocks on email.
+War Room — the pipeline never blocks on Telegram.
 
 ---
 
@@ -766,29 +766,36 @@ still `running`, bounded to a 60-minute look-back so an orphaned row cannot wedg
 the pass permanently, and fails **open** so an unreadable `agent_runs` table
 cannot turn a logging outage into an ingestion outage.
 
-### Turn email on
+### Turn Telegram alerts on
 
 The pipeline runs without it — alerts are recorded and visible in War Room. Both
-`RESEND_API_KEY` *and* `OPERATOR_EMAIL` are required for a real send; with either
-missing, `notify()` records the alert with status `disabled` and returns. To
-start sending:
+`TELEGRAM_BOT_TOKEN` *and* `TELEGRAM_CHAT_ID` are required for a real send; with
+either missing, `notify()` records the alert with status `disabled` and returns.
 
+**One-time setup (operator, not Cloud Run):**
+1. Message **@BotFather** on Telegram → `/newbot` → follow the prompts. It
+   returns a bot token (`123456789:AAF...`).
+2. Start a chat with your new bot — send it any message. A bot cannot message a
+   user who has never messaged it first; this is the one-time handshake.
+3. Get your chat id: `curl "https://api.telegram.org/bot<TOKEN>/getUpdates"` and
+   read `result[0].message.chat.id` from the response.
+
+**Wire it into Cloud Run:**
 ```bash
-printf '%s' 'YOUR_RESEND_KEY' | gcloud secrets create resend-api-key \
+printf '%s' 'YOUR_BOT_TOKEN' | gcloud secrets create telegram-bot-token \
   --data-file=- --replication-policy=automatic --project=yishun-again
 gcloud run services update yishun-agents --region asia-southeast1 \
-  --update-secrets RESEND_API_KEY=resend-api-key:latest
-# OPERATOR_EMAIL (and NOTIFY_FROM) contain '@', which collides with
-# --set-env-vars / --update-env-vars parsing even in the ^@^ alternate-delimiter
-# form. Use a YAML file — there is no delimiter to collide with.
-gcloud run services update yishun-agents --region asia-southeast1 \
-  --env-vars-file ops-env.yaml
+  --update-secrets TELEGRAM_BOT_TOKEN=telegram-bot-token:latest \
+  --update-env-vars TELEGRAM_CHAT_ID=<your chat id>
 curl -X POST -H "X-Ops-Token: $OPS_TOKEN" \
   https://<service-url>/notify/test          # prove delivery works
 ```
+`TELEGRAM_CHAT_ID` is a plain numeric id (no `@`, no delimiter collision), so it
+can go straight in `--update-env-vars` — unlike the old `OPERATOR_EMAIL` this
+replaced, which needed a YAML file to dodge gcloud's `@`-as-delimiter parsing.
 
-`NOTIFY_ENABLED=false` mutes sending without removing the key — alerts are still
-recorded.
+`NOTIFY_ENABLED=false` mutes sending without removing the token — alerts are
+still recorded.
 
 ### Operate
 
