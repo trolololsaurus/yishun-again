@@ -192,9 +192,23 @@ function useFetch<T>(url: string) {
 
   const load = useCallback(() => {
     fetch(url)
-      .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
-      .then(d  => { setData(d); setError(null); setLoading(false) })
-      .catch(e => { setError(String(e)); setLoading(false) })
+      .then(async r => {
+        if (r.ok) return r.json()
+        // r.statusText is empty on some responses (seen in prod on a 503),
+        // which used to produce an empty-string error — falsy, so it failed
+        // BOTH the error-display check and the "no data" fallback check,
+        // rendering nothing with no indication anything was wrong. Read the
+        // route's own JSON error body instead, with a status-code fallback
+        // that's never an empty string.
+        let message = `HTTP ${r.status}`
+        try {
+          const body = await r.json()
+          if (body?.error) message = body.error
+        } catch { /* body wasn't JSON — keep the status-code fallback */ }
+        throw new Error(message)
+      })
+      .then(d => { setData(d); setError(null); setLoading(false) })
+      .catch(e => { setError(e instanceof Error ? e.message : String(e)); setLoading(false) })
   }, [url])
 
   return { data, loading, error, load, setLoading }

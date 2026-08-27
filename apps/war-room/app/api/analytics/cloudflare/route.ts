@@ -3,10 +3,10 @@ import { NextResponse } from 'next/server'
 const VALID_WINDOWS = new Set(['24h', '7d'])
 
 export async function GET(req: Request) {
-  const agentsUrl = process.env.AGENTS_INTERNAL_URL
+  const agentsUrl = (process.env.AGENTS_API_URL ?? '').replace(/\/+$/, '')
   const opsToken  = process.env.OPS_TOKEN
   if (!agentsUrl || !opsToken) {
-    return NextResponse.json({ error: 'AGENTS_INTERNAL_URL / OPS_TOKEN not configured' }, { status: 503 })
+    return NextResponse.json({ error: 'AGENTS_API_URL / OPS_TOKEN not configured' }, { status: 503 })
   }
 
   const requested = new URL(req.url).searchParams.get('window')

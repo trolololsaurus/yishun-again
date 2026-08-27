@@ -1,13 +1,17 @@
 import { NextResponse } from 'next/server'
 
 export async function GET() {
-  const agentsUrl = process.env.AGENTS_INTERNAL_URL
-  if (!agentsUrl) {
-    return NextResponse.json({ error: 'AGENTS_INTERNAL_URL not configured' }, { status: 503 })
+  const agentsUrl = (process.env.AGENTS_API_URL ?? '').replace(/\/+$/, '')
+  const opsToken  = process.env.OPS_TOKEN
+  if (!agentsUrl || !opsToken) {
+    return NextResponse.json({ error: 'AGENTS_API_URL / OPS_TOKEN not configured' }, { status: 503 })
   }
 
   try {
-    const res = await fetch(`${agentsUrl}/autonomy/status`, { cache: 'no-store' })
+    const res = await fetch(`${agentsUrl}/autonomy/status`, {
+      headers: { 'X-Ops-Token': opsToken },
+      cache:   'no-store',
+    })
     if (!res.ok) {
       return NextResponse.json({ error: `Agents backend returned ${res.status}` }, { status: 502 })
     }
