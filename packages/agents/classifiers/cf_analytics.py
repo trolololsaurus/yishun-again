@@ -19,8 +19,8 @@ CF_GRAPHQL_URL = "https://api.cloudflare.com/client/v4/graphql"
 # per query, regardless of bucket granularity — confirmed live: a 7-day
 # hourly-or-daily-grouped single query is rejected with a "quota" error, but
 # an exact 24h span (even grouped hourly, 24 points) succeeds in one request.
-# So: the "24h" window is ONE query with hourly buckets; "7d"/"30d" still need
-# one query per calendar day, same as before this window param existed.
+# So: the "24h" window is ONE query with hourly buckets; "7d" still needs one
+# query per calendar day, same as before this window param existed.
 _HOUR_QUERY = """
 query($zoneTag: string, $since: Time, $until: Time) {
   viewer {
@@ -204,13 +204,13 @@ def _get_multi_day(client: httpx.Client, zone_tag: str, days: int) -> dict:
 def get_traffic_summary(window: str = "7d") -> dict:
     """Zone-level Cloudflare traffic for the given window.
 
-    window: "24h" (hourly buckets, one request), "7d" or "30d" (daily
-    buckets, one request per day — free-plan quota caps a single query at a
-    1-day span regardless of grouping granularity).
+    window: "24h" (hourly buckets, one request) or "7d" (daily buckets, one
+    request per day — free-plan quota caps a single query at a 1-day span
+    regardless of grouping granularity). "30d" is not supported — see WINDOWS.
 
     Returns:
         {
-          "window": "24h" | "7d" | "30d",
+          "window": "24h" | "7d",
           "granularity": "hour" | "day",
           "points": [{"t": ISO8601, "visits": int, "requests": int}, ...],
           "countries": [{"country": "SG", "visits": int}, ...],   # top 10
