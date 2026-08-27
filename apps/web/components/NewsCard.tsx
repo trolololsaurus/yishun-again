@@ -10,6 +10,8 @@ import {
   collapseTimelineByDate, formatDurationGap,
 } from '@/lib/utils'
 import type { Incident } from '@/lib/types'
+import { SITE_URL } from '@/lib/site'
+import { ShareButton } from '@/app/incidents/[slug]/ShareButton'
 
 type Row = Pick<Incident,
   'id' | 'slug' | 'title' | 'summary' | 'classification' | 'custom_label' | 'severity'
@@ -40,7 +42,7 @@ const ROLE_LABEL: Record<string, string> = {
  */
 export function NewsCard({ incident }: { incident: Row }) {
   const {
-    slug, title, summary, classification, custom_label, severity, deaths, injuries, corroboration_count,
+    id, slug, title, summary, classification, custom_label, severity, deaths, injuries, corroboration_count,
     incident_date, area_name, block_number, source_urls, source_timeline, pixel_art_url,
   } = incident
   const [expanded, setExpanded] = useState(false)
@@ -238,13 +240,16 @@ export function NewsCard({ incident }: { incident: Row }) {
             </div>
           )}
 
-          <Link
-            href={`/incidents/${slug}`}
-            className="font-body text-amber hover:underline"
-            style={{ fontSize: 14 }}
-          >
-            Full page ↗
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link
+              href={`/incidents/${slug}`}
+              className="font-body text-amber hover:underline"
+              style={{ fontSize: 14 }}
+            >
+              Full page ↗
+            </Link>
+            <ShareButton url={`${SITE_URL}/incidents/${slug}`} title={title} incidentId={id} />
+          </div>
         </div>
       )}
     </article>
