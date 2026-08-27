@@ -468,12 +468,13 @@ async def autonomy_report(_: None = Depends(_require_ops_token)):
 
 @app.get("/analytics/cloudflare", tags=["ops"])
 async def cloudflare_traffic(
-    days: int = Query(7, ge=1, le=30),
+    window: str = Query("7d", pattern="^(24h|7d)$"),
     _: None = Depends(_require_ops_token),
 ):
     """Zone-level Cloudflare traffic (visits/requests/country/referrer/device)
-    for the last `days` days. Edge/CDN data, not a client-side beacon — see
-    classifiers/cf_analytics.py for exactly what that means and why."""
+    for the given window (24h = hourly buckets, 7d/30d = daily). Edge/CDN
+    data, not a client-side beacon — see classifiers/cf_analytics.py for
+    exactly what that means and why."""
     import asyncio
     from classifiers.cf_analytics import get_traffic_summary
 
@@ -481,7 +482,7 @@ async def cloudflare_traffic(
         raise HTTPException(status_code=503, detail="CF_ZONE_ID / CF_ANALYTICS_API_TOKEN not configured")
 
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, get_traffic_summary, days)
+    return await loop.run_in_executor(None, get_traffic_summary, window)
 
 
 if __name__ == "__main__":

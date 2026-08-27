@@ -37,8 +37,12 @@ interface AnalyticsData {
   queue_stats:   { pending: number; approved: number; rejected: number }
 }
 
+interface CloudflarePoint { t: string; visits: number; requests: number }
+
 interface CloudflareData {
-  days:          { date: string; visits: number; requests: number }[]
+  window:        '24h' | '7d'
+  granularity:   'hour' | 'day'
+  points:        CloudflarePoint[]
   countries:     { country: string; visits: number }[]
   referrers:     { host: string; visits: number }[]
   devices:       { device: string; visits: number }[]
@@ -89,6 +93,56 @@ function BarRow({ label, count, max, color }: { label: string; count: number; ma
   )
 }
 
+// Native SVG — no charting dependency. viewBox scales to any container width;
+// a <title> per point gives a native hover tooltip with no JS.
+function LineChart({
+  points, formatLabel, height = 140, color = '#F1C40F',
+}: {
+  points: { t: string; value: number }[]
+  formatLabel: (t: string) => string
+  height?: number
+  color?: string
+}) {
+  if (points.length === 0) return <div className="text-text-secondary text-sm">No data yet.</div>
+
+  const width  = 700
+  const padTop = 12
+  const max    = Math.max(...points.map(p => p.value), 1)
+  const stepX  = points.length > 1 ? width / (points.length - 1) : 0
+  const scaleY = (v: number) => padTop + (1 - v / max) * (height - padTop * 2)
+
+  const coords = points.map((p, i) => ({ x: i * stepX, y: scaleY(p.value) }))
+  const linePath = coords.map((c, i) => `${i === 0 ? 'M' : 'L'}${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' ')
+  const areaPath = `${linePath} L${coords[coords.length - 1].x.toFixed(1)},${height} L0,${height} Z`
+
+  const peakIdx = points.reduce((best, p, i) => (p.value > points[best].value ? i : best), 0)
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full" style={{ height }} preserveAspectRatio="none">
+        <path d={areaPath} fill={color} fillOpacity={0.12} stroke="none" />
+        <path d={linePath} fill="none" stroke={color} strokeWidth={2} vectorEffect="non-scaling-stroke" />
+        {coords.map((c, i) => (
+          <circle
+            key={points[i].t}
+            cx={c.x} cy={c.y}
+            r={i === peakIdx ? 4 : 2.5}
+            fill={i === peakIdx ? color : 'currentColor'}
+            className={i === peakIdx ? '' : 'text-text-secondary'}
+          >
+            <title>{`${formatLabel(points[i].t)}: ${points[i].value.toLocaleString()} visits`}</title>
+          </circle>
+        ))}
+      </svg>
+      <div className="flex justify-between text-text-secondary text-xs mt-1">
+        <span>{formatLabel(points[0].t)}</span>
+        <span className="text-yellow">▲ peak {formatLabel(points[peakIdx].t)} ({points[peakIdx].value.toLocaleString()})</span>
+        <span>{formatLabel(points[points.length - 1].t)}</span>
+      </div>
+    </div>
+  )
+}
+
 function StatTile({ value, label, color }: { value: string; label: string; color?: string }) {
   return (
     <div className="bg-surface border border-border px-6 py-4 text-center">
@@ -116,6 +170,13 @@ function pct(n: number | null): string {
   return n === null ? '—' : `${Math.round(n * 100)}%`
 }
 
+function fmtCfLabel(iso: string, granularity: 'hour' | 'day'): string {
+  const d = new Date(iso)
+  return granularity === 'hour'
+    ? d.toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', hour12: false })
+    : d.toLocaleDateString('en-SG', { day: '2-digit', month: 'short' })
+}
+
 function fmtDwell(ms: number | null): string {
   if (ms === null) return '—'
   const s = Math.round(ms / 1000)
@@ -139,11 +200,18 @@ function useFetch<T>(url: string) {
   return { data, loading, error, load, setLoading }
 }
 
+// '30d' deliberately absent — this zone's Cloudflare plan caps retention on
+// this dataset at ~8 days total (confirmed live), not just 1 day per query.
+const CF_WINDOWS = ['24h', '7d'] as const
+type CfWindow = typeof CF_WINDOWS[number]
+
 export default function AnalyticsPage() {
   const analytics = useFetch<AnalyticsData>('/api/analytics')
-  const cf         = useFetch<CloudflareData>('/api/analytics/cloudflare')
   const incidents  = useFetch<IncidentsData>('/api/analytics/incidents?days=30')
   const autonomy   = useFetch<Record<string, AutonomyCategory>>('/api/autonomy')
+
+  const [cfWindow, setCfWindow] = useState<CfWindow>('7d')
+  const cf = useFetch<CloudflareData>(`/api/analytics/cloudflare?window=${cfWindow}`)
 
   const refreshAutonomy = useCallback(() => {
     autonomy.setLoading(true)
@@ -153,18 +221,28 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     analytics.load()
-    cf.load()
     incidents.load()
     autonomy.load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const refreshAll = useCallback(() => {
+  // Re-fetches on mount too (cf.load's identity is tied to the window-scoped
+  // URL), so this alone covers both the initial load and window switches —
+  // no separate mount-time cf.load() call needed above.
+  useEffect(() => {
+    cf.load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cfWindow])
+
+  // Deliberately NOT wrapped with empty deps: cf.load's identity is tied to
+  // the window-scoped URL (see useFetch), so a stale empty-deps closure here
+  // would keep refreshing whatever window was selected on first render,
+  // ignoring later window switches.
+  const refreshAll = () => {
     analytics.setLoading(true); analytics.load()
     cf.setLoading(true);        cf.load()
     incidents.setLoading(true); incidents.load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }
 
   const anyLoading = analytics.loading || cf.loading || incidents.loading
 
@@ -207,9 +285,8 @@ export default function AnalyticsPage() {
   const maxRef = Math.max(...(data.referrers ?? []).map(r => r.count), 1)
   const totalTraining = data.training.reduce((s, t) => s + t.count, 0)
 
-  const maxCfCountry  = Math.max(...(cf.data?.countries ?? []).map(c => c.visits), 1)
-  const maxCfDevice   = Math.max(...(cf.data?.devices ?? []).map(d => d.visits), 1)
-  const maxCfDayVisit = Math.max(...(cf.data?.days ?? []).map(d => d.visits), 1)
+  const maxCfCountry = Math.max(...(cf.data?.countries ?? []).map(c => c.visits), 1)
+  const maxCfDevice  = Math.max(...(cf.data?.devices ?? []).map(d => d.visits), 1)
 
   return (
     <div className="space-y-10">
@@ -226,50 +303,80 @@ export default function AnalyticsPage() {
 
       {/* Cloudflare traffic */}
       <section>
-        <h2 className="text-text-secondary text-xs uppercase tracking-widest mb-2">
-          Cloudflare traffic (last 7 days)
-        </h2>
-        <p className="text-text-secondary text-xs leading-relaxed max-w-2xl mb-4">
-          Edge/CDN request data from Cloudflare&apos;s GraphQL Analytics API — every request that
-          hit the zone, bots included, not a JS beacon. &ldquo;Visits&rdquo; is Cloudflare&apos;s own
-          session metric (requests from one client within 30 minutes collapse into one visit). Free-plan
-          limits apply: data lags up to 24 hours, and referrer-host breakdown isn&apos;t available on this
-          plan (the API rejects that field outright) — for actual referring sites, see &ldquo;Traffic
-          sources&rdquo; below, which is first-party.
+        <div className="flex items-center gap-4 mb-2 flex-wrap">
+          <h2 className="text-text-secondary text-xs uppercase tracking-widest">
+            Cloudflare traffic
+          </h2>
+          <div className="flex gap-1">
+            {CF_WINDOWS.map(w => (
+              <button
+                key={w}
+                onClick={() => setCfWindow(w)}
+                className={`px-2 py-1 border text-xs uppercase transition-colors ${
+                  w === cfWindow
+                    ? 'border-yellow text-yellow'
+                    : 'border-border text-text-secondary hover:border-yellow hover:text-yellow'
+                }`}
+              >
+                {w}
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="text-text-secondary text-xs mb-4">
+          Cloudflare edge traffic, bots included. No bot split or unique visitors on this plan.
         </p>
 
         {cf.error && <div className="text-red text-sm mb-3">{cf.error}</div>}
         {cf.data && cf.data.errors.length > 0 && (
           <div className="text-text-secondary text-xs mb-3">
-            {cf.data.errors.length} day(s) had partial data — see server logs.
+            {cf.data.errors.length} interval(s) had partial data — see server logs.
           </div>
         )}
 
         {cf.data && (
           <>
-            <div className="flex gap-6 mb-4">
+            <div className="grid grid-cols-3 gap-3 mb-4">
               <StatTile value={cf.data.total_visits.toLocaleString()} label="visits" />
               <StatTile value={cf.data.total_requests.toLocaleString()} label="requests" />
+              <StatTile
+                value={cf.data.points.length > 0
+                  ? Math.max(...cf.data.points.map(p => p.visits)).toLocaleString()
+                  : '—'}
+                label={`peak / ${cf.data.granularity}`}
+              />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              <div>
-                <div className="text-text-secondary text-xs uppercase tracking-widest mb-2">By day</div>
-                {cf.data.days.map(d => (
-                  <BarRow key={d.date} label={d.date.slice(5)} count={d.visits} max={maxCfDayVisit} color="bg-cyan-600" />
-                ))}
+            <div className="mb-8">
+              <div className="text-text-secondary text-xs uppercase tracking-widest mb-2">
+                Visits over time
               </div>
+              <LineChart
+                points={cf.data.points.map(p => ({ t: p.t, value: p.visits }))}
+                formatLabel={t => fmtCfLabel(t, cf.data!.granularity)}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div>
-                <div className="text-text-secondary text-xs uppercase tracking-widest mb-2">Top countries</div>
-                {cf.data.countries.map(c => (
-                  <BarRow key={c.country} label={c.country} count={c.visits} max={maxCfCountry} color="bg-purple" />
-                ))}
+                <div className="text-text-secondary text-xs uppercase tracking-widest mb-2">
+                  Countries (top 10)
+                </div>
+                {cf.data.countries.length === 0
+                  ? <div className="text-text-secondary text-sm">No country data yet.</div>
+                  : cf.data.countries.map(c => (
+                      <BarRow key={c.country} label={c.country} count={c.visits} max={maxCfCountry} color="bg-purple" />
+                    ))
+                }
               </div>
               <div>
                 <div className="text-text-secondary text-xs uppercase tracking-widest mb-2">Devices</div>
-                {cf.data.devices.map(d => (
-                  <BarRow key={d.device} label={d.device} count={d.visits} max={maxCfDevice} color="bg-yellow" />
-                ))}
+                {cf.data.devices.length === 0
+                  ? <div className="text-text-secondary text-sm">No device data yet.</div>
+                  : cf.data.devices.map(d => (
+                      <BarRow key={d.device} label={d.device} count={d.visits} max={maxCfDevice} color="bg-yellow" />
+                    ))
+                }
               </div>
             </div>
           </>
@@ -281,22 +388,19 @@ export default function AnalyticsPage() {
         <h2 className="text-text-secondary text-xs uppercase tracking-widest mb-2">
           Site engagement (last {incidents.data?.window_days ?? 30} days)
         </h2>
-        <p className="text-text-secondary text-xs leading-relaxed max-w-2xl mb-4">
-          First-party, fires on every real pageview (not just UTM-tagged arrivals). A &ldquo;bounce&rdquo;
-          is a session that viewed exactly one page anywhere on the site, then left. Dwell time is
-          measured from page load to tab-hide or navigation, so it degrades gracefully to &ldquo;no
-          value&rdquo; rather than a wrong one when a beacon never fires (crash, force-quit).
+        <p className="text-text-secondary text-xs mb-4">
+          First-party pageviews. Bounce = 1-page session.
         </p>
         {incidents.error && <div className="text-red text-sm mb-3">{incidents.error}</div>}
         {incidents.data && (
-          <div className="flex gap-6 flex-wrap">
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
             <StatTile value={incidents.data.site.sessions.toLocaleString()} label="sessions" />
             <StatTile value={incidents.data.site.pageviews.toLocaleString()} label="pageviews" />
             <StatTile value={pct(incidents.data.site.bounce_rate)} label="bounce rate"
               color={incidents.data.site.bounce_rate !== null && incidents.data.site.bounce_rate > 0.7 ? 'text-red' : undefined} />
             <StatTile value={fmtDwell(incidents.data.site.avg_dwell_ms)} label="avg dwell" />
             <StatTile value={incidents.data.site.shares.toLocaleString()} label="shares" />
-            <StatTile value={incidents.data.feed_sessions.toLocaleString()} label="feed/map sessions" />
+            <StatTile value={incidents.data.feed_sessions.toLocaleString()} label="feed/map" />
           </div>
         )}
       </section>
@@ -306,10 +410,8 @@ export default function AnalyticsPage() {
         <h2 className="text-text-secondary text-xs uppercase tracking-widest mb-2">
           Incident leaderboard (last {incidents.data?.window_days ?? 30} days)
         </h2>
-        <p className="text-text-secondary text-xs leading-relaxed max-w-2xl mb-4">
-          Click a column to sort. &ldquo;7d&rdquo; is always the trailing week regardless of the window
-          above — that&apos;s the trending signal. CTR is an approximation (arrivals whose referrer was
-          the feed or map, over all feed/map sessions in the window), not true impression tracking.
+        <p className="text-text-secondary text-xs mb-4">
+          Click a column to sort. CTR = arrivals from feed/map ÷ feed/map sessions.
         </p>
         {incidents.data && incidents.data.incidents.length === 0 && (
           <div className="text-text-secondary text-sm">No tracked pageviews yet.</div>
@@ -354,10 +456,8 @@ export default function AnalyticsPage() {
       {/* Traffic sources */}
       <section>
         <h2 className="text-text-secondary text-xs uppercase tracking-widest mb-2">Traffic sources</h2>
-        <p className="text-text-secondary text-xs leading-relaxed max-w-2xl mb-4">
-          UTM breakdown and referrers are first-party (only UTM-tagged link clicks — organic browsing
-          without a tag is invisible here). Geo breakdown below is the same first-party data; Cloudflare&apos;s
-          country breakdown above is the closer-to-complete picture since it doesn&apos;t depend on a tagged link.
+        <p className="text-text-secondary text-xs mb-4">
+          First-party: UTM-tagged clicks only.
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -396,7 +496,7 @@ export default function AnalyticsPage() {
         <h2 className="text-text-secondary text-xs uppercase tracking-widest mb-4">
           Queue snapshot &amp; operator actions ({totalTraining} total)
         </h2>
-        <div className="flex gap-6 flex-wrap">
+        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
           {Object.entries(data.queue_stats).map(([status, count]) => (
             <StatTile key={status} value={String(count)} label={status} />
           ))}

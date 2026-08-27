@@ -7,7 +7,7 @@ Does NOT test the live GraphQL call (needs network + a real token); it tests
 the two pieces that turn raw per-day rows into the dashboard's daily/top10
 shape, since that's the part a refactor is most likely to quietly break.
 """
-from classifiers.cf_analytics import _tally, _top10
+from classifiers.cf_analytics import _tally, _top10, get_traffic_summary
 
 passed = failed = 0
 
@@ -49,6 +49,27 @@ check("top10 uses the given key name", "country" in top[0] and "visits" in top[0
 
 small_tally = {"a": 1, "b": 2}
 check("top10 returns fewer than 10 when input is smaller", len(_top10(small_tally, "x")) == 2)
+
+# ── get_traffic_summary: rejects a bad window before touching the network ───
+try:
+    get_traffic_summary("3d")
+    check("bad window raises ValueError", False, "did not raise")
+except ValueError:
+    check("bad window raises ValueError", True)
+except Exception as exc:
+    check("bad window raises ValueError", False, f"wrong exception type: {exc!r}")
+
+# '30d' is not a bug to silently fix — this zone's plan cannot retrieve data
+# that old (confirmed live, 2026-08-27: "cannot request data older than
+# 1w1d"). If someone re-adds it without re-verifying against a live token,
+# this catches it.
+try:
+    get_traffic_summary("30d")
+    check("'30d' is rejected (not a supported window on this plan)", False, "did not raise")
+except ValueError:
+    check("'30d' is rejected (not a supported window on this plan)", True)
+except Exception as exc:
+    check("'30d' is rejected (not a supported window on this plan)", False, f"wrong exception type: {exc!r}")
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

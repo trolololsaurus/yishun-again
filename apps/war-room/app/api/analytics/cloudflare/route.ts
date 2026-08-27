@@ -1,14 +1,19 @@
 import { NextResponse } from 'next/server'
 
-export async function GET() {
+const VALID_WINDOWS = new Set(['24h', '7d'])
+
+export async function GET(req: Request) {
   const agentsUrl = process.env.AGENTS_INTERNAL_URL
   const opsToken  = process.env.OPS_TOKEN
   if (!agentsUrl || !opsToken) {
     return NextResponse.json({ error: 'AGENTS_INTERNAL_URL / OPS_TOKEN not configured' }, { status: 503 })
   }
 
+  const requested = new URL(req.url).searchParams.get('window')
+  const window    = VALID_WINDOWS.has(requested ?? '') ? requested : '7d'
+
   try {
-    const res = await fetch(`${agentsUrl}/analytics/cloudflare?days=7`, {
+    const res = await fetch(`${agentsUrl}/analytics/cloudflare?window=${window}`, {
       headers: { 'X-Ops-Token': opsToken },
       cache:   'no-store',
     })
