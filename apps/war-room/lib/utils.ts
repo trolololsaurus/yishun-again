@@ -214,6 +214,28 @@ export function isoDaysAgo(days: number): string {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
 }
 
+// ── Scraper-health severity: discovery adapters vs primary scrapers ──────────
+//
+// Every outlet has a PRIMARY scraper (its RSS/HTML feed, id e.g. `straits_times`)
+// and may also have DISCOVERY adapters — the publisher's own Google-News sitemap
+// (`straits_times_sitemap`) and WordPress search (`mustsharenews_search`). The
+// discovery adapters are a wider net BEHIND the primary, added 2026-08-02; both
+// emit the same canonical URLs and dedupe against the primary downstream.
+//
+// A discovery adapter failing is NOT an outlet outage when the outlet's primary
+// scraper is healthy — the recent-news spine is intact, only the deeper archive
+// window is degraded. Surfacing it with the same red "ERROR" alarm as a primary
+// outage is misleading: it reads as "Straits Times is down" while ST is in fact
+// publishing (its googlenews.xml persistently 500s, its RSS feed does not).
+// `primaryIdOf` strips the suffix; both suffixes map onto a real primary id.
+export function isDiscoverySource(sourceName: string): boolean {
+  return /_(sitemap|search)$/.test(sourceName)
+}
+
+export function primaryIdOf(sourceName: string): string {
+  return sourceName.replace(/_(sitemap|search)$/, '')
+}
+
 // Scraped/pipeline URLs are rendered into operator-clicked <a href>. React
 // escapes text but not URL schemes — a javascript: URL from a hostile RSS
 // entry would execute in the War Room origin on click (and the CSP does not

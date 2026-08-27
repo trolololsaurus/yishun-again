@@ -2,7 +2,7 @@ import { supabase } from '@/lib/supabase'
 import { QueueList } from '@/components/QueueList'
 import { BackfillBanner } from '@/components/BackfillBanner'
 import { RecentMerges, type MergedRow } from '@/components/RecentMerges'
-import { isoDaysAgo } from '@/lib/utils'
+import { isoDaysAgo, isDiscoverySource, primaryIdOf } from '@/lib/utils'
 import type { QueueItem, IncidentPreview, AgentRelatedIncident } from '@/lib/types'
 
 export const revalidate = 0
@@ -137,9 +137,22 @@ export default async function QueuePage() {
   // Carry the reason through, not just the name — an alert you cannot act on
   // is noise, and "WARNING" alone reads identically whether a source is broken
   // or simply had no Yishun news this month.
-  const errorSources   = latestPerSource.filter(r => r.status === 'error')
+  //
+  // A discovery adapter (sitemap/search) erroring while its outlet's PRIMARY
+  // scraper is healthy is NOT an outlet outage — it reads as "Straits Times is
+  // down" when ST is publishing fine. Demote those to an informational line so
+  // the red ERROR tier means what it says: the outlet's own feed failed.
+  const okIds = new Set(latestPerSource.filter(r => r.status === 'ok').map(r => r.source_name))
+  const allErrors = latestPerSource.filter(r => r.status === 'error')
+  const errorSources = allErrors.filter(
+    r => !(isDiscoverySource(r.source_name) && okIds.has(primaryIdOf(r.source_name)))
+  )
+  const discoveryDegraded = allErrors.filter(
+    r => isDiscoverySource(r.source_name) && okIds.has(primaryIdOf(r.source_name))
+  )
   const warningSources = latestPerSource.filter(r => r.status === 'warning')
   const hasAlerts      = errorSources.length > 0 || warningSources.length > 0
+                         || discoveryDegraded.length > 0
 
   // ── Backfill banner data ───────────────────────────────────────────────────
   const backfillRow = (backfillSummaryResult.data ?? [])[0]
@@ -217,6 +230,15 @@ export default async function QueuePage() {
                   ) : (
                     <span className="text-text-secondary"> · no reason recorded</span>
                   )}
+                </div>
+              ))}
+              {/* Discovery adapter failed but the outlet's primary feed is
+                  healthy — degraded archive depth, not an outage. */}
+              {discoveryDegraded.map(r => (
+                <div key={r.source_name} className="text-text-secondary">
+                  🔵 {r.source_name} — discovery only
+                  {r.status_reason && <span> · {r.status_reason}</span>}
+                  <span> · {primaryIdOf(r.source_name)} primary feed OK, outlet still covered</span>
                 </div>
               ))}
               {/* A zero-item run is the NORMAL case: items_found counts
