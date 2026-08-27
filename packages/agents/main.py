@@ -239,9 +239,9 @@ async def agents_status(
 @app.post("/notify/test", tags=["ops"])
 async def trigger_notify_test(_: None = Depends(_require_ops_token)):
     """
-    Send one test email to OPERATOR_EMAIL. Use after a deploy to prove the
-    alerting path works — an alerting system nobody has ever seen deliver a
-    message is not an alerting system.
+    Send one test Telegram message to TELEGRAM_CHAT_ID. Use after a deploy to
+    prove the alerting path works — an alerting system nobody has ever seen
+    deliver a message is not an alerting system.
     """
     import asyncio
     from datetime import datetime, timezone
