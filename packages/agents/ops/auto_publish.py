@@ -61,6 +61,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
+from classifiers.source_allowlist import is_signal_source
 from ops.activity import AgentRun, agent_enabled
 from ops.notify import footer, notify, war_room_url
 
@@ -622,6 +623,13 @@ def _apply_merge(item: dict, client, run: AgentRun) -> str | None:
     source_name = rc.get("source_name") or item.get("source_type") or "unknown"
     headline = (item.get("proposed_title") or rc.get("title") or "")[:200]
     new_date = rc.get("date") or rc.get("published_at") or None
+
+    # Guardrail #2: a signal source's URL must never land in source_urls.
+    if is_signal_source(item.get("source_type"), new_url or ""):
+        run.warn("merge_signal_source_blocked",
+                  f"queue {item.get('id')}: source_type={item.get('source_type')!r} is a signal, refusing merge",
+                  queue_id=item.get("id"))
+        return None
 
     updates, snapshot = _compute_merge(existing, new_url, source_name, headline, new_date)
 

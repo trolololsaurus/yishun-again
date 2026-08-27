@@ -31,6 +31,16 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     return NextResponse.json({ error: 'Queue item has no update_target_incident_id' }, { status: 400 })
   }
 
+  // Guardrail #2: a signal source's URL may never become a quoted citation.
+  // 'edmw' is the tolerated legacy alias for the canonical 'signal' — see
+  // classifiers/source_allowlist.py's SIGNAL_TYPES.
+  if (item.source_type === 'signal' || item.source_type === 'edmw') {
+    return NextResponse.json(
+      { error: 'This update’s source is a signal (forum/UGC) — it cannot be merged into source_urls. Reject it instead.' },
+      { status: 400 },
+    )
+  }
+
   // Fetch the existing published incident. `summary` is selected so the undo
   // snapshot can restore it (an operator edit below replaces it).
   const { data: existing, error: incFetchErr } = await supabase

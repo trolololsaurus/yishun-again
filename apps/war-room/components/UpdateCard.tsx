@@ -25,7 +25,12 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
   const rc = item.raw_content as Record<string, unknown>
   const agentRelated: AgentRelatedIncident[] = (rc.agent_related_incidents as AgentRelatedIncident[]) ?? []
 
-  const [summary,       setSummary]       = useState(item.proposed_summary ?? '')
+  // Blank by default so "leave blank to keep existing" (see placeholder below)
+  // is actually true. Pre-filling with item.proposed_summary — the NEW
+  // source's own short draft — used to get sent as a wholesale replacement
+  // for the incident's full summary when the operator confirmed without
+  // editing it (applyUpdate only replaces or keeps, it never merges text).
+  const [summary,       setSummary]       = useState('')
   const [relatedState,  setRelatedState]  = useState<AgentRelatedIncident[]>(agentRelated)
   const [loading,        setLoading]        = useState(false)
   const [error,          setError]          = useState<string | null>(null)
