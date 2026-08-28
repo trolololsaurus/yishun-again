@@ -700,7 +700,7 @@ def build_summary_text(report: dict) -> str:
 
     if notes.get("available") and notes.get("total"):
         kinds = ", ".join(f"{k['kind']} {k['sent']}" for k in (notes.get("by_kind") or [])[:5])
-        lines += ["", f"EMAIL: {notes['sent']} sent of {notes['total']} logged ({kinds})."]
+        lines += ["", f"ALERTS: {notes['sent']} sent of {notes['total']} logged ({kinds})."]
 
     if report.get("warnings"):
         lines += ["", "DATA GAPS"] + [f"  ! {w}" for w in report["warnings"][:8]]

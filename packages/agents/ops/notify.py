@@ -20,9 +20,10 @@ module exists to make unattended alerting survivable:
   * DEGRADES, NEVER BLOCKS. No bot token configured -> status 'disabled', still
     recorded, still visible in War Room. notify() never raises.
 
-Sent as plain text (no Telegram `parse_mode`) — the alert bodies are already
-formatted for a monospace reader, and skipping parse_mode avoids building a second
-escaping system on top of the one `_to_html()` already had to solve for email.
+Sent with parse_mode=HTML: the subject leads as a BOLD headline so an alert is
+scannable rather than a wall of monospace, and the body is HTML-escaped (a scraped
+title with `<`/`&` can't break the markup). If the HTML send is ever rejected it
+falls back to plain text — the alerting path must not go silent over formatting.
 Telegram caps a message at 4096 UTF-8 characters; a longer body is truncated with a
 marker rather than failing the send (same "degrade, don't block" rule).
 
@@ -56,6 +57,28 @@ DEFAULT_THROTTLE_MINUTES = {
     "monthly_report":   -1,     # never throttled; one a month by construction
     "test":             -1,
 }
+
+# Muted alert classes — RECORDED to the notifications ledger but never pushed.
+# Matched against the alert's dedup_key by PREFIX, not by `kind`, because the
+# noisy classes share kind='anomaly'/'maintenance' with alerts that must still
+# push: integrity (`integrity:`) and the maintenance digest (`maintenance:`) are
+# standing-state re-announcements the operator reads on their own schedule, and a
+# political flag (`political:`) is already handled by guardrail #4 before it fires
+# — while `supervisor:` (fleet outage), `schema_blocked:` (migration missing) and
+# `review_queue:`/`health:` stay push-worthy. Prefix-matching keeps the digest
+# muted while `schema_blocked:auto_publish` (also kind='maintenance') still pushes.
+# Env-overridable so the push/pull line moves without a redeploy; empty = mute
+# nothing. Nothing is lost — the ledger row and the underlying agent_events /
+# War Room health views remain, only the phone buzz is suppressed.
+MUTED_PREFIXES = tuple(
+    p.strip() for p in os.getenv(
+        "NOTIFY_MUTED_PREFIXES", "integrity:,maintenance:,political:"
+    ).split(",") if p.strip()
+)
+
+
+def _is_muted(dedup_key: str) -> bool:
+    return bool(MUTED_PREFIXES) and dedup_key.startswith(MUTED_PREFIXES)
 
 
 def _client(explicit=None):
@@ -124,6 +147,18 @@ def notify(kind: str, subject: str, body: str, *,
     c = _client(client)
     subject = subject[:200]
 
+    # 0. Muted class: record to the ledger but do not push. Checked BEFORE
+    # throttle/transport — the outcome (recorded, not sent) is the same whatever
+    # they'd say. Stored as 'disabled' (the notifications status CHECK has no
+    # 'muted' value and this needs no migration); the `error` names it as a mute
+    # so it is distinguishable from a transport-off 'disabled'. The returned
+    # status is 'muted' so callers' logs read true.
+    if _is_muted(key):
+        logger.info("notify: muted (%s) — recorded only, not pushed", key)
+        row_id = _record(c, kind, key, to or "(unset)", subject, body, "disabled",
+                         error="muted: routed to War Room only (NOTIFY_MUTED_PREFIXES)")
+        return {"status": "muted", "id": row_id, "error": None}
+
     # 1. Throttle check
     if _recently_sent(key, window, c):
         logger.info("notify: suppressed (dedup=%s, window=%dm)", key, window)
@@ -159,12 +194,19 @@ def notify(kind: str, subject: str, body: str, *,
 def _send_telegram(to: str, subject: str, body: str) -> str | None:
     """
     POST to the Telegram Bot API's sendMessage. Raises on failure so notify()
-    can record it. Telegram has no subject field, so it's folded into the
-    message as a leading line; the combined text is truncated to
-    TELEGRAM_MAX_CHARS (Telegram itself rejects anything longer) rather than
-    failing the send — the full body is already in the ledger.
+    can record it.
+
+    Telegram has no subject field, so the subject leads the message as a BOLD
+    first line (parse_mode=HTML) — the single biggest readability win, because it
+    gives every alert a scannable headline instead of an undifferentiated wall.
+    The body is escaped so a scraped headline containing `<`/`&` can't break the
+    markup, and the raw body is truncated to Telegram's 4096-char cap BEFORE
+    escaping so a cut never splits an HTML entity. If the HTML send is rejected
+    for any reason, it falls back to a plain-text send — the alerting path must
+    never be the thing that goes silent.
     """
     import httpx
+    from html import escape
 
     # .strip(): a secret provisioned by piping a string through a shell to
     # `gcloud secrets create` can pick up a trailing CRLF the shell appends on
@@ -173,15 +215,24 @@ def _send_telegram(to: str, subject: str, body: str) -> str | None:
     # ASCII character in URL" rather than an auth error — worth guarding here
     # rather than trusting every future secret-provisioning path to be clean.
     token = os.environ["TELEGRAM_BOT_TOKEN"].strip()
-    text = f"{subject}\n\n{body}"
-    if len(text) > TELEGRAM_MAX_CHARS:
-        text = text[:TELEGRAM_MAX_CHARS - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER
+    url = f"{TELEGRAM_API}/bot{token}/sendMessage"
 
-    resp = httpx.post(
-        f"{TELEGRAM_API}/bot{token}/sendMessage",
-        json={"chat_id": to, "text": text},
-        timeout=20.0,
-    )
+    # Truncate the raw body first (headroom for the bold tags, the "subject\n\n"
+    # prefix and the marker), so escaping afterwards can't produce a half-entity.
+    max_body = TELEGRAM_MAX_CHARS - len(subject) - 60
+    if len(body) > max_body:
+        body = body[:max_body - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER
+
+    def _post(payload: dict):
+        return httpx.post(url, json={"chat_id": to, **payload}, timeout=20.0)
+
+    resp = _post({"text": f"<b>{escape(subject)}</b>\n\n{escape(body)}",
+                  "parse_mode": "HTML"})
+    if resp.status_code >= 300:
+        logger.warning("notify: Telegram HTML send failed (%s) — retrying as plain text: %s",
+                       resp.status_code, resp.text[:200])
+        resp = _post({"text": f"{subject}\n\n{body}"})
+
     if resp.status_code >= 300:
         raise RuntimeError(f"Telegram HTTP {resp.status_code}: {resp.text[:500]}")
     try:
@@ -221,9 +272,8 @@ def war_room_url(path: str = "/queue") -> str:
 
 
 def footer() -> str:
-    return (
-        "\n\n---\n"
-        f"War Room: {war_room_url()}\n"
-        "Sent by the Yishun Again agent fleet. This bot does not read replies.\n"
-        "To mute: set NOTIFY_ENABLED=false on the yishun-agents Cloud Run service."
-    )
+    # Telegram, not email — one actionable link, no signature block. The old
+    # footer carried three lines of email boilerplate ending in a mute tip that
+    # is now wrong (NOTIFY_ENABLED silences EVERYTHING; per-class muting is
+    # NOTIFY_MUTED_PREFIXES). A link is the only part the operator acts on.
+    return f"\n\n🔗 War Room: {war_room_url()}"

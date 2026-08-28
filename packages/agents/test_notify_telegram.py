@@ -102,7 +102,28 @@ with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT
     check("ledger updated to sent with provider_id", row["status"] == "sent" and row["provider_id"] == "555")
     check("posts to the Telegram sendMessage endpoint", "sendMessage" in post.call_args.args[0])
     check("chat_id passed through to Telegram", post.call_args.kwargs["json"]["chat_id"] == "999")
-    check("no parse_mode set (plain text)", "parse_mode" not in post.call_args.kwargs["json"])
+    sent = post.call_args.kwargs["json"]
+    check("subject sent as a bold HTML headline", sent["text"].startswith("<b>subj</b>"))
+    check("parse_mode is HTML", sent.get("parse_mode") == "HTML")
+
+# ── readability: body is HTML-escaped, HTML failure falls back to plain text ──
+with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT_ID": "999"}):
+    client = FakeClient()
+    with mock.patch("httpx.post", return_value=_fake_response(200)) as post:
+        notify_mod.notify("anomaly", "A & B <script>", "body with <tag> & amp",
+                          client=client, dedup_key="esc")
+    text = post.call_args.kwargs["json"]["text"]
+    check("subject html-escaped inside bold tags", "<b>A &amp; B &lt;script&gt;</b>" in text)
+    check("body html-escaped", "&lt;tag&gt; &amp; amp" in text)
+
+    # HTML rejected (400) -> one plain-text retry, no parse_mode, still lands.
+    client = FakeClient()
+    responses = [_fake_response(400, text="can't parse entities"), _fake_response(200, message_id=77)]
+    with mock.patch("httpx.post", side_effect=responses) as post:
+        r = notify_mod.notify("anomaly", "subj", "body", client=client, dedup_key="fallback")
+    check("HTML failure falls back to plain text and still sends", r["status"] == "sent")
+    check("fallback retried exactly once (2 posts)", post.call_count == 2)
+    check("fallback send drops parse_mode", "parse_mode" not in post.call_args.kwargs["json"])
 
 # ── failed send is recorded, never raises ───────────────────────────────────
 with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT_ID": "999"}):
@@ -134,6 +155,43 @@ with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT
     check("truncation marker present", "truncated" in sent_text)
     ledger_body = client.store["notifications"][0]["body"]
     check("full untruncated body still kept in the ledger", ledger_body == huge)
+
+# ── Muting: recorded to the ledger but never pushed ─────────────────────────
+print("mute tests:")
+
+# Default muted prefixes cover integrity / maintenance-digest / political.
+with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT_ID": "999"}):
+    importlib.reload(notify_mod)  # re-read MUTED_PREFIXES from env (default)
+    for dedup in ("integrity:2026-08-28", "maintenance:2026-08-28", "political:https://x/a"):
+        client = FakeClient()
+        with mock.patch("httpx.post") as post:
+            r = notify_mod.notify("anomaly", "subj", "body", client=client, dedup_key=dedup)
+        row = client.store["notifications"][0]
+        check(f"{dedup.split(':')[0]} muted -> status muted, not pushed",
+              r["status"] == "muted" and not post.called)
+        check(f"{dedup.split(':')[0]} still recorded in ledger (as disabled)",
+              row["status"] == "disabled" and "muted" in (row["error"] or ""))
+
+    # Push-worthy classes are NOT muted — including schema_blocked, which shares
+    # kind='maintenance' with the muted digest but has its own dedup prefix.
+    for dedup in ("review_queue:2026-08-28", "supervisor:2026-08-28:cna",
+                  "health:supabase", "schema_blocked:auto_publish"):
+        client = FakeClient()
+        with mock.patch("httpx.post", return_value=_fake_response(200)) as post:
+            r = notify_mod.notify("maintenance", "subj", "body", client=client, dedup_key=dedup)
+        check(f"{dedup.split(':')[0]} NOT muted -> actually sent",
+              r["status"] == "sent" and post.called)
+
+# Env override can clear muting entirely.
+with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT_ID": "999",
+                                  "NOTIFY_MUTED_PREFIXES": ""}):
+    importlib.reload(notify_mod)
+    client = FakeClient()
+    with mock.patch("httpx.post", return_value=_fake_response(200)) as post:
+        r = notify_mod.notify("anomaly", "subj", "body", client=client, dedup_key="integrity:2026-08-28")
+    check("empty NOTIFY_MUTED_PREFIXES un-mutes integrity", r["status"] == "sent" and post.called)
+
+importlib.reload(notify_mod)  # restore module defaults for any later import
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
