@@ -102,7 +102,28 @@ with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT
     check("ledger updated to sent with provider_id", row["status"] == "sent" and row["provider_id"] == "555")
     check("posts to the Telegram sendMessage endpoint", "sendMessage" in post.call_args.args[0])
     check("chat_id passed through to Telegram", post.call_args.kwargs["json"]["chat_id"] == "999")
-    check("no parse_mode set (plain text)", "parse_mode" not in post.call_args.kwargs["json"])
+    sent = post.call_args.kwargs["json"]
+    check("subject sent as a bold HTML headline", sent["text"].startswith("<b>subj</b>"))
+    check("parse_mode is HTML", sent.get("parse_mode") == "HTML")
+
+# ── readability: body is HTML-escaped, HTML failure falls back to plain text ──
+with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT_ID": "999"}):
+    client = FakeClient()
+    with mock.patch("httpx.post", return_value=_fake_response(200)) as post:
+        notify_mod.notify("anomaly", "A & B <script>", "body with <tag> & amp",
+                          client=client, dedup_key="esc")
+    text = post.call_args.kwargs["json"]["text"]
+    check("subject html-escaped inside bold tags", "<b>A &amp; B &lt;script&gt;</b>" in text)
+    check("body html-escaped", "&lt;tag&gt; &amp; amp" in text)
+
+    # HTML rejected (400) -> one plain-text retry, no parse_mode, still lands.
+    client = FakeClient()
+    responses = [_fake_response(400, text="can't parse entities"), _fake_response(200, message_id=77)]
+    with mock.patch("httpx.post", side_effect=responses) as post:
+        r = notify_mod.notify("anomaly", "subj", "body", client=client, dedup_key="fallback")
+    check("HTML failure falls back to plain text and still sends", r["status"] == "sent")
+    check("fallback retried exactly once (2 posts)", post.call_count == 2)
+    check("fallback send drops parse_mode", "parse_mode" not in post.call_args.kwargs["json"])
 
 # ── failed send is recorded, never raises ───────────────────────────────────
 with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT_ID": "999"}):
