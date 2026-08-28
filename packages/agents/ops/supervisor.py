@@ -62,6 +62,7 @@ run(supabase_client=None, trigger="scheduler") -> dict
 import logging
 from datetime import datetime, timedelta, timezone
 
+from ingestion.health import ZERO_STREAK_WARNING as ZERO_STREAK_ANOMALY
 from ops.activity import AgentRun, agent_enabled, recent_events, stale_runs
 from ops.notify import footer, notify, war_room_url
 
@@ -78,36 +79,30 @@ FAILURE_STREAK_ANOMALY = 3
 STALE_HOURS = 48
 
 # Yishun-specific filtering legitimately returns 0 PUBLISHABLE items on most
-# days, which is why the streak is measured on `fetched` — what the listing page
-# offered before any filtering — and not on what survived to the queue. A source
-# that fetches nothing for five passes running has stopped seeing the page it
-# used to parse.
+# days, which is why "how many passes has this source fetched nothing" is even
+# a question worth asking rather than an obvious "the site is dead".
 #
-# That assumption holds for PRIMARY sources, whose `fetched` counts the raw
-# listing page. It does NOT hold for DISCOVERY-tier sources (news_sitemap.py,
-# wp_search.py, ids suffixed `_sitemap`/`_search`): their `fetched` is already
-# post-keyword-filter (see NewsSitemapSource.fetch — `candidates` is built after
-# `content_matches_keywords`), same as CLAUDE.md's documented `scraper_health`
-# semantics. A small town legitimately produces zero keyword matches across a
-# sitemap of hundreds of entries for a week or more running (CLAUDE.md: "Tamil
-# Murasu or Berita Harian can go a month" — same shape, worse for discovery
-# since it's already filtered). Applying the primary-tier threshold to this tier
-# is exactly the false-alarm pattern this check exists to avoid; it fired as
-# "19 sources anomalous" on 2026-08-26, nearly all discovery-tier. Give that
-# tier a much longer leash instead of exempting it outright, so a genuinely dead
-# sitemap (HTTP change, markup change) still eventually alerts.
-ZERO_STREAK_ANOMALY = 5
-DISCOVERY_ZERO_STREAK_ANOMALY = 30
+# `fetched` (report.per_source[].fetched, read by zero_streaks() below) is
+# POST-keyword-filter for EVERY source, primary tier included — not just
+# discovery. Every `scrapers.scrape_*` module calls `content_matches_keywords`
+# (or `content_matches_lang` for the Malay/Tamil scrapers) on the listing page
+# before returning anything, and `ingestion/sources/legacy.py` says so outright
+# ("The scraper has already applied the Yishun keyword filter"). A prior version
+# of this file assumed primary `fetched` counted the raw listing page and gave
+# it a 5-pass threshold on that basis — which was simply wrong, and it fired as
+# false "anomalous" primary sources once the discovery tier (genuinely a
+# different shape, see git history) was given its own longer leash instead of
+# fixing the shared assumption underneath both. There is exactly one tier now:
+# reuse `ingestion/health.py`'s ZERO_STREAK_WARNING, which reasons about the
+# identical quantity for the identical reason ("Tamil Murasu or Berita Harian
+# can go a month") — importing it rather than a second copy of the number keeps
+# the two from drifting apart again.
+# (ZERO_STREAK_ANOMALY itself is the `ZERO_STREAK_WARNING` import above, under
+# this module's existing name — callers/tests read `sup.ZERO_STREAK_ANOMALY`.)
 
 # How far back to look when computing that streak. Must comfortably exceed
-# DISCOVERY_ZERO_STREAK_ANOMALY, or that threshold is unreachable by construction.
+# ZERO_STREAK_ANOMALY, or the threshold is unreachable by construction.
 ZERO_STREAK_PASSES = 35
-
-
-def _is_discovery(source_name: str) -> bool:
-    """Discovery-tier source ids end in `_sitemap` or `_search` (see
-    ingestion/sources/news_sitemap.py and wp_search.py's id tuples)."""
-    return source_name.endswith(("_sitemap", "_search"))
 
 # An ingestion pass is minutes, not hours. Still 'running' after 90 minutes
 # means the row was never closed — i.e. the process died.
@@ -233,11 +228,10 @@ def chronic_sources(client=None, days: int = CHRONIC_DAYS) -> set[str]:
     window cannot skip a day, so counting dates is an exact test for
     "consecutive" given one pass per day — no gap analysis needed.
     """
-    events = recent_events(hours=24 * days, levels=("anomaly",), limit=500, client=client)
+    events = recent_events(hours=24 * days, levels=("anomaly",), limit=500,
+                            agent=AGENT, client=client)
     per_source: dict[str, set[str]] = {}
     for event in events:
-        if event.get("agent") != AGENT:
-            continue
         name = event.get("source_name")
         stamp = _parse_ts(event.get("created_at"))
         if name and stamp:
@@ -316,8 +310,7 @@ def classify_findings(*, pipeline_state, streaks=(), stuck=(), now=None) -> list
     for row in streaks or []:
         zeros = int(row.get("consecutive_zeros") or 0)
         name = row.get("source_name") or "?"
-        threshold = DISCOVERY_ZERO_STREAK_ANOMALY if _is_discovery(name) else ZERO_STREAK_ANOMALY
-        if zeros >= threshold:
+        if zeros >= ZERO_STREAK_ANOMALY:
             findings.append(_finding(
                 "anomaly", "zero_streak",
                 f"{name}: fetched 0 items on {zeros} consecutive passes — the "
@@ -369,6 +362,67 @@ def is_serious(findings, chronic=()) -> list[str]:
     return reasons
 
 
+# ── State-change dedup ─────────────────────────────────────────────────────
+#
+# `notify()`'s own dedup is exact-match on `dedup_key` within a time window —
+# it stops a LITERAL repeat, not a re-description of the same standing problem
+# under a slightly different key. The dedup key used to embed the sorted broken
+# -source list, so any churn in which sources were anomalous (a source crossing
+# in OR out) changed the key and the throttle never engaged — the same 8-ish
+# broken sources mailed twice in one day with "slightly different" membership.
+#
+# The fix compares SIGNATURES, not keys: what was anomalous last time this
+# agent actually emailed, vs what's anomalous now. Unchanged -> log only, don't
+# re-mail. Changed (a source newly broken, or one that recovered) -> mail.
+
+# A quiet weekend, or the agent simply not firing an email for a while because
+# nothing was serious, must not make the next unchanged alert look brand new
+# just because the LAST alert aged out of a short lookback window.
+ALERT_SIGNATURE_LOOKBACK_HOURS = 24 * 14
+
+
+def _alert_signature(findings) -> frozenset[str]:
+    """
+    "What's currently broken", as a comparable set. Pure.
+
+    Anomalous sources make up most of it; `all_sources_failing` and
+    `agent_stuck` have no `source` of their own, so each gets a pseudo-member —
+    otherwise a fleet going from "3 sources down" to "every source down" (or an
+    agent freshly stuck) with the same 3 sources still named would compare as
+    unchanged and never re-alert.
+    """
+    anomalies = [f for f in findings if f["level"] == "anomaly"]
+    sig = {f["source"] for f in anomalies if f["source"]}
+    codes = {f["code"] for f in anomalies}
+    if "all_sources_failing" in codes:
+        sig.add("__all_sources_failing__")
+    if "agent_stuck" in codes:
+        sig.add("__agent_stuck__")
+    return frozenset(sig)
+
+
+def _previous_alert_signature(client=None) -> frozenset[str] | None:
+    """
+    The signature from the last time this agent actually emailed the operator.
+
+    None means "no prior alert on record" (first ever, or aged past the
+    lookback) — treated by the caller as a change, same fail-open spirit as
+    `notify._recently_sent`: sending one extra alert is a nuisance, staying
+    silent because the read failed or came up empty is the outage this agent
+    exists to catch.
+
+    Must be read BEFORE this pass writes its own `operator_notified` event, or
+    a pass would compare itself to itself.
+    """
+    events = recent_events(hours=ALERT_SIGNATURE_LOOKBACK_HOURS, levels=("info",),
+                            limit=100, agent=AGENT, client=client)
+    for event in events:                          # newest first
+        if event.get("event") == "operator_notified":
+            sig = (event.get("detail") or {}).get("alert_signature")
+            return frozenset(sig) if sig is not None else None
+    return None
+
+
 # ── Email ────────────────────────────────────────────────────────────────────
 
 def _compose_email(findings, reasons, checked: int) -> tuple[str, str]:
@@ -380,19 +434,19 @@ def _compose_email(findings, reasons, checked: int) -> tuple[str, str]:
     lines = [
         "The supervisor found something that will not fix itself.",
         "",
-        "WHY YOU ARE GETTING THIS EMAIL:",
+        "Why you're getting this:",
     ]
     lines += [f"  - {reason}" for reason in reasons]
     lines += ["", f"ANOMALIES ({len(anomalies)}):"]
     lines += [f"  [{f['code']}] {f['message']}" for f in anomalies] or ["  (none)"]
 
     if warnings:
-        lines += ["", f"WARNINGS — logged, not the reason for this email ({len(warnings)}):"]
+        lines += ["", f"WARNINGS — logged, not the reason for this alert ({len(warnings)}):"]
         lines += [f"  [{f['code']}] {f['message']}" for f in warnings]
 
     lines += [
         "",
-        "A single flaky source never triggers this email — only >= 3 sources at once,",
+        "A single flaky source never triggers this alert — only >= 3 sources at once,",
         "all sources failing, one source broken 3 days running, or a stuck agent run.",
         "",
         f"Full activity log: {war_room_url('/activity')}",
@@ -480,18 +534,35 @@ def _supervise(run_ctx, client, stats: dict, now=None) -> None:
         )
         return
 
+    # Read BEFORE this pass's own operator_notified event exists, so an
+    # unchanged standing problem compares against the LAST alert, not itself.
+    signature = _alert_signature(findings)
+    previous_signature = _previous_alert_signature(client)
+    if previous_signature is not None and signature == previous_signature:
+        run_ctx.info(
+            "standing_anomaly",
+            f"{'; '.join(reasons)} — unchanged since the last alert, not re-sending",
+        )
+        run_ctx.set_summary(
+            f"SERIOUS but unchanged: {'; '.join(reasons)} — already alerted, not re-sent."
+        )
+        return
+
     subject, body = _compose_email(findings, reasons, len(state))
-    # Date in the key, on top of the 24h window: the same broken set can mail at
-    # most once per day even if the supervisor is re-run by hand.
-    broken = "+".join(sorted({f["source"] for f in findings
-                              if f["level"] == "anomaly" and f["source"]})) or "fleet"
-    dedup = f"supervisor:{datetime.now(timezone.utc).date().isoformat()}:{broken}"
+    # Keyed on the signature itself, not the date: the state-change check above
+    # is what stops a standing problem from re-mailing, so this key only needs
+    # to make `notify()`'s own throttle a no-op AGREEING with that decision — a
+    # date-only key would do the opposite and block a genuinely new problem
+    # (say, a second, different source breaking later the same day) just
+    # because something else already mailed today under that same date key.
+    dedup = "supervisor:" + "+".join(sorted(signature))
 
     result = notify("anomaly", subject, body,
                     dedup_key=dedup, throttle_minutes=1440, client=client)
     stats["emailed"] = result["status"] == "sent"
     run_ctx.info("operator_notified",
-                 f"serious anomaly email {result['status']} (dedup={dedup})")
+                 f"serious anomaly email {result['status']} (dedup={dedup})",
+                 alert_signature=sorted(signature))
     run_ctx.set_summary(
         f"SERIOUS: {'; '.join(reasons)} — email {result['status']}."
     )

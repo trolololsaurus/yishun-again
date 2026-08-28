@@ -520,6 +520,27 @@ nothing had failed. It is now **30** — a month of genuine silence. This is a
 display signal only; real failures are `status='error'`, and outage alerting
 lives in `ops/supervisor.py` off `pipeline_run_history`.
 
+**The supervisor's own zero-streak *alert* threshold is that same 30, imported
+from `ingestion/health.py` rather than a second copy of the number (2026-08-29).**
+`report.per_source[].fetched` — what the alert-side streak is measured on — is
+POST-keyword-filter for every source, primary tier included, for the identical
+reason: every `scrapers.scrape_*` module filters before returning anything. An
+earlier fix gave only discovery-tier sources (`_sitemap`/`_search` ids) a longer
+leash and left primary sources at 5, which fired as false "anomalous" primaries
+on ordinary Yishun silence — fixing the assumption for one tier without noticing
+it was wrong for both. There is one tier and one threshold now. See
+`docs/AUTONOMY.md` §3.
+
+**The supervisor's email dedup compares a SIGNATURE of what's broken, not a
+fixed key (2026-08-29).** The dedup key used to embed the sorted broken-source
+list, so any churn in *which* sources were anomalous changed the key and the
+once-a-day throttle never engaged — the same standing fleet problem mailed
+twice in one day with "slightly different" source lists. It now reads back the
+signature from the last actual `operator_notified` event and only mails again
+when the current signature differs (a source newly broken, or one recovering);
+`is_serious()`'s reasons are still computed and logged every pass regardless —
+only the email is gated. See `docs/AUTONOMY.md` §3.
+
 ---
 
 ## Database

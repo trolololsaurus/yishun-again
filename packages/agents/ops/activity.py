@@ -215,20 +215,25 @@ def _jsonable(value):
 # ── read helpers (used by the maintenance agent + War Room) ────────────────
 
 def recent_events(hours: int = 24, levels: tuple = ("error", "anomaly"),
-                  limit: int = 200, client=None) -> list[dict]:
-    """Recent activity events at the given levels. Returns [] on any failure."""
+                  limit: int = 200, agent: str | None = None, client=None) -> list[dict]:
+    """
+    Recent activity events at the given levels, optionally narrowed to one
+    agent (server-side, so a busy fleet can't crowd a rarely-firing agent's own
+    events out of `limit`). Returns [] on any failure.
+    """
     from datetime import timedelta
     c = _client(client)
     if not c:
         return []
     since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     try:
-        res = (c.table("agent_events")
+        query = (c.table("agent_events")
                .select("created_at,agent,level,event,message,source_name,detail")
                .gte("created_at", since)
-               .in_("level", list(levels))
-               .order("created_at", desc=True)
-               .limit(limit).execute())
+               .in_("level", list(levels)))
+        if agent:
+            query = query.eq("agent", agent)
+        res = query.order("created_at", desc=True).limit(limit).execute()
         return res.data or []
     except Exception as exc:                      # noqa: BLE001
         logger.warning("activity: recent_events failed: %s", exc)

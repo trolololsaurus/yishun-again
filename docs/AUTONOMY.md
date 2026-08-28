@@ -231,7 +231,7 @@ once-a-pass.
 | Kind | Sent when | Window | Dedup key |
 |---|---|---|---|
 | `review_queue` | Cards below the threshold are waiting (req #4) | 180 min | `review_queue:<date>` — one alert a day at one pass a day |
-| `anomaly` | Supervisor finds a *serious* fleet problem (req #9); integrity finds something needing a human (req #10); guardrail #4 flags political content | 60 min default — supervisor overrides to 1440 | `supervisor:<date>:<broken sources>`, `integrity:<date>`, `political:<url>` |
+| `anomaly` | Supervisor finds a *serious* fleet problem (req #9); integrity finds something needing a human (req #10); guardrail #4 flags political content | 60 min default — supervisor overrides to 1440 | `supervisor:<broken sources signature>` — sent only when that signature differs from the last one actually emailed (see below), `integrity:<date>`, `political:<url>` |
 | `maintenance` | Something broke, with a plain-English suggested fix (req #11) | 1440 min | `maintenance:<date>` |
 | `health` | A backend component is down, or the cost guard tripped (req #12) | 60 min | `health:<components down>` |
 | `monthly_report` | 1st of the month (req #13) | Never throttled | one a month by construction |
@@ -263,6 +263,37 @@ log.
 > is now a *reporting* surface — the War Room health views and
 > `ops/maintenance.py`'s error digest, both of which carry real per-source rows
 > again. Base new alerts on run history.
+>
+> **The zero-streak threshold is ONE number for every source, not one per tier
+> (2026-08-29).** `report.per_source[].fetched` is POST-Yishun-keyword-filter for
+> every source, primary tier included, not just discovery — every
+> `scrapers.scrape_*` module calls `content_matches_keywords` (or
+> `content_matches_lang` for the Malay/Tamil scrapers) before returning anything,
+> and `ingestion/sources/legacy.py` says so outright. An earlier pass at this gave
+> discovery-tier sources (`news_sitemap.py`/`wp_search.py`, ids suffixed
+> `_sitemap`/`_search`) a 30-pass leash while leaving primary sources at 5 —
+> fixing half the bug on the wrong premise (that primary `fetched` counted the
+> raw listing page) and leaving primary sources firing as false anomalies on
+> ordinary Yishun silence. `ops/supervisor.py` now imports
+> `ZERO_STREAK_ANOMALY` straight from `ingestion/health.py`'s
+> `ZERO_STREAK_WARNING` (30) — same quantity, same reasoning, one constant so the
+> two can't drift apart again — and applies it to every source.
+
+> **The email dedup key is now a SIGNATURE comparison, not a fixed key
+> (2026-08-29).** It used to embed the sorted broken-source list, so any churn
+> in *which* sources were anomalous (one crossing in or out) changed the key and
+> the once-a-day throttle never engaged — the same standing fleet problem mailed
+> twice in one day with "slightly different" source lists. `ops/supervisor.py`
+> now computes an `_alert_signature()` (the anomalous sources, plus a
+> pseudo-member each for `all_sources_failing`/`agent_stuck` since those carry
+> no `source` of their own) and reads back the signature from the last
+> `operator_notified` event it wrote (`_previous_alert_signature()`, via
+> `agent_events`, 14-day lookback). Unchanged signature -> logged, not re-mailed,
+> even though `is_serious()` still returns the same reasons. Changed signature
+> (a source newly broken, or one recovering) -> mailed, keyed on the signature
+> itself rather than the date, so a second, different problem breaking later the
+> same day still gets its own alert instead of being blocked by the first one's
+> date-scoped key.
 
 Every attempted send is a row in `notifications` **before** the send, so a
 provider outage loses the delivery, not the alert. With no `TELEGRAM_BOT_TOKEN`

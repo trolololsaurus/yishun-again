@@ -131,15 +131,17 @@ check("blocked source is not ALSO reported as stale (double-count guard)",
 
 f8 = sup.classify_findings(
     pipeline_state=[state("stomp")],
-    streaks=[{"source_name": "stomp", "consecutive_zeros": 4}],
+    streaks=[{"source_name": "stomp", "consecutive_zeros": sup.ZERO_STREAK_ANOMALY - 1}],
     now=NOW)
-check("4 zero-item runs -> nothing (Yishun filter legitimately returns 0)", f8 == [])
+check("one short of the threshold -> nothing (Yishun filter legitimately returns 0)",
+      f8 == [])
 
 f9 = sup.classify_findings(
     pipeline_state=[state("stomp")],
-    streaks=[{"source_name": "stomp", "consecutive_zeros": 5}],
+    streaks=[{"source_name": "stomp", "consecutive_zeros": sup.ZERO_STREAK_ANOMALY}],
     now=NOW)
-check("5 zero-item runs in a row -> anomaly",
+check("threshold reached -> anomaly (same threshold for every source now — "
+      "see test_supervisor_alerting.py)",
       codes(f9) == ["zero_streak"] and f9[0]["level"] == "anomaly")
 
 
@@ -194,7 +196,7 @@ check("the lookback window must exceed the anomaly threshold, or it can never fi
 
 streak_db = FakeSupabase(
     pipeline_state=[state("stomp"), state("cna"), state("zaobao")],
-    pipeline_run_history=hist(*[{"stomp": ("ok", 0), "cna": ("ok", 4)}] * 6))
+    pipeline_run_history=hist(*[{"stomp": ("ok", 0), "cna": ("ok", 4)}] * sup.ZERO_STREAK_ANOMALY))
 with mock.patch.object(sup, "notify", return_value=SENT):
     stats = sup.run(supabase_client=streak_db, now=NOW)
 check("run() reads the history table and raises the anomaly end to end",
@@ -291,7 +293,8 @@ with mock.patch.object(sup, "notify", return_value=SENT) as notify_broken:
 check("serious anomaly -> exactly one email", notify_broken.call_count == 1)
 check("...sent as an anomaly", notify_broken.call_args.args[0] == "anomaly")
 kwargs = notify_broken.call_args.kwargs
-check("...deduped per day so a broken source cannot mail twice",
+check("...keyed under supervisor: with a generous throttle (state-change dedup "
+      "is what actually stops re-mailing — see test_supervisor_alerting.py)",
       kwargs["dedup_key"].startswith("supervisor:") and kwargs["throttle_minutes"] == 1440)
 check("...with the broken sources in the key", "cna" in kwargs["dedup_key"])
 check("...and marked serious in the stats", stats["serious"] is True and stats["emailed"] is True)
