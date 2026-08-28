@@ -135,5 +135,42 @@ with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT
     ledger_body = client.store["notifications"][0]["body"]
     check("full untruncated body still kept in the ledger", ledger_body == huge)
 
+# ── Muting: recorded to the ledger but never pushed ─────────────────────────
+print("mute tests:")
+
+# Default muted prefixes cover integrity / maintenance-digest / political.
+with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT_ID": "999"}):
+    importlib.reload(notify_mod)  # re-read MUTED_PREFIXES from env (default)
+    for dedup in ("integrity:2026-08-28", "maintenance:2026-08-28", "political:https://x/a"):
+        client = FakeClient()
+        with mock.patch("httpx.post") as post:
+            r = notify_mod.notify("anomaly", "subj", "body", client=client, dedup_key=dedup)
+        row = client.store["notifications"][0]
+        check(f"{dedup.split(':')[0]} muted -> status muted, not pushed",
+              r["status"] == "muted" and not post.called)
+        check(f"{dedup.split(':')[0]} still recorded in ledger (as disabled)",
+              row["status"] == "disabled" and "muted" in (row["error"] or ""))
+
+    # Push-worthy classes are NOT muted — including schema_blocked, which shares
+    # kind='maintenance' with the muted digest but has its own dedup prefix.
+    for dedup in ("review_queue:2026-08-28", "supervisor:2026-08-28:cna",
+                  "health:supabase", "schema_blocked:auto_publish"):
+        client = FakeClient()
+        with mock.patch("httpx.post", return_value=_fake_response(200)) as post:
+            r = notify_mod.notify("maintenance", "subj", "body", client=client, dedup_key=dedup)
+        check(f"{dedup.split(':')[0]} NOT muted -> actually sent",
+              r["status"] == "sent" and post.called)
+
+# Env override can clear muting entirely.
+with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT_ID": "999",
+                                  "NOTIFY_MUTED_PREFIXES": ""}):
+    importlib.reload(notify_mod)
+    client = FakeClient()
+    with mock.patch("httpx.post", return_value=_fake_response(200)) as post:
+        r = notify_mod.notify("anomaly", "subj", "body", client=client, dedup_key="integrity:2026-08-28")
+    check("empty NOTIFY_MUTED_PREFIXES un-mutes integrity", r["status"] == "sent" and post.called)
+
+importlib.reload(notify_mod)  # restore module defaults for any later import
+
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

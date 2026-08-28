@@ -57,6 +57,28 @@ DEFAULT_THROTTLE_MINUTES = {
     "test":             -1,
 }
 
+# Muted alert classes — RECORDED to the notifications ledger but never pushed.
+# Matched against the alert's dedup_key by PREFIX, not by `kind`, because the
+# noisy classes share kind='anomaly'/'maintenance' with alerts that must still
+# push: integrity (`integrity:`) and the maintenance digest (`maintenance:`) are
+# standing-state re-announcements the operator reads on their own schedule, and a
+# political flag (`political:`) is already handled by guardrail #4 before it fires
+# — while `supervisor:` (fleet outage), `schema_blocked:` (migration missing) and
+# `review_queue:`/`health:` stay push-worthy. Prefix-matching keeps the digest
+# muted while `schema_blocked:auto_publish` (also kind='maintenance') still pushes.
+# Env-overridable so the push/pull line moves without a redeploy; empty = mute
+# nothing. Nothing is lost — the ledger row and the underlying agent_events /
+# War Room health views remain, only the phone buzz is suppressed.
+MUTED_PREFIXES = tuple(
+    p.strip() for p in os.getenv(
+        "NOTIFY_MUTED_PREFIXES", "integrity:,maintenance:,political:"
+    ).split(",") if p.strip()
+)
+
+
+def _is_muted(dedup_key: str) -> bool:
+    return bool(MUTED_PREFIXES) and dedup_key.startswith(MUTED_PREFIXES)
+
 
 def _client(explicit=None):
     if explicit is not None:
@@ -123,6 +145,18 @@ def notify(kind: str, subject: str, body: str, *,
 
     c = _client(client)
     subject = subject[:200]
+
+    # 0. Muted class: record to the ledger but do not push. Checked BEFORE
+    # throttle/transport — the outcome (recorded, not sent) is the same whatever
+    # they'd say. Stored as 'disabled' (the notifications status CHECK has no
+    # 'muted' value and this needs no migration); the `error` names it as a mute
+    # so it is distinguishable from a transport-off 'disabled'. The returned
+    # status is 'muted' so callers' logs read true.
+    if _is_muted(key):
+        logger.info("notify: muted (%s) — recorded only, not pushed", key)
+        row_id = _record(c, kind, key, to or "(unset)", subject, body, "disabled",
+                         error="muted: routed to War Room only (NOTIFY_MUTED_PREFIXES)")
+        return {"status": "muted", "id": row_id, "error": None}
 
     # 1. Throttle check
     if _recently_sent(key, window, c):
