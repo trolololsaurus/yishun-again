@@ -203,9 +203,29 @@ Safety properties mirror auto-publish:
   before the incident is touched; a race with an operator confirm/reject loses the
   claim harmlessly. An incident-update failure releases the claim back to `update`.
 - **Blast radius cap.** `AUTO_MERGE_MAX_PER_RUN` (25) bounds one pass.
-- **Never edits the summary.** The auto path only does the mechanical merge; the
-  operator-editable summary rewrite (`confirm-update`'s optional field) is never
-  invoked unattended.
+- **Summary refresh is separately gated.** By default the auto path only does the
+  mechanical merge and leaves the prose alone. When `AUTO_ENRICH_SUMMARY` is on
+  (its own flag, off by default), it *also* applies the ingestion-time enriched
+  summary — the existing summary refreshed with the new development
+  (`consolidation/enrich.py`) — but ONLY when that enrichment passed the same
+  deterministic groundedness check Stage 2 uses, so model-written prose that
+  invented a specific never reaches a live incident unattended. The merge
+  snapshot captures the pre-merge summary, so `revert-update` restores it if a
+  refresh was wrong.
+
+**Update-summary enrichment (§2c).** Every `update` row — auto or manual — now
+carries a refreshed summary generated at ingestion: `consolidation/enrich.py`
+merges the target incident's existing summary with the new development into one
+summary that PRESERVES existing detail and WEAVES IN the new report, screened by
+`find_ungrounded`. The War Room `UpdateCard` pre-fills its box with it (`✨
+AI-refreshed — review & confirm`, or `⚠ UNGROUNDED — verify` when the gate
+flagged it) so the operator reviews a merged refresh instead of a blank box; the
+autonomous apply is the `AUTO_ENRICH_SUMMARY` path above. It fails SAFE — no
+client, a model failure, or an empty/ungrounded result leaves the existing
+summary untouched. This replaces the earlier behaviour where the box pre-filled
+with the new source's terse *standalone* draft, which wholesale-replaced the full
+summary on confirm (the mechanism that corrupted a live incident via a Reddit
+merge). Guard: `test_summary_enrichment.py`.
 
 Every auto-merge writes `training_signals` `action='auto_update'`,
 `decided_by='agent'`; every operator undo writes `action='update_reverted'` — the

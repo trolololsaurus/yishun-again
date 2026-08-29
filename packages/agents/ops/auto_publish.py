@@ -113,6 +113,16 @@ def _merge_match_threshold() -> float:
 
 MAX_AUTO_MERGE_PER_RUN = int(os.getenv("AUTO_MERGE_MAX_PER_RUN", "25"))
 
+# Autonomous SUMMARY enrichment: during an auto-merge, also refresh the incident's
+# prose with the new development (the ingestion-time enriched summary from
+# consolidation/enrich.py). SEPARATE from AUTO_MERGE_ENABLED and off by default,
+# because it ships model-written prose to a live incident with no human glance —
+# so it applies ONLY when the enrichment passed groundedness. The manual War Room
+# path pre-fills the same enriched summary for operator review regardless of this
+# flag; this only governs the unattended apply. revert-update restores the prior
+# summary either way (the merge snapshot captures it). See docs/AUTONOMY.md §2b.
+AUTO_ENRICH_SUMMARY = os.getenv("AUTO_ENRICH_SUMMARY", "false").strip().lower() in ("1", "true", "on", "yes")
+
 # Art generation is opt-in per environment. It is the only step here that spends
 # money per row, so it defaults OFF and an unconfigured deployment publishes
 # exactly as it does today rather than logging a failure per incident.
@@ -632,6 +642,15 @@ def _apply_merge(item: dict, client, run: AgentRun) -> str | None:
         return None
 
     updates, snapshot = _compute_merge(existing, new_url, source_name, headline, new_date)
+
+    # Autonomy path: refresh the summary too, but ONLY when explicitly enabled and
+    # the ingestion-time enrichment passed groundedness. `snapshot` already holds
+    # the pre-merge summary, so revert-update restores it if this was wrong.
+    if AUTO_ENRICH_SUMMARY and rc.get("_enriched_summary") and rc.get("_enriched_grounded"):
+        updates["summary"] = rc["_enriched_summary"]
+        run.info("merge_summary_enriched",
+                 f"applied grounded enriched summary to incident {target}",
+                 queue_id=item.get("id"))
 
     # Claim BEFORE mutating (QA H2 reasoning): a failed status write must never
     # leave the incident merged but the row re-confirmable. CAS on status=update.

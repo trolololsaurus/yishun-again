@@ -94,8 +94,8 @@ collection (the module-level `SystemExit` aborts the run). Run them directly:
 for f in test_*.py; do ./.venv/Scripts/python.exe "$f" || echo "FAIL $f"; done
 ```
 
-All are offline — no network, no API keys, no DB. There are **44 test files** and
-they all pass as of 2026-08-27; a red file is a real regression, not a flake.
+All are offline — no network, no API keys, no DB. There are **45 test files** and
+they all pass as of 2026-08-29; a red file is a real regression, not a flake.
 
 The web app has tests too, added 2026-08-04 — `apps/web/lib/utils.test.ts`, run
 with `npm test` from `apps/web`. There is no test framework installed: it uses
@@ -261,6 +261,18 @@ queue's "Recently merged updates" panel (`/api/queue/[id]/revert-update`).
 Migration 018 is required. `check_update_eligibility` / `_apply_merge` in
 `ops/auto_publish.py`; the merge math (`_compute_merge`) mirrors `applyUpdate` in
 `apps/war-room/lib/utils.ts`.
+
+**Every `update` row carries an ENRICHED summary** — the target incident's summary
+refreshed with the new development, generated at ingestion by
+`consolidation/enrich.py` (one Haiku call, screened by Stage 2's `find_ungrounded`).
+The War Room `UpdateCard` pre-fills its box with it for operator review; the
+autonomous merge applies it only when `AUTO_ENRICH_SUMMARY` is on AND it passed
+groundedness (both off/gated by default, `AUTONOMY.md` §2b–2c). Fails safe — any
+problem leaves the existing summary. This replaces the old blank-box behaviour: the
+box used to pre-fill with the new source's terse *standalone* draft, which
+wholesale-replaced the full summary on confirm (`applyUpdate` only keeps-or-replaces
+prose, never merges it) — the mechanism that corrupted a live incident via a Reddit
+merge. Guard: `test_summary_enrichment.py`.
 
 **The pipeline is autonomous as of July 2026.** One Cloud Scheduler job runs
 **twice daily at 02:58 and 14:58 SGT** and POSTs `/orchestrator/daily`, which runs twelve agents in a
