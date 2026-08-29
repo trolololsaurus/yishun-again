@@ -1,7 +1,10 @@
+import logging
 import os
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 # Confirmed by live GraphQL introspection against Cloudflare's API
 # (2026-08-26) — do not guess field names here, re-introspect if this breaks:
@@ -152,12 +155,14 @@ def _get_24h(client: httpx.Client, zone_tag: str) -> dict:
         countries = _tally(zone["byCountry"], "clientCountryName")
         devices = _tally(zone["byDevice"], "clientDeviceType")
     except Exception as exc:
+        logger.warning("cf_analytics: 24h query failed: %s", exc)
         errors.append(f"24h: {exc}")
 
     try:
         referer_zone = _run_query(client, _HOUR_REFERER_QUERY, variables, "24h referrers")
         referrers = _tally(referer_zone["byReferer"], "clientRefererHost")
     except Exception as exc:
+        logger.warning("cf_analytics: 24h referrer query failed: %s", exc)
         errors.append(f"24h (referrers): {exc}")
 
     return {"points": points, "countries": countries, "devices": devices, "referrers": referrers, "errors": errors}
@@ -176,6 +181,7 @@ def _get_multi_day(client: httpx.Client, zone_tag: str, days: int) -> dict:
         try:
             zone = _run_query(client, _DAY_QUERY, variables, day.isoformat())
         except Exception as exc:
+            logger.warning("cf_analytics: %s query failed: %s", day.isoformat(), exc)
             errors.append(f"{day.isoformat()}: {exc}")
             continue
 
@@ -195,6 +201,7 @@ def _get_multi_day(client: httpx.Client, zone_tag: str, days: int) -> dict:
             for k, v in _tally(referer_zone["byReferer"], "clientRefererHost").items():
                 referrers[k] = referrers.get(k, 0) + v
         except Exception as exc:
+            logger.warning("cf_analytics: %s referrer query failed: %s", day.isoformat(), exc)
             errors.append(f"{day.isoformat()} (referrers): {exc}")
 
     points.sort(key=lambda p: p["t"])
@@ -224,8 +231,12 @@ def get_traffic_summary(window: str = "7d") -> dict:
     if window not in WINDOWS:
         raise ValueError(f"window must be one of {list(WINDOWS)}, got {window!r}")
 
-    zone_tag = os.environ["CF_ZONE_ID"]
-    token = os.environ["CF_ANALYTICS_API_TOKEN"]
+    # .strip(): --env-vars-file passes values through literally, unlike
+    # python-dotenv (used locally) which trims trailing whitespace on load —
+    # a stray trailing space in the deploy file silently broke every query
+    # ("Zone not visible to this token") while local dev looked fine.
+    zone_tag = os.environ["CF_ZONE_ID"].strip()
+    token = os.environ["CF_ANALYTICS_API_TOKEN"].strip()
 
     with httpx.Client(headers={"Authorization": f"Bearer {token}"}) as client:
         result = _get_24h(client, zone_tag) if window == "24h" else _get_multi_day(client, zone_tag, WINDOWS[window])
