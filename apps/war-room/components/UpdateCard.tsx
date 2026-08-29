@@ -25,12 +25,16 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
   const rc = item.raw_content as Record<string, unknown>
   const agentRelated: AgentRelatedIncident[] = (rc.agent_related_incidents as AgentRelatedIncident[]) ?? []
 
-  // Blank by default so "leave blank to keep existing" (see placeholder below)
-  // is actually true. Pre-filling with item.proposed_summary — the NEW
-  // source's own short draft — used to get sent as a wholesale replacement
-  // for the incident's full summary when the operator confirmed without
-  // editing it (applyUpdate only replaces or keeps, it never merges text).
-  const [summary,       setSummary]       = useState('')
+  // Pre-fill with the ingestion-time ENRICHED summary: the existing incident
+  // summary refreshed with this new development (consolidation/enrich.py). This
+  // is a proper merge, not the new source's terse standalone draft — pre-filling
+  // that used to wholesale-replace the full summary with a short one when the
+  // operator confirmed unedited (applyUpdate only keeps-or-replaces, never merges
+  // text). Older rows / enrichment failures carry no enriched summary, so the box
+  // is blank and "leave blank to keep existing" still holds.
+  const enriched         = (rc._enriched_summary as string) ?? ''
+  const enrichedGrounded = rc._enriched_grounded !== false   // undefined => not flagged
+  const [summary,       setSummary]       = useState(enriched)
   const [relatedState,  setRelatedState]  = useState<AgentRelatedIncident[]>(agentRelated)
   const [loading,        setLoading]        = useState(false)
   const [error,          setError]          = useState<string | null>(null)
@@ -167,19 +171,42 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
           </div>
         </div>
 
-        {/* Updated summary — editable */}
+        {/* Updated summary — editable, pre-filled with the AI-refreshed merge */}
         <div>
-          <label className="text-text-secondary text-sm uppercase tracking-widest block mb-1">
-            Updated Summary{' '}
+          <label className="text-text-secondary text-sm uppercase tracking-widest flex items-center gap-2 flex-wrap mb-1">
+            <span>Updated Summary</span>
             <span className={summary.length > 0 && (summary.length < 500 || summary.length > 800) ? 'text-red' : 'text-green'}>
               {summary.length} chars
             </span>
+            {enriched && (
+              <span className={enrichedGrounded ? 'text-cyan-400' : 'text-yellow'}>
+                {enrichedGrounded ? '✨ AI-refreshed — review & confirm' : '⚠ AI-refreshed but UNGROUNDED — verify every fact'}
+              </span>
+            )}
+            {enriched && summary !== '' && (
+              <button
+                type="button"
+                onClick={() => setSummary('')}
+                className="ml-auto text-text-secondary hover:text-red normal-case tracking-normal underline"
+              >
+                keep existing (clear)
+              </button>
+            )}
+            {enriched && summary === '' && (
+              <button
+                type="button"
+                onClick={() => setSummary(enriched)}
+                className="ml-auto text-cyan-400 hover:text-cyan-300 normal-case tracking-normal underline"
+              >
+                restore AI refresh
+              </button>
+            )}
           </label>
           <textarea
             value={summary}
             onChange={e => setSummary(e.target.value)}
-            rows={5}
-            placeholder="Edit the merged summary before confirming, or leave blank to keep existing…"
+            rows={6}
+            placeholder="Edit the refreshed summary before confirming, or leave blank to keep the existing summary unchanged…"
             className="w-full px-3 py-2 bg-bg border border-border text-text-primary text-sm rounded focus:border-cyan-500 focus:outline-none resize-y"
           />
         </div>

@@ -284,6 +284,15 @@ def _emit(stage2_input, item, is_dateless, edmw_signal_count, primary_candidate,
     if oversized:
         row.setdefault("raw_content", {})["_oversized_cluster"] = oversized
 
+    # For an UPDATE, refresh the incident's summary with the new development so
+    # the article does not go stale. Stashed on the row for the War Room to
+    # pre-fill (operator review) and, when AUTO_ENRICH_SUMMARY is on, for the
+    # autonomous merge to apply if grounded. Best-effort — on any problem the row
+    # carries no enriched summary and the existing one is kept.
+    if is_update and consolidation_result.matched_incident_id and not dry_run:
+        _attach_enriched_summary(
+            row, stage2_input, draft, consolidation_result.matched_incident_id, client)
+
     if not dry_run:
         inserted = client.table("war_room_queue").insert(row).execute()
         queue_id = inserted.data[0]["id"]
@@ -303,6 +312,38 @@ def _emit(stage2_input, item, is_dateless, edmw_signal_count, primary_candidate,
                 queue_id, exc,
             )
     return (True, is_update)
+
+
+def _attach_enriched_summary(row, stage2_input, draft, incident_id, client) -> None:
+    """
+    Refresh the target incident's summary with the new development and stash it on
+    the queue row (raw_content._enriched_summary / _enriched_grounded). Never
+    raises — enrichment is best-effort; a failure just leaves the existing summary.
+    """
+    try:
+        res = (client.table("incidents").select("summary")
+               .eq("id", incident_id).single().execute())
+        existing_summary = (res.data or {}).get("summary") or ""
+    except Exception as exc:                      # noqa: BLE001
+        logger.warning("enrich: could not read incident %s summary — skipping (%s)",
+                       incident_id, exc)
+        return
+    if not existing_summary:
+        return
+
+    from consolidation.enrich import enrich_summary
+    from filters.stage2_writer import non_signal_source_text, summary_char_budget
+
+    new_text = non_signal_source_text(stage2_input) or draft.get("summary", "")
+    result = enrich_summary(
+        existing_summary, new_text,
+        new_headline=draft.get("title", ""),
+        char_budget=summary_char_budget(stage2_input),
+    )
+    if result["summary"]:
+        rc = row.setdefault("raw_content", {})
+        rc["_enriched_summary"] = result["summary"]
+        rc["_enriched_grounded"] = result["grounded"]
 
 
 def _mark_members(members, by_id, trackers, *, decided: bool) -> None:
