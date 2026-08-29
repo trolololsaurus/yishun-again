@@ -202,7 +202,7 @@ trusting this table.
 | Stage 2 writer | Anthropic API | claude-haiku-4-5-20251001 (classify **and** write) |
 | Orchestrator | *hand-rolled* — see below | — |
 | Image gen | Gemini image API | gemini-3.1-flash-lite-image |
-| Scheduling | Cloud Scheduler (APScheduler is off in prod) | — |
+| Scheduling | Cloud Scheduler (POSTs `/orchestrator/daily`) | — |
 | CSS | Tailwind CSS | 3.x |
 
 **There is no LangGraph orchestrator.** `langgraph` has been removed from
@@ -270,12 +270,14 @@ lifecycle (Mondays) → source discovery (first Monday) → maintenance digest �
 monthly report (1st). Steps are failure-isolated: one agent crashing does not
 cost you the rest.
 
-**The cadence lives in `ops/daily.py` and nowhere else.** `main.py`'s in-process
-APScheduler has exactly one job (the daily chain) and is off in production
-anyway. Until 2026-07-30 it also carried pattern detection, recalibration,
-lifecycle and discovery — which meant those four had **never run in production**,
-because Cloud Run scales to zero and that scheduler never starts. Do not add a
-second scheduling surface; add a cadence-gated step to `ops/daily.py` and a case
+**The cadence lives in `ops/daily.py` and nowhere else.** There is no in-process
+scheduler: `main.py` used to carry a single-job APScheduler behind
+`ENABLE_INPROCESS_SCHEDULER`, off in production and **removed 2026-08-29** as
+redundant with `POST /orchestrator/daily` (and APScheduler dropped as a
+dependency). Until 2026-07-30 that scheduler also carried pattern detection,
+recalibration, lifecycle and discovery — which meant those four had **never run
+in production**, because Cloud Run scales to zero and it never started. Do not add
+a second scheduling surface; add a cadence-gated step to `ops/daily.py` and a case
 to `cadence_plan()`. Two things worth knowing:
 - **Recalibration must stay ahead of ingestion.** It writes `calibration_log.json`
   on an ephemeral disk and Stage 2 reads it while drafting *in the same pass*.
@@ -314,9 +316,11 @@ publishing and `RecencyFilter` drops `published_at <= watermark`). See
 `docs/PIPELINE_CHANGES_2026-07-30.md` §9. Guard: `test_watermark_advance.py`.
 
 Two things that are easy to get wrong:
-- **Production does NOT use APScheduler.** `ENABLE_INPROCESS_SCHEDULER` is false.
-  Cloud Run scales to zero, so an in-process scheduler simply does not fire
-  unless you pay ~$15-25/mo for `min-instances=1` + CPU-always-allocated.
+- **There is no in-process scheduler.** Cloud Run scales to zero, so one never
+  fires unless you pay ~$15-25/mo for `min-instances=1` + CPU-always-allocated.
+  The single-job APScheduler that used to sit in `main.py` behind
+  `ENABLE_INPROCESS_SCHEDULER` was removed 2026-08-29; the daily chain runs only
+  via `POST /orchestrator/daily`.
 - **`ops/` must never raise.** Every module there swallows its own exceptions and
   degrades to stdlib logging. An observability layer that can crash the pipeline
   it observes turns a logging outage into a data outage.

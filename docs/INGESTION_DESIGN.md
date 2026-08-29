@@ -94,11 +94,11 @@ recommended fix was:
 **What was built:** one Cloud Scheduler job at **14:58 SGT daily** POSTs `/orchestrator/daily`
 (`main.py`), which runs the whole agent chain in `ops/daily.py`; its ingestion step is the call to
 `run_ingestion_pass(get_enabled_sources(), …)`. A single pass can also be triggered on its own via
-`POST /pipeline/run?dry_run=…`. Both endpoints require the ops token. The in-process APScheduler
-still exists in `main.py` for local development but is **off unless `ENABLE_INPROCESS_SCHEDULER`
-is true**, and it now registers exactly one job (the same daily chain) — two places defining one
-schedule is what let four agents drift into never running in production at all.
-See `docs/AUTONOMY.md` and `CLAUDE.md`.
+`POST /pipeline/run?dry_run=…`. Both endpoints require the ops token. There is no
+in-process scheduler: `main.py` used to carry a single-job APScheduler behind
+`ENABLE_INPROCESS_SCHEDULER` (off in production), **removed 2026-08-29** as redundant
+with the endpoint above — two places defining one schedule is what let four agents
+drift into never running in production at all. See `docs/AUTONOMY.md` and `CLAUDE.md`.
 
 **Why this was logged here and not designed here:** infrastructure specs rot faster than logic
 specs because they change outside the codebase. Entangling the trigger with the ingestion

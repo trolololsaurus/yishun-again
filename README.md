@@ -39,8 +39,9 @@ docs/              Spec, autonomy runbook, pipeline change records
 | Image gen | Gemini `gemini-3.1-flash-lite-image` |
 | Scheduling | Cloud Scheduler → `POST /orchestrator/daily` at 02:58 & 14:58 SGT |
 
-Orchestration is hand-rolled (`ops/daily.py`, `ingestion/orchestrator.py`). APScheduler
-is a dependency but is **off in production** — Cloud Run scales to zero.
+Orchestration is hand-rolled (`ops/daily.py`, `ingestion/orchestrator.py`). There is
+no in-process scheduler — Cloud Run scales to zero, so one would never fire; the
+daily chain runs only via `POST /orchestrator/daily` (APScheduler removed 2026-08-29).
 
 ## Pipeline
 

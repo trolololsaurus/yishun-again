@@ -101,6 +101,10 @@ Reddit URL; taxi-driver-murders and infant-murder wrong incident_dates).
   including `daily_orchestrator`. APScheduler remains dead under
   `--min-instances 0`, as designed — that is the reason Cloud Scheduler exists,
   not an outstanding gap.
+  *(2026-08-29: the single-job in-process APScheduler was removed from `main.py`
+  entirely, and APScheduler dropped as a dependency — it was off in prod and
+  fully redundant with `POST /orchestrator/daily`. `ENABLE_INPROCESS_SCHEDULER`
+  no longer exists.)*
 - ~~**MSM adapter coverage — only CNA + Google News RSS exist.**~~ ✅ **CLOSED
   (verified 2026-07-30).** `get_enabled_sources()` returned **15** live sources —
   confirmed by a live pass that session. RSS-dated MSM: CNA, Mothership, Straits

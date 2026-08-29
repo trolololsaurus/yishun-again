@@ -57,8 +57,8 @@ steps were skipped and why.
 ### How steps 1, 8, 9 and 10 got here (2026-07-30)
 
 They existed for months and had **never executed in production even once**.
-`main.py` registered them on the in-process APScheduler, which is off in
-production for the reasons in §6 — so pattern alerts were never raised, no story
+`main.py` registered them on the in-process APScheduler (since removed), which was
+off in production for the reasons in §6 — so pattern alerts were never raised, no story
 was ever auto-concluded, no source was ever discovered, and Stage 2's
 calibration hints read a file nothing had ever written. Each module was correct
 and fully tested; nothing invoked it.
@@ -622,15 +622,17 @@ the operator decision the flag exists to require.
 
 ## 6. Cost (req #12)
 
-**The scheduling model is the cost control.** Cloud Run scales to zero. An
-in-process APScheduler would need `min-instances=1` **and** CPU-always-allocated
+**The scheduling model is the cost control.** Cloud Run scales to zero. Any
+in-process scheduler would need `min-instances=1` **and** CPU-always-allocated
 to fire reliably — roughly **$15–25/month** to execute ~15 minutes of daily work.
 One Cloud Scheduler ping (3 jobs are free) keeps the service at zero instances
 for the other 23 h 45 m.
 
-`ENABLE_INPROCESS_SCHEDULER` is therefore **false** in production. The nine
+There is therefore **no in-process scheduler** — the optional single-job
+APScheduler behind `ENABLE_INPROCESS_SCHEDULER` was removed 2026-08-29; the daily
+chain fires only from Cloud Scheduler's `POST /orchestrator/daily`. The nine
 per-source "health check" jobs that used to re-scrape each site just to log a
-count are gone — they duplicated the ingestion pass and each one needed that
+count are gone too — they duplicated the ingestion pass and each one needed that
 scheduler running.
 
 Expected steady state: Cloud Run a few cents/month, Cloud Scheduler free, Gemini
