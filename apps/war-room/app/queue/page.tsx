@@ -143,13 +143,11 @@ export default async function QueuePage() {
   // down" when ST is publishing fine. Demote those to an informational line so
   // the red ERROR tier means what it says: the outlet's own feed failed.
   const okIds = new Set(latestPerSource.filter(r => r.status === 'ok').map(r => r.source_name))
+  const isDemoted = (r: { source_name: string }) =>
+    isDiscoverySource(r.source_name) && okIds.has(primaryIdOf(r.source_name))
   const allErrors = latestPerSource.filter(r => r.status === 'error')
-  const errorSources = allErrors.filter(
-    r => !(isDiscoverySource(r.source_name) && okIds.has(primaryIdOf(r.source_name)))
-  )
-  const discoveryDegraded = allErrors.filter(
-    r => isDiscoverySource(r.source_name) && okIds.has(primaryIdOf(r.source_name))
-  )
+  const errorSources = allErrors.filter(r => !isDemoted(r))
+  const discoveryDegraded = allErrors.filter(isDemoted)
   const warningSources = latestPerSource.filter(r => r.status === 'warning')
   const hasAlerts      = errorSources.length > 0 || warningSources.length > 0
                          || discoveryDegraded.length > 0

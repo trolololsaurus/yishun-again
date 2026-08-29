@@ -135,6 +135,13 @@ def _top10(tally: dict[str, int], key_name: str) -> list[dict]:
     ]
 
 
+def _record_failure(errors: list[str], label: str, exc: Exception) -> None:
+    """Log + append one failed-query error. `errors.append(...)` alone left
+    nothing for the UI's "see server logs" to find."""
+    logger.warning("cf_analytics: %s query failed: %s", label, exc)
+    errors.append(f"{label}: {exc}")
+
+
 def _get_24h(client: httpx.Client, zone_tag: str) -> dict:
     until = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     since = until - timedelta(hours=24)
@@ -155,15 +162,13 @@ def _get_24h(client: httpx.Client, zone_tag: str) -> dict:
         countries = _tally(zone["byCountry"], "clientCountryName")
         devices = _tally(zone["byDevice"], "clientDeviceType")
     except Exception as exc:
-        logger.warning("cf_analytics: 24h query failed: %s", exc)
-        errors.append(f"24h: {exc}")
+        _record_failure(errors, "24h", exc)
 
     try:
         referer_zone = _run_query(client, _HOUR_REFERER_QUERY, variables, "24h referrers")
         referrers = _tally(referer_zone["byReferer"], "clientRefererHost")
     except Exception as exc:
-        logger.warning("cf_analytics: 24h referrer query failed: %s", exc)
-        errors.append(f"24h (referrers): {exc}")
+        _record_failure(errors, "24h (referrers)", exc)
 
     return {"points": points, "countries": countries, "devices": devices, "referrers": referrers, "errors": errors}
 
@@ -181,8 +186,7 @@ def _get_multi_day(client: httpx.Client, zone_tag: str, days: int) -> dict:
         try:
             zone = _run_query(client, _DAY_QUERY, variables, day.isoformat())
         except Exception as exc:
-            logger.warning("cf_analytics: %s query failed: %s", day.isoformat(), exc)
-            errors.append(f"{day.isoformat()}: {exc}")
+            _record_failure(errors, day.isoformat(), exc)
             continue
 
         total = zone["total"][0] if zone["total"] else {"sum": {"visits": 0}, "count": 0}
@@ -201,8 +205,7 @@ def _get_multi_day(client: httpx.Client, zone_tag: str, days: int) -> dict:
             for k, v in _tally(referer_zone["byReferer"], "clientRefererHost").items():
                 referrers[k] = referrers.get(k, 0) + v
         except Exception as exc:
-            logger.warning("cf_analytics: %s referrer query failed: %s", day.isoformat(), exc)
-            errors.append(f"{day.isoformat()} (referrers): {exc}")
+            _record_failure(errors, f"{day.isoformat()} (referrers)", exc)
 
     points.sort(key=lambda p: p["t"])
     return {"points": points, "countries": countries, "devices": devices, "referrers": referrers, "errors": errors}
