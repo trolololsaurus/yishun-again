@@ -7,10 +7,9 @@ python-dotenv==1.0.1
 # Same story as httpx below: google-genai 2.12.1 needs pydantic>=2.11, so the old
 # 2.7.1 pin was uninstallable from scratch. 2.13.4 is what the working venv runs.
 pydantic==2.13.4
-pydantic-settings==2.3.0
-
-# ── Scheduling (spec: APScheduler 3.x) ─────────────────────────────────────
-APScheduler==3.10.4
+# pydantic-settings and APScheduler removed 2026-08-29 (ponytail audit): nothing
+# imported pydantic-settings, and APScheduler backed only main.py's in-process
+# scheduler — off in prod, redundant with POST /orchestrator/daily, now deleted.
 
 # ── AI APIs ─────────────────────────────────────────────────────────────────
 # Stage 2 writer — claude-haiku-4-5-20251001 (classify) / claude-sonnet-4-6 (write)

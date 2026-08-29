@@ -4,8 +4,6 @@ import os
 from contextlib import asynccontextmanager
 
 import uvicorn
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import PlainTextResponse
@@ -40,104 +38,24 @@ logger = logging.getLogger("yishun-agents")
 
 
 # ---------------------------------------------------------------------------
-# Scheduler job wrappers
-# ---------------------------------------------------------------------------
-
-def _job_pipeline() -> None:
-    """Full daily chain — ingestion, auto-publish, then the monitoring fleet."""
-    from ops.daily import run as daily_run
-    try:
-        report = daily_run(trigger="scheduler")
-        logger.info("Daily orchestrator: %s", report.get("summary"))
-    except Exception as exc:
-        logger.error("Pipeline job failed: %s", exc)
-
-
-# The nine per-source "health check" jobs that used to live here are gone. They
-# re-scraped each site on its own interval purely to log a count, duplicating
-# work the ingestion pass already does — and every one of them needed the
-# in-process scheduler to be running. Source health now comes from the real
-# pass, via pipeline_state and ops/supervisor.py.
-#
-# The pattern-detection, recalibration, lifecycle and source-discovery jobs are
-# gone from here for a sharper reason: they were only ever registered on this
-# scheduler, which production does not start, so in production they had never
-# run at all. They are now cadence-gated steps inside ops/daily.py, on the same
-# schedules, reached by the one entry point Cloud Scheduler actually calls. Two
-# places defining one schedule is what let them drift into being dead code; there
-# is now exactly one.
-
-
-# ---------------------------------------------------------------------------
-# Scheduling
-# ---------------------------------------------------------------------------
-# PRODUCTION USES CLOUD SCHEDULER, NOT THIS.
-#
-# The in-process APScheduler below is OFF by default and exists for local
-# development only. On Cloud Run it is the wrong tool twice over:
-#
-#   * Correctness — the service scales to zero. A background scheduler inside a
-#     container that is not running does not fire. Making it fire requires
-#     min-instances=1 AND CPU-always-allocated.
-#   * Cost (req #12) — that combination is roughly $15-25/month to execute
-#     ~15 minutes of daily work. One Cloud Scheduler ping to
-#     POST /orchestrator/daily costs nothing (3 jobs are free) and lets the
-#     service sit at zero instances the other 23h 45m.
-#
-# Set ENABLE_INPROCESS_SCHEDULER=true to run the old interval jobs locally.
-# The daily chain, its ordering, and its failure isolation live in ops/daily.py.
-
-def _scheduler_enabled() -> bool:
-    return os.getenv("ENABLE_INPROCESS_SCHEDULER", "false").strip().lower() in ("true", "1", "yes")
-
-
-# ONE job. The chain it triggers carries every cadence — daily, weekly and
-# monthly — inside ops/daily.py, so this list stays a single entry no matter how
-# many agents the fleet grows.
-_JOBS = [
-    # Full daily chain — ingestion → auto-publish → monitoring fleet → the
-    # cadence-gated agents. 14:58 SGT, matching the Cloud Scheduler cron so
-    # local and prod agree.
-    (
-        _job_pipeline,
-        CronTrigger(hour=14, minute=58, timezone="Asia/Singapore"),
-        "daily_orchestrator",
-    ),
-]
-
-
-def _build_scheduler() -> BackgroundScheduler:
-    scheduler = BackgroundScheduler(timezone="Asia/Singapore")
-    for fn, trigger, job_id in _JOBS:
-        scheduler.add_job(
-            fn, trigger, id=job_id,
-            replace_existing=True,
-            misfire_grace_time=300,
-        )
-        logger.info("Scheduled job: %s (%s)", job_id, trigger)
-    return scheduler
-
-
-# ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
+# THE DAILY CHAIN IS DRIVEN BY CLOUD SCHEDULER, via POST /orchestrator/daily —
+# one ping runs ingestion → auto-publish → the monitoring fleet → the
+# cadence-gated agents, all ordered and failure-isolated inside ops/daily.py, and
+# the service sits at zero instances the rest of the day.
+#
+# There is deliberately NO in-process scheduler. A background scheduler inside a
+# scale-to-zero container does not fire unless you pay for min-instances=1 +
+# CPU-always-allocated (~$15-25/mo for ~15 min of daily work), and it would be a
+# second place defining the cadence — which is exactly how pattern detection,
+# recalibration, lifecycle and discovery once drifted into never running in prod.
+# The one schedule lives in ops/daily.py. For local dev, POST the same endpoint.
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    scheduler = None
-    if _scheduler_enabled():
-        scheduler = _build_scheduler()
-        scheduler.start()
-        logger.info("yishun-agents starting up — %d in-process job(s) scheduled", len(_JOBS))
-    else:
-        logger.info(
-            "yishun-agents starting up — in-process scheduler DISABLED "
-            "(production is driven by Cloud Scheduler -> POST /orchestrator/daily). "
-            "Set ENABLE_INPROCESS_SCHEDULER=true for local scheduling."
-        )
+    logger.info("yishun-agents starting up — driven by Cloud Scheduler -> POST /orchestrator/daily")
     yield
-    if scheduler:
-        scheduler.shutdown(wait=False)
     logger.info("yishun-agents shutting down")
 
 
