@@ -21,6 +21,9 @@ dist/
 build/
 *.tsbuildinfo
 
+# Next.js generated — regenerated on every dev/build, not source
+next-env.d.ts
+
 # OS
 .DS_Store
 Thumbs.db
