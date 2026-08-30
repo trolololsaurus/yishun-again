@@ -2,11 +2,12 @@
 Self-contained tests for the three ops agents. No pytest, no DB, no network.
 Run: .venv/Scripts/python.exe test_ops_agents.py
 
-These agents run unattended at 14:58 daily and email a human, so the two things
+These agents run unattended at 14:58 daily and alert a human via Telegram, so
+the two things
 worth pinning down are the two things that are expensive to get wrong:
 
-  1. THE EMAIL BAR (ops/supervisor.py). One flaky source must be logged and NOT
-     emailed; three at once, all of them, a 3-day streak, or a stuck run must be.
+  1. THE ALERT BAR (ops/supervisor.py). One flaky source must be logged and NOT
+     alerted on; three at once, all of them, a 3-day streak, or a stuck run must be.
      An alerting system the operator filters to spam is worse than none.
   2. THE COST ESTIMATE (ops/backend_health.py). The guard exists to catch a
      runaway scheduler, so the arithmetic and the trip thresholds are asserted
@@ -141,7 +142,7 @@ f9 = sup.classify_findings(
     streaks=[{"source_name": "stomp", "consecutive_zeros": sup.ZERO_STREAK_ANOMALY}],
     now=NOW)
 check("threshold reached -> zero_streak WARNING, never an anomaly (0 Yishun "
-      "items is normal quiet, correlated across the fleet — must not email; "
+      "items is normal quiet, correlated across the fleet — must not alert; "
       "see test_supervisor_alerting.py)",
       codes(f9) == ["zero_streak"] and f9[0]["level"] == "warning")
 
@@ -202,7 +203,7 @@ with mock.patch.object(sup, "notify", return_value=SENT) as streak_notify:
     stats = sup.run(supabase_client=streak_db, now=NOW)
 check("run() reads the history table and raises a zero_streak WARNING end to end",
       stats["warnings"] == 1 and stats["anomalies"] == 0 and stats["errors"] == 0)
-check("...and a zero-streak alone never emails (the spam this fixed)",
+check("...and a zero-streak alone never alerts (the spam this fixed)",
       streak_notify.call_count == 0)
 
 # ── supervisor: fleet-wide + stuck runs ──────────────────────────────────────
@@ -231,13 +232,13 @@ check("run stuck in 'running' -> agent_stuck anomaly",
       codes(f12) == ["agent_stuck"] and f12[0]["level"] == "anomaly")
 
 
-# ── supervisor: what counts as SERIOUS enough to email ───────────────────────
+# ── supervisor: what counts as SERIOUS enough to alert ──────────────────────
 
-print("\nsupervisor — the email bar:")
+print("\nsupervisor — the alert bar:")
 
 one_bad = sup.classify_findings(pipeline_state=[
     state("cna", "blocked", failures=4), state("stomp"), state("mothership")], now=NOW)
-check("one broken source is logged, NOT emailed", sup.is_serious(one_bad) == [])
+check("one broken source is logged, NOT alerted on", sup.is_serious(one_bad) == [])
 
 warn_only = sup.classify_findings(pipeline_state=[
     state("cna", "blocked", failures=1), state("stomp", "unavailable", failures=1),
@@ -271,7 +272,7 @@ stuck_serious = sup.is_serious(sup.classify_findings(
     stuck=[{"id": "r-1", "agent": "ingestion", "started_at": "x"}], now=NOW))
 check("a stuck agent run is serious on its own", any("stuck" in r for r in stuck_serious))
 
-check("no findings at all -> nothing to email", sup.is_serious([]) == [])
+check("no findings at all -> nothing to alert on", sup.is_serious([]) == [])
 
 
 # ── supervisor: run() end to end ─────────────────────────────────────────────
@@ -283,7 +284,7 @@ with mock.patch.object(sup, "notify", return_value=SENT) as notify_healthy:
     # Pin now=NOW: fixtures are built relative to NOW, so run() must judge
     # staleness against the same clock or a day-old fixture reads as stale.
     stats = sup.run(supabase_client=healthy, now=NOW)
-check("healthy fleet -> no email", notify_healthy.call_count == 0)
+check("healthy fleet -> no alert", notify_healthy.call_count == 0)
 check("healthy fleet -> counted, no anomalies",
       stats["sources_checked"] == 2 and stats["anomalies"] == 0 and stats["errors"] == 0)
 check("healthy run still writes an agent_runs row", len(healthy.inserted.get("agent_runs", [])) == 1)
@@ -293,15 +294,15 @@ broken = FakeSupabase(pipeline_state=[
     state("zaobao", "ok", hours_ago=99)])
 with mock.patch.object(sup, "notify", return_value=SENT) as notify_broken:
     stats = sup.run(supabase_client=broken, now=NOW)
-check("serious anomaly -> exactly one email", notify_broken.call_count == 1)
+check("serious anomaly -> exactly one alert", notify_broken.call_count == 1)
 check("...sent as an anomaly", notify_broken.call_args.args[0] == "anomaly")
 kwargs = notify_broken.call_args.kwargs
 check("...keyed under supervisor: with a generous throttle (state-change dedup "
-      "is what actually stops re-mailing — see test_supervisor_alerting.py)",
+      "is what actually stops re-alerting — see test_supervisor_alerting.py)",
       kwargs["dedup_key"].startswith("supervisor:") and kwargs["throttle_minutes"] == 1440)
 check("...with the broken sources in the key", "cna" in kwargs["dedup_key"])
-check("...and marked serious in the stats", stats["serious"] is True and stats["emailed"] is True)
-check("anomaly events were logged, not just emailed",
+check("...and marked serious in the stats", stats["serious"] is True and stats["notified"] is True)
+check("anomaly events were logged, not just alerted on",
       len(broken.inserted.get("agent_events", [])) >= 3)
 
 
@@ -355,7 +356,7 @@ signals = mnt.collect_signals(
                      "last_reason": "captcha challenge", "updated_at": NOW.isoformat()}],
     health=[{"source_name": "shinmin", "errors": ["ReadTimeout on listing page"],
              "scraped_at": NOW.isoformat()}],
-    failed_notifications=[{"subject": "test", "error": "Resend HTTP 422",
+    failed_notifications=[{"subject": "test", "error": "Telegram HTTP 400: chat not found",
                            "created_at": NOW.isoformat()}],
 )
 check("every failure surface is collected", len(signals) == 7)
@@ -507,14 +508,14 @@ with mock.patch.dict(os.environ, {"CF_R2_ACCOUNT_ID": "", "ANTHROPIC_API_KEY": "
     stats = bh.run(supabase_client=health_db)
 check("one backend_health_checks row per component",
       len(health_db.inserted.get("backend_health_checks", [])) == stats["components"] == 5)
-check("healthy backend -> no email", notify_health.call_count == 0 and stats["emailed"] is False)
+check("healthy backend -> no alert", notify_health.call_count == 0 and stats["notified"] is False)
 
 down_db = FakeSupabase()
 down_db.table = mock.Mock(side_effect=RuntimeError("db down"))
 with mock.patch.dict(os.environ, {"CF_R2_ACCOUNT_ID": ""}), \
      mock.patch.object(bh, "notify", return_value=SENT) as notify_down:
     stats = bh.run(supabase_client=down_db)
-check("a down component -> exactly one email", notify_down.call_count == 1)
+check("a down component -> exactly one alert", notify_down.call_count == 1)
 check("...sent as kind=health", notify_down.call_args.args[0] == "health")
 
 

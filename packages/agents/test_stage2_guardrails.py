@@ -45,7 +45,7 @@ check("C1 non-political keeps confidence", r["confidence"] == 0.9 and r["politic
 # is what the model tends to return on a political story, because it is being
 # told to reject rather than categorise. The candidate died on an exception, so
 # confidence was never forced to 0, the reject marker was never prepended, and
-# the operator email + agent_events warning never fired. The guardrail was
+# the operator alert + agent_events warning never fired. The guardrail was
 # unreachable for a subset of exactly the content it exists to catch.
 r = sw._classify(_fake_client({**base, "classification": None, "political": True,
                                "confidence": 0.9}), {"title": "x", "content": "y"})

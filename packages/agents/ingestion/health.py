@@ -21,8 +21,8 @@ Rows are keyed by `source.name` — `stomp`, `straits_times` — the same id tha
 keys `pipeline_state`. The old writer used display names (`Stomp`, `The Straits
 Times`), and the supervisor cross-references the two tables by this key: two
 spellings of one source count it TWICE toward the ">= 3 sources anomalous"
-threshold that decides whether the operator gets an email. One broken source
-could therefore have mailed as if it were three.
+threshold that decides whether the operator gets alerted. One broken source
+could therefore have alerted as if it were three.
 
 Never raises. Health logging that can crash a pass turns an observability
 outage into a data outage — the same rule `ops/` lives by, for the same reason.

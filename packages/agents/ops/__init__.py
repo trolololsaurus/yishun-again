@@ -10,8 +10,8 @@ Every public entry point in this package therefore swallows its own exceptions
 and degrades to stdlib logging.
 
   activity.py       agent_runs / agent_events — what every agent did (req #7)
-  notify.py         outbound email + dedup ledger (reqs #4, #9, #11, #12)
-  supervisor.py     watches the scraping fleet, mails on serious anomaly (req #9)
+  notify.py         outbound alert (Telegram) + dedup ledger (reqs #4, #9, #11, #12)
+  supervisor.py     watches the scraping fleet, alerts on serious anomaly (req #9)
   maintenance.py    plain-English digest of what broke + how to fix it (req #11)
   backend_health.py component health + cost guard (req #12)
   integrity.py      duplicate entries + hallucination signals (req #10)

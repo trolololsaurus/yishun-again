@@ -789,7 +789,7 @@ Severity guide (dagger):
 `"political": true` forces `confidence = 0.0` before the merge, and
 `write_stage2` prepends the operator-visible
 `[POLITICAL CONTENT DETECTED — REJECT]` marker. Since 2026-07-30 it also
-**alerts** — operator email plus a `warning` row in `agent_events` — because a
+**alerts** — an operator alert plus a `warning` row in `agent_events` — because a
 silently-zeroed row was indistinguishable from any other low-confidence row.
 
 ⚠️ As of 2026-08-02 the guardrail is read **first, before any field
@@ -798,7 +798,7 @@ coercion, and `result["classification"].lower()` threw `AttributeError` whenever
 the model returned `"classification": null` — which is exactly what it tends to
 do on a political story, because it is being told to reject rather than
 categorise. The candidate died on an exception, so confidence was never zeroed,
-the marker was never prepended, and neither the email nor the `agent_events` row
+the marker was never prepended, and neither the alert nor the `agent_events` row
 ever fired. The guardrail was unreachable for a subset of the very content it
 exists to catch. Observed live on an MP-resignation article surfaced by the
 WordPress search source. A political row whose category is unusable is now
@@ -1797,8 +1797,8 @@ the pass actually fetched, and for none it skipped.
 
 ⚠️ **Rows are keyed by the stable source id** (`stomp`, `straits_times`), the
 same key as `pipeline_state` — `ops/supervisor.py` joins the two tables on it and
-counts distinct sources toward its email threshold, so a second spelling of one
-source would mail as if it were two. The pre-July-2026 writer
+counts distinct sources toward its alert threshold, so a second spelling of one
+source would alert as if it were two. The pre-July-2026 writer
 (`scrapers.log_scraper_run`, called only from the retired `scrape_all`) used
 display names, and stopped being called at all when ingestion moved to the
 `ingestion/sources/` adapters — leaving the supervisor and the War Room grading a

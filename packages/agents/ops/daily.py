@@ -8,7 +8,7 @@ Runs the whole fleet in a deliberate order and returns a single report.
      1. recalibration    operator corrections -> calibration_log.json. FIRST, and
                          the reason is subtle enough to be worth a paragraph below
      2. ingestion        produce candidate drafts
-     3. auto_publish     publish >= threshold; email about everything below (#3, #4)
+     3. auto_publish     publish >= threshold; alert about everything below (#3, #4)
      4. integrity        dupes + hallucinations — AFTER publish, so it audits what
                          actually went live, not what was merely proposed (#10)
      5. supervisor       scraper fleet health — AFTER ingestion, so it grades this
@@ -312,7 +312,7 @@ def run(dry_run: bool = False, trigger: str = "scheduler",
             # detection. The agent's own auto-fix set is deliberately narrow
             # (recompute a drifted corroboration_count; dismiss an UNPROCESSED
             # queue duplicate). Anything touching a published incident's text,
-            # dates or sources is report-and-email only, because picking which of
+            # dates or sources is report-and-alert only, because picking which of
             # two duplicates is "the real one" is a judgement call and getting it
             # wrong rewrites live content with no human in the loop.
             from ops.integrity import run as integrity_run

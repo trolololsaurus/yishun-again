@@ -318,7 +318,7 @@ source with the widest reach was emitting URLs that are not articles.
   is being told to reject rather than categorise. The guardrail was therefore **unreachable
   for a subset of the very content it exists to catch**: the candidate died on an exception,
   so confidence was never forced to 0, the `[POLITICAL CONTENT DETECTED — REJECT]` marker
-  was never prepended, and the operator email and `agent_events` warning row never fired.
+  was never prepended, and the operator alert and `agent_events` warning row never fired.
   Observed live 2026-08-02 on an MP-resignation article surfaced by the new WordPress search
   source. Political rows now also get a placeholder classification so the reject path can
   complete and alert. Guard: `test_stage2_guardrails.py` (31 checks).

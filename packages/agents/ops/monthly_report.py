@@ -7,7 +7,7 @@ Monthly orchestrator report (req #13).
     run(period_end=date(2026, 6, 30), force=True)   # regenerate and overwrite
 
 Runs on the 1st. Reads the seven ops tables the fleet writes to, folds them into
-one `monthly_reports` row (structured JSONB + a narrative), and emails it.
+one `monthly_reports` row (structured JSONB + a narrative), and alerts it.
 
 WHAT THIS IS FOR. The operator does not watch the pipeline; that is the point of
 the autonomy work. So once a month the pipeline has to report to them, and the
@@ -25,7 +25,7 @@ DESIGN RULES (same contract as the rest of ops/):
     says so.
   * Idempotent. monthly_reports has UNIQUE (period_start, period_end): an
     existing row for the period short-circuits (no second row, no second
-    email) unless force=True, and the write itself is an upsert so even a
+    alert) unless force=True, and the write itself is an upsert so even a
     concurrent double-trigger cannot duplicate.
 
 A note on windows: the boundaries are UTC, matching how every timestamptz in
@@ -754,10 +754,10 @@ def _mark_emailed(client, start: date, end: date) -> None:
 
 def run(supabase_client=None, period_end=None, force=False, trigger: str = "scheduler") -> dict:
     """
-    Generate, store and email the 30-day report. Never raises.
+    Generate, store and alert the 30-day report. Never raises.
 
     Returns {"status": ok|exists|failed|disabled, "period_start", "period_end",
-             "written", "emailed", "notification_status", "published",
+             "written", "notified", "notification_status", "published",
              "auto_published", "warnings": [...], "errors": int}.
     """
     start, end = window_for(period_end)
@@ -766,7 +766,7 @@ def run(supabase_client=None, period_end=None, force=False, trigger: str = "sche
         "period_start":        start.isoformat(),
         "period_end":          end.isoformat(),
         "written":             False,
-        "emailed":             False,
+        "notified":                         False,
         "notification_status": None,
         "published":           0,
         "auto_published":      0,
@@ -828,9 +828,9 @@ def run(supabase_client=None, period_end=None, force=False, trigger: str = "sche
                 dedup_key=f"monthly_report:{start.isoformat()}:{end.isoformat()}",
                 client=client,
             )
-            stats["emailed"] = result.get("status") == "sent"
+            stats["notified"] = result.get("status") == "sent"
             stats["notification_status"] = result.get("status")
-            if stats["emailed"] and stats["written"]:
+            if stats["notified"] and stats["written"]:
                 _mark_emailed(client, start, end)
 
             arun.stat("published", stats["published"])
@@ -838,7 +838,7 @@ def run(supabase_client=None, period_end=None, force=False, trigger: str = "sche
             arun.stat("warnings", len(stats["warnings"]))
             arun.set_summary(
                 f"{start}..{end}: {stats['published']} published, "
-                f"{stats['auto_published']} autonomous, email={stats.get('notification_status')}"
+                f"{stats['auto_published']} autonomous, notified={stats.get('notification_status')}"
             )
 
         except Exception as exc:                  # noqa: BLE001 - see module docstring

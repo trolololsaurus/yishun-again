@@ -111,7 +111,7 @@ categorise.
 So for a subset of the very content the guardrail exists to catch, the
 candidate died on an exception before the guardrail was ever read: no
 `confidence = 0`, no `[POLITICAL CONTENT DETECTED — REJECT]` marker, no
-operator email, no `agent_events` warning row. Observed live on 2026-08-02 on
+operator alert, no `agent_events` warning row. Observed live on 2026-08-02 on
 an MP-resignation article.
 
 A silent crash is worse than the silently-zeroed row that the 2026-07-30

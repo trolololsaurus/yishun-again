@@ -600,7 +600,7 @@ def _classify(client: anthropic.Anthropic, content: dict) -> dict:
     # than categorise. The guardrail was therefore unreachable for a subset of
     # the very content it exists to catch: the candidate died on an exception,
     # so confidence was never forced to 0, the "[POLITICAL CONTENT DETECTED
-    # — REJECT]" marker was never prepended, and the operator email and
+    # — REJECT]" marker was never prepended, and the operator alert and
     # `agent_events` warning row never fired. A silent crash is worse than a
     # silently-zeroed row, which is the failure the 2026-07-30 alerting was
     # added to fix in the first place.

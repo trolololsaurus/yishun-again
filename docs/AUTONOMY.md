@@ -150,7 +150,7 @@ The `political` read sat *below* the classify response's field validation, and
 `result["classification"].lower()` throws `AttributeError` on
 `"classification": null` — which is exactly what the model returns on a political
 story, because it is being told to reject rather than categorise. The candidate
-died on an exception: no forced confidence 0, no reject marker, no email, no
+died on an exception: no forced confidence 0, no reject marker, no alert, no
 `agent_events` row. Observed live on an MP-resignation article surfaced by the
 WordPress search source. Guardrail #4 is now evaluated **first** in `_classify`,
 before any field coercion can raise, and a political row with an unusable
@@ -302,19 +302,19 @@ log.
 > `ZERO_STREAK_WARNING` (30) — same quantity, same reasoning, one constant so the
 > two can't drift apart again — and applies it to every source.
 >
-> **A zero-streak is a `warning`, never an `anomaly` — it does not email
+> **A zero-streak is a `warning`, never an `anomaly` — it does not alert
 > (2026-08-29).** Reaching that 30-pass threshold now only decides when the
 > *warning* appears; `classify_findings` emits `zero_streak` at `level="warning"`,
 > and `is_serious()` only ever counts `anomaly`-level findings, so no number of
 > simultaneous zero-streaks can trip the ">=3 sources, too many to be independent"
-> or chronic-broken email rules. This is the fix for the supervisor mailing "11
+> or chronic-broken alert rules. This is the fix for the supervisor alerting "11
 > sources actually broken" on an ordinary quiet spell: 0 Yishun-matching items is
 > normal for one outlet AND correlated across the fleet (a quiet news week for one
 > small town is quiet for all), so a batch of them is the resting state, not
-> evidence of N independent failures. A genuinely dead source still emails via its
+> evidence of N independent failures. A genuinely dead source still alerts via its
 > own path — blocked/unavailable/error in `pipeline_state`, which `zero_streaks()`
 > skips entirely. Guards: the fleet-of-zero-streaks case in
-> `test_supervisor_alerting.py`, the no-email end-to-end check in
+> `test_supervisor_alerting.py`, the no-alert end-to-end check in
 > `test_ops_agents.py`.
 >
 > **Discovery adapters are demoted when their primary is healthy (2026-08-29).**
@@ -322,24 +322,24 @@ log.
 > primary scraper) that is blocked/unavailable/stale while the outlet's PRIMARY
 > reported `ok` this pass is degraded archive depth, not an outage —
 > `classify_findings` post-demotes its finding from `anomaly` to `warning`, so it
-> is logged but never emails. If the primary is ALSO down it is not covered and
+> is logged but never alerts. If the primary is ALSO down it is not covered and
 > stays an anomaly (a real outlet outage). Mirrors the War Room health demotion
 > (`apps/war-room/lib/utils.isDiscoverySource`/`primaryIdOf`); it is what keeps
 > ST's persistently-500ing `straits_times_sitemap` off the operator's phone while
 > `straits_times` RSS is fine.
 
-> **The email dedup key is now a SIGNATURE comparison, not a fixed key
+> **The alert dedup key is now a SIGNATURE comparison, not a fixed key
 > (2026-08-29).** It used to embed the sorted broken-source list, so any churn
 > in *which* sources were anomalous (one crossing in or out) changed the key and
-> the once-a-day throttle never engaged — the same standing fleet problem mailed
+> the once-a-day throttle never engaged — the same standing fleet problem alerted
 > twice in one day with "slightly different" source lists. `ops/supervisor.py`
 > now computes an `_alert_signature()` (the anomalous sources, plus a
 > pseudo-member each for `all_sources_failing`/`agent_stuck` since those carry
 > no `source` of their own) and reads back the signature from the last
 > `operator_notified` event it wrote (`_previous_alert_signature()`, via
-> `agent_events`, 14-day lookback). Unchanged signature -> logged, not re-mailed,
+> `agent_events`, 14-day lookback). Unchanged signature -> logged, not re-alerted,
 > even though `is_serious()` still returns the same reasons. Changed signature
-> (a source newly broken, or one recovering) -> mailed, keyed on the signature
+> (a source newly broken, or one recovering) -> alerted, keyed on the signature
 > itself rather than the date, so a second, different problem breaking later the
 > same day still gets its own alert instead of being blocked by the first one's
 > date-scoped key.

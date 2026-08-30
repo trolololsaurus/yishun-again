@@ -38,8 +38,8 @@ load_dotenv(_REPO_ROOT / ".env", override=False)
 import os  # noqa: E402
 
 # The six ops tables added by migration 011. None of these should ever be
-# readable by the publishable key: they carry run stats, operator email
-# addresses, cost estimates and internal health state.
+# readable by the publishable key: they carry run stats, the operator's
+# Telegram chat id, cost estimates and internal health state.
 OPS_TABLES = [
     "agent_runs",
     "agent_events",

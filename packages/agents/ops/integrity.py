@@ -30,7 +30,7 @@ story actually was — information this agent does not have.
 Note the interaction with the legal guardrails: a signal (EDMW) URL found in a
 published incident's `source_urls` is a guardrail #2 breach, and it is still NOT
 auto-removed here, because removing it could take the incident's last source and
-break guardrail #1. Report, email, let a human re-source it.
+break guardrail #1. Report, alert, let a human re-source it.
 
 ## Detection 1 — double entries from the same source
 
@@ -935,9 +935,9 @@ def apply_fixes(findings: list[Finding], queue_by_id: dict, client,
             run.error_("fix_failed", f"{finding.code}: {exc}")
 
 
-# ── Operator email ──────────────────────────────────────────────────────────
+# ── Operator alert ──────────────────────────────────────────────────────────
 
-def _email_body(needs_human: list[Finding], corrected: list[Finding],
+def _alert_body(needs_human: list[Finding], corrected: list[Finding],
                 stats: dict, applied: bool) -> str:
     lines = [
         f"Integrity pass found {len(needs_human)} item(s) that need a human.",
@@ -999,7 +999,7 @@ def run(supabase_client=None, apply: bool = False, trigger: str = "scheduler") -
     """
     One integrity pass. Never raises — returns a stats dict with `errors`.
 
-    apply=False (the default) reports and emails without writing anything. See
+    apply=False (the default) reports and alerts without writing anything. See
     the module docstring for why that asymmetry is deliberate.
     """
     stats = {
@@ -1158,7 +1158,7 @@ def _pass(supabase_client, apply: bool, arun: AgentRun, stats: dict) -> None:
         notify(
             "anomaly",
             f"Yishun Again — integrity: {len(needs_human)} item(s) need review",
-            _email_body(needs_human, fixable, stats, apply),
+            _alert_body(needs_human, fixable, stats, apply),
             # Keyed on the calendar day: the same duplicate found on every pass
             # must not mail every pass, or the operator filters the sender and
             # the one alert that mattered goes unread too.

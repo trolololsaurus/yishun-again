@@ -478,27 +478,27 @@ PUB = [inc("i1", urls=[CNA_A, ST_A], corroboration=1, slug="a-jul-2026")]
 
 with mock.patch.object(ig, "check_url_liveness", return_value=[]), \
      mock.patch("classifiers.source_allowlist.load_source_domains", return_value=DOMAINS), \
-     mock.patch.object(ig, "notify", return_value={"status": "disabled"}) as mailed:
+     mock.patch.object(ig, "notify", return_value={"status": "disabled"}) as notified:
     out = ig.run(supabase_client=_client_with(QUEUE, PUB))
 check("report-only by default", out["apply"] is False)
 check("finds the duplicate + the drift", out["findings"] >= 2)
 check("report-only pass writes NOTHING", out["corrected"] == 0 and out["dismissed"] == 0)
 check("no errors on a clean pass", out["errors"] == 0)
 check("stats dict always carries an errors count", "errors" in out)
-check("emails the operator as kind='anomaly'", mailed.call_args[0][0] == "anomaly")
-check("dedup key is the calendar day, so repeat findings do not re-mail",
-      mailed.call_args.kwargs["dedup_key"].startswith("integrity:")
-      and len(mailed.call_args.kwargs["dedup_key"]) == len("integrity:2026-07-20"))
+check("alerts the operator as kind='anomaly'", notified.call_args[0][0] == "anomaly")
+check("dedup key is the calendar day, so repeat findings do not re-alert",
+      notified.call_args.kwargs["dedup_key"].startswith("integrity:")
+      and len(notified.call_args.kwargs["dedup_key"]) == len("integrity:2026-07-20"))
 
 with mock.patch.object(ig, "check_url_liveness", return_value=[]), \
      mock.patch("classifiers.source_allowlist.load_source_domains", return_value=DOMAINS), \
      mock.patch.object(ig, "notify", return_value={"status": "disabled"}) as quiet:
     ig.run(supabase_client=_client_with([], [inc("i1", urls=[CNA_A])]))
-check("a clean archive sends no email at all", quiet.call_count == 0)
+check("a clean archive sends no alert at all", quiet.call_count == 0)
 
 with mock.patch.object(ig, "check_url_liveness", return_value=[]), \
      mock.patch("classifiers.source_allowlist.load_source_domains", return_value=DOMAINS), \
-     mock.patch.object(ig, "notify", return_value={"status": "disabled"}) as mailed:
+     mock.patch.object(ig, "notify", return_value={"status": "disabled"}) as notified:
     out = ig.run(supabase_client=_client_with(QUEUE, PUB), apply=True)
 check("apply=True performs the whitelisted corrections", out["corrected"] >= 1)
 

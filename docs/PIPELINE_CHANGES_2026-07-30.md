@@ -335,7 +335,7 @@ back to `confidence`.
 > tends to do on a political story, because the prompt tells it to reject rather
 > than categorise. The candidate died on that exception, so confidence was never
 > forced to 0, the reject marker was never prepended, and neither the operator
-> email nor the `agent_events` warning row was ever written. Observed live on an
+> alert nor the `agent_events` warning row was ever written. Observed live on an
 > MP-resignation article. The guardrail block now runs **first** in `_classify`,
 > ahead of any validation that can raise, and a political row whose classification
 > is unusable is given a placeholder category so the reject path can complete.

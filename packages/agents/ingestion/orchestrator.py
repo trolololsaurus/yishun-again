@@ -518,7 +518,7 @@ def _record_health(source, *, items_found, items_passed_s1, result, errors,
 
     Keyed on `source.name`, the same stable id as pipeline_state: the supervisor
     joins the two tables by that key, so a display name here would split one
-    source across two identities and double-count it toward the email threshold.
+    source across two identities and double-count it toward the alert threshold.
 
     Never called for a source the pass SKIPPED — a row there would read as a
     genuine zero-item run and walk that source toward a false zero-streak.

@@ -62,7 +62,7 @@ rot) — is the spine of everything below.
 > One caveat found on 2026-08-02 and fixed the same day: guardrail #4's *alerting* was reachable
 > only when the model returned a classification string. On political stories it tends to return
 > `"classification": null`, which threw inside `_classify` before the guardrail ran — the candidate
-> died on an exception, so nothing auto-published, but no reject marker, operator email or
+> died on an exception, so nothing auto-published, but no reject marker, operator alert or
 > `agent_events` row was raised either. The guardrail is now evaluated before any field
 > validation. Guard: `test_stage2_guardrails.py`.
 >

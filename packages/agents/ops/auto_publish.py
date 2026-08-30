@@ -6,7 +6,7 @@ Runs immediately after the ingestion pass. Two jobs:
   1. Every `pending` queue row at confidence >= AUTO_PUBLISH_CONFIDENCE (0.95)
      is approved and published without a human — and the decision is recorded as
      a training signal so the learning loop can grade it later.
-  2. Everything left below the threshold triggers ONE email telling the operator
+  2. Everything left below the threshold triggers ONE alert telling the operator
      how many cards are waiting in the War Room.
 
 ## Why this is a faithful port and not a second implementation

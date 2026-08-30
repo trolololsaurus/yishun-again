@@ -122,7 +122,7 @@ check("...and the source URL", "https://cna.com/a" in act.events[0]["message"])
 
 # It must survive a broken notifier — alerting is not worth losing a pass over.
 act2 = _Activity()
-with mock.patch("ops.notify.notify", side_effect=RuntimeError("resend down")):
+with mock.patch("ops.notify.notify", side_effect=RuntimeError("telegram down")):
     orch._alert_political({"title": "t", "political": True}, _Cand(),
                           client=None, activity=act2)
 check("a notifier outage does not raise (pass survives)", len(act2.events) == 1)

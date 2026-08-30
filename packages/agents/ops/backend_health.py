@@ -24,7 +24,7 @@ Public API
 ----------
 run(supabase_client=None, trigger="scheduler") -> dict
     {"components", "down", "degraded", "estimated_usd", "cost_tripped",
-     "emailed", "errors"}
+     "notified", "errors"}
 """
 
 import logging
@@ -348,7 +348,7 @@ def _min_instances() -> int:
         return 0
 
 
-# ── Email ────────────────────────────────────────────────────────────────────
+# ── Alert composition ────────────────────────────────────────────────────────
 
 def _compose_alert(checks, cost_tripped: bool) -> tuple[str, str]:
     down = [c for c in checks if c["status"] == "down"]
@@ -390,7 +390,7 @@ def run(supabase_client=None, trigger: str = "scheduler") -> dict:
     Never raises — a health checker that can crash the pass is worse than none.
     """
     stats = {"components": 0, "down": 0, "degraded": 0, "estimated_usd": 0.0,
-             "cost_tripped": False, "emailed": False, "errors": 0}
+             "cost_tripped": False, "notified": False, "errors": 0}
 
     if not agent_enabled(AGENT):
         logger.info("backend_health: disabled via AGENT_DISABLED — skipping")
@@ -462,13 +462,13 @@ def _health(run_ctx, client, stats: dict) -> None:
     down_names = "+".join(sorted(c["component"] for c in checks if c["status"] == "down"))
     result = notify("health", subject, body, dedup_key=f"health:{down_names}", client=client)
 
-    stats["emailed"] = result["status"] == "sent"
+    stats["notified"] = result["status"] == "sent"
     run_ctx.info("operator_notified", f"health alert {result['status']} ({down_names})")
     run_ctx.set_summary(
         f"{stats['down']} component(s) down"
         + (f", cost guard tripped at ${estimate['estimated_usd']:.2f}"
            if stats["cost_tripped"] else "")
-        + f" — email {result['status']}."
+        + f" — alert {result['status']}."
     )
 
 

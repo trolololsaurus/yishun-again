@@ -9,8 +9,8 @@ Two things must hold or the report is worse than useless:
      reads "0 published" when the query actually failed will make the wrong
      call. Unreadable renders as available=false; genuinely empty renders as 0.
   2. IDEMPOTENCE. monthly_reports is UNIQUE (period_start, period_end) and the
-     email kind is never throttled, so a re-run that generated a second row
-     would also send a second email. Running twice must write once.
+     alert kind is never throttled, so a re-run that generated a second row
+     would also send a second alert. Running twice must write once.
 
 AgentRun's Supabase client is patched out for the whole file: the repo has a
 live .env, and an observability write from a test run would land in the real
@@ -391,10 +391,10 @@ check("empty month still produces a readable narrative",
 check("unreadable sections say so in the narrative",
       "Unavailable (" in mr.build_summary_text(degraded))
 
-# ── run(): storage, idempotence, email ──────────────────────────────────────
+# ── run(): storage, idempotence, alert ───────────────────────────────────────
 
 def run_with(client, **kw):
-    """run() with the notifier stubbed — the email transport is notify.py's test."""
+    """run() with the notifier stubbed — the Telegram transport is notify.py's test."""
     sent = []
     def fake_notify(kind, subject, body, **kwargs):
         sent.append({"kind": kind, "subject": subject, "body": body, **kwargs})
@@ -412,15 +412,15 @@ check("run writes exactly one row", len(rows) == 1)
 check("stored row carries the period", (rows[0]["period_start"], rows[0]["period_end"]) == ("2026-06-21", "2026-07-20"))
 check("stored report is the JSONB dict", isinstance(rows[0]["report"], dict))
 check("stored summary_text is the narrative", rows[0]["summary_text"].startswith("YISHUN AGAIN"))
-check("run emails the report", len(sent) == 1 and sent[0]["kind"] == "monthly_report")
-check("email is deduped on the period", sent[0]["dedup_key"] == "monthly_report:2026-06-21:2026-07-20")
+check("run alerts the report", len(sent) == 1 and sent[0]["kind"] == "monthly_report")
+check("alert is deduped on the period", sent[0]["dedup_key"] == "monthly_report:2026-06-21:2026-07-20")
 check("emailed_at stamped after a successful send", rows[0]["emailed_at"] is not None)
 check("run surfaces the headline numbers", (stats["published"], stats["auto_published"]) == (3, 1))
 
 stats2, sent2 = run_with(client)
 check("second run does not create a second row", len(client.tables["monthly_reports"]) == 1)
 check("second run reports 'exists'", stats2["status"] == "exists")
-check("second run does not re-email", sent2 == [])
+check("second run does not re-alert", sent2 == [])
 
 check("first run recorded its trigger",
       client.tables["monthly_reports"][0]["report"]["period"]["trigger"] == "scheduler")
@@ -428,7 +428,7 @@ stats3, sent3 = run_with(client, force=True, trigger="manual")
 check("force=True still writes only one row", len(client.tables["monthly_reports"]) == 1)
 check("force=True regenerates and overwrites the stored report",
       client.tables["monthly_reports"][0]["report"]["period"]["trigger"] == "manual")
-check("force=True re-emails", len(sent3) == 1)
+check("force=True re-alerts", len(sent3) == 1)
 
 # the upsert itself must be the duplicate guard, even if the pre-check is blind
 guarded = FakeClient(full_db())

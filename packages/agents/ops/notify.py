@@ -121,7 +121,7 @@ def _recently_sent(dedup_key: str, minutes: int, client) -> bool:
                .limit(1).execute())
         return bool(res.data)
     except Exception as exc:                      # noqa: BLE001
-        # Fail OPEN: if we cannot tell, send. A duplicate email is a nuisance;
+        # Fail OPEN: if we cannot tell, send. A duplicate alert is a nuisance;
         # a swallowed alert is an outage nobody hears about.
         logger.warning("notify: dedup check failed (%s) — sending anyway", exc)
         return False

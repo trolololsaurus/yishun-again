@@ -11,12 +11,12 @@ discovery-tier zero-streak fix (see git history / CLAUDE.md):
      (`ZERO_STREAK_ANOMALY`, imported from `ingestion.health.ZERO_STREAK_WARNING`
      so the two can't drift apart again), for every source.
 
-  2. RE-ANNOUNCEMENT. The email dedup key used to embed the sorted broken-
+  2. RE-ANNOUNCEMENT. The alert dedup key used to embed the sorted broken-
      source list, so any churn in membership (a source crossing in or out of
      "anomalous") changed the key and defeated the once-a-day throttle — the
-     same standing problem mailed twice in a day with "slightly different"
+     same standing problem alerted twice in a day with "slightly different"
      source lists. The fix compares a SIGNATURE (what's broken) against the
-     signature from the last actual email, and only sends on a real change.
+     signature from the last actual alert, and only sends on a real change.
 
 Run: .venv/Scripts/python.exe test_supervisor_alerting.py
 """
@@ -100,11 +100,11 @@ at = sup.classify_findings(
     streaks=[{"source_name": "cna", "consecutive_zeros": sup.ZERO_STREAK_ANOMALY}],
     now=NOW)
 check("...and the same source at the threshold surfaces as a WARNING, not an "
-      "anomaly (logged/shown, never emailed — 0 Yishun items is normal quiet)",
+      "anomaly (logged/shown, never alerted on — 0 Yishun items is normal quiet)",
       codes(at) == ["zero_streak"] and at[0]["level"] == "warning")
 
 # ── (1a') a WHOLE FLEET of zero-streaks is not serious — the exact false alarm
-#          that mailed "11 sources actually broken" on an ordinary quiet spell.
+#          that alerted "11 sources actually broken" on an ordinary quiet spell.
 fleet_quiet = sup.classify_findings(
     pipeline_state=[state(s, "ok", failures=0) for s in
                     ("cna", "stomp", "zaobao", "yahoo", "tamil_murasu")],
@@ -114,7 +114,7 @@ fleet_quiet = sup.classify_findings(
 check("five simultaneous zero-streaks -> five warnings, zero anomalies",
       all(f["level"] == "warning" for f in fleet_quiet) and len(fleet_quiet) == 5)
 check("...and is_serious() returns nothing for them (no '>=3 too many to be "
-      "independent', no chronic-broken email)",
+      "independent', no chronic-broken alert)",
       sup.is_serious(fleet_quiet, chronic={"cna", "stomp", "zaobao"}) == [])
 
 check("the zero-streak threshold is not split per tier (no separate discovery "
@@ -145,7 +145,7 @@ check("...and a blocked pass contributes NO zero-streak evidence at all "
 
 # ── (1c) discovery-adapter awareness: a `_sitemap`/`_search` adapter down while
 #         its outlet's PRIMARY is healthy is degraded depth, not an outage —
-#         demoted to a warning so it never emails (the ST googlenews.xml 500
+#         demoted to a warning so it never alerts (the ST googlenews.xml 500
 #         that kept turning up in the fleet alert). ─────────────────────────────
 
 print("\nsupervisor — discovery-adapter demotion:")
@@ -156,7 +156,7 @@ covered = sup.classify_findings(
         state("straits_times_sitemap", "unavailable", failures=6),
     ], now=NOW)
 check("a discovery adapter unavailable for 6 passes, primary feed healthy -> "
-      "WARNING not anomaly (logged, never emailed)",
+      "WARNING not anomaly (logged, never alerted on)",
       codes(covered) == ["source_unavailable"] and covered[0]["level"] == "warning")
 check("...and the demoted message names the covering primary",
       "outlet still covered" in covered[0]["message"])
@@ -191,7 +191,7 @@ check("...and changes the moment a new source joins", sig_c != sig_a)
 first = FakeSupabase(pipeline_state=three_down)
 with mock.patch.object(sup, "notify", return_value=SENT) as n1:
     stats1 = sup.run(supabase_client=first, now=NOW)
-check("first pass with no prior alert on record -> emails", n1.call_count == 1)
+check("first pass with no prior alert on record -> alerts", n1.call_count == 1)
 sent_sig = next(e["detail"]["alert_signature"]
                 for e in first.inserted["agent_events"] if e["event"] == "operator_notified")
 check("...and records the signature it alerted on (all 3 registered sources "

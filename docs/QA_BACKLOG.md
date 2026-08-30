@@ -44,7 +44,7 @@ coercion, and `result["classification"].lower()` raised `AttributeError` on
 story, because it is being told to reject rather than categorise. The guardrail
 was therefore unreachable for a subset of the very content it exists to catch:
 the candidate died on an exception, so confidence was never forced to 0, the
-marker was never prepended, and neither the operator email nor the `agent_events`
+marker was never prepended, and neither the operator alert nor the `agent_events`
 row fired. A non-political row with a bad classification still raises — that is a
 genuine model failure and must not be swallowed.
 **Guards:** `test_stage2_guardrails.py` (now also covers `political: true` with

@@ -131,11 +131,11 @@ export default async function MonthlyReportPage(props: Props) {
           Generated {fmtStamp(row.created_at)} SGT
           {body.period?.trigger ? ` · ${body.period.trigger}` : ''}
           {' · '}
-          {row.emailed_at ? `emailed ${fmtStamp(row.emailed_at)} SGT` : 'not emailed'}
+          {row.emailed_at ? `sent ${fmtStamp(row.emailed_at)} SGT` : 'not sent'}
         </div>
       </div>
 
-      {/* The 30-second read, exactly as it was emailed */}
+      {/* The 30-second read, exactly as it was sent via Telegram */}
       <Section title="Summary">
         <div className="bg-surface border border-border p-6 overflow-x-auto">
           <pre className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed">

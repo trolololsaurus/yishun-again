@@ -58,7 +58,7 @@ export default async function ReportsPage() {
           <div className="text-text-secondary text-sm leading-relaxed">
             The orchestrator generates one report on the 1st of each month, covering the
             previous 30 days of ingestion, publishing, operator workload, learning and
-            backend health. It is emailed to the operator and archived here.
+            backend health. It is sent to the operator via Telegram and archived here.
           </div>
         </div>
       </div>
@@ -88,7 +88,7 @@ export default async function ReportsPage() {
               <th className="text-right py-2 pr-4 uppercase tracking-widest">Queued</th>
               <th className="text-left py-2 pr-4 uppercase tracking-widest">Learning</th>
               <th className="text-left py-2 pr-4 uppercase tracking-widest">Generated (SGT)</th>
-              <th className="text-left py-2 uppercase tracking-widest">Emailed</th>
+              <th className="text-left py-2 uppercase tracking-widest">Sent</th>
             </tr>
           </thead>
           <tbody>

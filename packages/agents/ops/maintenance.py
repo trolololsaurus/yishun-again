@@ -11,15 +11,15 @@ quota resets on US/Pacific midnight rather than SGT.
 SILENCE MEANS HEALTHY
 ---------------------
 At most one digest per day, and NOTHING at all when nothing is wrong. A "no
-issues today" email every day is the fastest way to train someone to stop
-reading the sender — and this is the same inbox the supervisor uses for real
+issues today" alert every day is the fastest way to train someone to mute
+the chat — and this is the same inbox the supervisor uses for real
 outages. A clean run is recorded in `agent_runs` instead, where the War Room can
 show it.
 
 Public API
 ----------
 run(supabase_client=None, trigger="scheduler") -> dict
-    {"events_scanned", "issues", "failed_notifications", "emailed", "errors"}
+    {"events_scanned", "issues", "failed_notifications", "notified", "errors"}
 """
 
 import logging
@@ -270,7 +270,7 @@ def group_issues(signals) -> list[dict]:
     return ordered
 
 
-# ── Email ────────────────────────────────────────────────────────────────────
+# ── Alert composition ────────────────────────────────────────────────────────
 
 def _compose_digest(issues, window_hours: int) -> tuple[str, str]:
     total = sum(issue["count"] for issue in issues)
@@ -340,7 +340,7 @@ def run(supabase_client=None, trigger: str = "scheduler") -> dict:
     is reporting on.
     """
     stats = {"events_scanned": 0, "issues": 0, "failed_notifications": 0,
-             "emailed": False, "errors": 0}
+             "notified": False, "errors": 0}
 
     if not agent_enabled(AGENT):
         logger.info("maintenance: disabled via AGENT_DISABLED — skipping")
@@ -399,8 +399,8 @@ def _digest(run_ctx, client, stats: dict) -> None:
         # Deliberately silent. See the module docstring.
         run_ctx.success("all_clear",
                         f"Nothing broken in the last {WINDOW_HOURS}h "
-                        f"({len(runs)} run(s) reviewed) — no email sent")
-        run_ctx.set_summary(f"Clean: 0 issues in {WINDOW_HOURS}h. No email sent.")
+                        f"({len(runs)} run(s) reviewed) — no alert sent")
+        run_ctx.set_summary(f"Clean: 0 issues in {WINDOW_HOURS}h. No alert sent.")
         return
 
     for issue in issues:
@@ -416,9 +416,9 @@ def _digest(run_ctx, client, stats: dict) -> None:
     dedup = f"maintenance:{datetime.now(timezone.utc).date().isoformat()}"
     result = notify("maintenance", subject, body, dedup_key=dedup, client=client)
 
-    stats["emailed"] = result["status"] == "sent"
+    stats["notified"] = result["status"] == "sent"
     run_ctx.info("digest_sent", f"maintenance digest {result['status']} (dedup={dedup})")
     run_ctx.set_summary(
         f"{len(issues)} issue(s) from {len(signals)} signal(s): "
-        f"{', '.join(i['id'] for i in issues)} — email {result['status']}."
+        f"{', '.join(i['id'] for i in issues)} — alert {result['status']}."
     )

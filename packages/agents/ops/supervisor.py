@@ -1,5 +1,5 @@
 """
-Scraper supervisor (req #9) — watch the live sources, mail the operator only
+Scraper supervisor (req #9) — watch the live sources, alert the operator only
 when something is genuinely broken.
 
 The pipeline already records everything this agent needs: `pipeline_state`
@@ -31,17 +31,17 @@ measurement. Deriving the streak from it needs no new writes and no new table.
 `scraper_health` remains the *display* surface (War Room health views,
 `ops/maintenance.py`'s digest). Alerts belong here; reporting belongs there.
 
-WHY THE EMAIL BAR IS DELIBERATELY HIGH
+WHY THE ALERT BAR IS DELIBERATELY HIGH
 --------------------------------------
 An alerting system is only worth building if the operator still opens it in
 month three. A single flaky source is normal: sites change markup, Cloudflare
-has moods, a feed 404s for an afternoon and comes back. Mailing on every one of
-those teaches the operator to filter the sender — and then the ONE alert that
+has moods, a feed 404s for an afternoon and comes back. Alerting on every one
+of those teaches the operator to mute the chat — and then the ONE alert that
 mattered is invisible too. So a lone broken source is LOGGED (visible in War
-Room) and not mailed.
+Room) and not pushed.
 
-Email is reserved for the four shapes that mean the archive has stopped
-updating and will not fix itself:
+A push (Telegram) is reserved for the four shapes that mean the archive has
+stopped updating and will not fix itself:
 
   (a) >= 3 sources anomalous in one pass — too many to be coincidence; that is
       network, credentials or a bad deploy, not a site redesign.
@@ -56,7 +56,7 @@ Everything else is a warning in the activity log.
 Public API
 ----------
 run(supabase_client=None, trigger="scheduler") -> dict
-    {"sources_checked", "warnings", "anomalies", "serious", "emailed", "errors"}
+    {"sources_checked", "warnings", "anomalies", "serious", "notified", "errors"}
 """
 
 import logging
@@ -116,7 +116,7 @@ CHRONIC_DAYS = 3
 # "Every source is failing" only carries information when there are enough
 # sources for the word "every" to mean something. On a one- or two-source
 # registration (a dev box, or a half-migrated fleet) it is just the per-source
-# finding restated in a louder voice — and it would mail on every hiccup.
+# finding restated in a louder voice — and it would alert on every hiccup.
 MIN_FLEET_FOR_FLEETWIDE = 3
 
 
@@ -137,7 +137,7 @@ def _client(explicit=None):
 # DISCOVERY adapters — its own Google-News sitemap (`straits_times_sitemap`) or
 # WordPress search (`mustsharenews_search`), a wider net BEHIND the primary. A
 # discovery adapter failing while its outlet's primary is healthy is degraded
-# archive depth, not an outage, and must not email. Mirrors the War Room health
+# archive depth, not an outage, and must not alert. Mirrors the War Room health
 # demotion (`apps/war-room/lib/utils.isDiscoverySource`/`primaryIdOf`) — both
 # suffixes strip to a real primary source id.
 _DISCOVERY_SUFFIX = re.compile(r"_(sitemap|search)$")
@@ -278,7 +278,7 @@ def classify_findings(*, pipeline_state, streaks=(), stuck=(), now=None) -> list
     known: set[str] = set()
 
     # Outlets whose PRIMARY scraper reported healthy this pass — used below to
-    # demote a covered discovery adapter's finding out of the email path.
+    # demote a covered discovery adapter's finding out of the alert path.
     healthy = {
         (row.get("source_name") or "?")
         for row in pipeline_state or []
@@ -338,14 +338,14 @@ def classify_findings(*, pipeline_state, streaks=(), stuck=(), now=None) -> list
             sources=sorted(known),
         ))
 
-    # A zero-streak is a WARNING, never an anomaly — it must not drive an email.
+    # A zero-streak is a WARNING, never an anomaly — it must not drive an alert.
     # `fetched` is 0 Yishun-MATCHING items, not 0 articles served: a single
     # outlet can legitimately go a month without a Yishun story (Tamil Murasu,
     # Berita Harian), and that silence is CORRELATED across the fleet (a quiet
     # week for one small town is quiet for everyone). So a batch of simultaneous
     # zero-streaks is the resting state, not "N independent breakages" — feeding
     # them into is_serious()'s ">=3 anomalous, too many to be independent" and
-    # chronic checks mailed the operator "11 sources actually broken" every pass
+    # chronic checks alerted the operator "11 sources actually broken" every pass
     # for what was an ordinary quiet spell. A genuinely dead source surfaces on
     # its OWN path (status blocked/unavailable/error in pipeline_state), which
     # zero_streaks() deliberately skips. Logged + shown in the health views;
@@ -375,7 +375,7 @@ def classify_findings(*, pipeline_state, streaks=(), stuck=(), now=None) -> list
     # demote it to a warning (logged, never emailed) as a post-pass so the
     # per-source creation sites above stay simple. If the outlet's primary is
     # ALSO down it is not in `healthy`, so the finding stays an anomaly — that
-    # is a real outlet outage. See is_serious(): the email rules count anomalies
+    # is a real outlet outage. See is_serious(): the alert rules count anomalies
     # only, so this single flip removes it from every one of them at once.
     for f in findings:
         if f["level"] == "anomaly" and _covered_discovery(f["source"]):
@@ -388,7 +388,7 @@ def classify_findings(*, pipeline_state, streaks=(), stuck=(), now=None) -> list
 
 def is_serious(findings, chronic=()) -> list[str]:
     """
-    Return the reasons this pass warrants an email. Empty list = log only.
+    Return the reasons this pass warrants an alert. Empty list = log only.
 
     See the module docstring for why these four and nothing else.
     """
@@ -426,13 +426,13 @@ def is_serious(findings, chronic=()) -> list[str]:
 # under a slightly different key. The dedup key used to embed the sorted broken
 # -source list, so any churn in which sources were anomalous (a source crossing
 # in OR out) changed the key and the throttle never engaged — the same 8-ish
-# broken sources mailed twice in one day with "slightly different" membership.
+# broken sources alerted twice in one day with "slightly different" membership.
 #
 # The fix compares SIGNATURES, not keys: what was anomalous last time this
 # agent actually emailed, vs what's anomalous now. Unchanged -> log only, don't
-# re-mail. Changed (a source newly broken, or one that recovered) -> mail.
+# re-alert. Changed (a source newly broken, or one that recovered) -> alerts.
 
-# A quiet weekend, or the agent simply not firing an email for a while because
+# A quiet weekend, or the agent simply not firing an alert for a while because
 # nothing was serious, must not make the next unchanged alert look brand new
 # just because the LAST alert aged out of a short lookback window.
 ALERT_SIGNATURE_LOOKBACK_HOURS = 24 * 14
@@ -480,9 +480,9 @@ def _previous_alert_signature(client=None) -> frozenset[str] | None:
     return None
 
 
-# ── Email ────────────────────────────────────────────────────────────────────
+# ── Alert composition ────────────────────────────────────────────────────────────────────
 
-def _compose_email(findings, reasons, checked: int) -> tuple[str, str]:
+def _compose_alert(findings, reasons, checked: int) -> tuple[str, str]:
     anomalies = [f for f in findings if f["level"] == "anomaly"]
     warnings = [f for f in findings if f["level"] == "warning"]
 
@@ -526,7 +526,7 @@ def run(supabase_client=None, trigger: str = "scheduler", now=None) -> dict:
     must not be able to take down anything downstream of it.
     """
     stats = {"sources_checked": 0, "warnings": 0, "anomalies": 0,
-             "serious": False, "emailed": False, "errors": 0}
+             "serious": False, "notified": False, "errors": 0}
 
     if not agent_enabled(AGENT):
         logger.info("supervisor: disabled via AGENT_DISABLED — skipping")
@@ -584,7 +584,7 @@ def _supervise(run_ctx, client, stats: dict, now=None) -> None:
         # The whole point of this agent: this is a normal bad day, not an outage.
         run_ctx.info("not_serious",
                      f"{stats['anomalies']} anomaly / {stats['warnings']} warning — "
-                     f"below the email bar, logged only")
+                     f"below the alert bar, logged only")
         run_ctx.set_summary(
             f"{len(state)} sources checked, {stats['anomalies']} anomaly / "
             f"{stats['warnings']} warning — logged, not emailed."
@@ -605,21 +605,21 @@ def _supervise(run_ctx, client, stats: dict, now=None) -> None:
         )
         return
 
-    subject, body = _compose_email(findings, reasons, len(state))
+    subject, body = _compose_alert(findings, reasons, len(state))
     # Keyed on the signature itself, not the date: the state-change check above
-    # is what stops a standing problem from re-mailing, so this key only needs
+    # is what stops a standing problem from re-alerting, so this key only needs
     # to make `notify()`'s own throttle a no-op AGREEING with that decision — a
     # date-only key would do the opposite and block a genuinely new problem
     # (say, a second, different source breaking later the same day) just
-    # because something else already mailed today under that same date key.
+    # because something else already alerted today under that same date key.
     dedup = "supervisor:" + "+".join(sorted(signature))
 
     result = notify("anomaly", subject, body,
                     dedup_key=dedup, throttle_minutes=1440, client=client)
-    stats["emailed"] = result["status"] == "sent"
+    stats["notified"] = result["status"] == "sent"
     run_ctx.info("operator_notified",
-                 f"serious anomaly email {result['status']} (dedup={dedup})",
+                 f"serious anomaly alert {result['status']} (dedup={dedup})",
                  alert_signature=sorted(signature))
     run_ctx.set_summary(
-        f"SERIOUS: {'; '.join(reasons)} — email {result['status']}."
+        f"SERIOUS: {'; '.join(reasons)} — alert {result['status']}."
     )

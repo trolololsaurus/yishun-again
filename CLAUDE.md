@@ -536,7 +536,7 @@ nothing had failed. It is now **30** — a month of genuine silence. This is a
 display signal only; real failures are `status='error'`, and outage alerting
 lives in `ops/supervisor.py` off `pipeline_run_history`.
 
-**A zero-streak NEVER emails — it is a `warning`, not an `anomaly` (2026-08-29).**
+**A zero-streak NEVER alerts — it is a `warning`, not an `anomaly` (2026-08-29).**
 `ops/supervisor.py::classify_findings` emits `zero_streak` at `level="warning"`,
 so it is logged and shown in the health views but is invisible to `is_serious()`,
 which only ever counts `anomaly`-level findings. This is deliberate and load-
@@ -545,17 +545,17 @@ normal (Tamil Murasu / Berita Harian can go a month), and that silence is
 CORRELATED across the fleet — a quiet week for one small town is quiet for
 everyone. Treating a batch of simultaneous zero-streaks as `anomaly` fed
 `is_serious()`'s ">=3 sources, too many to be independent" and chronic-broken
-checks and mailed the operator "11 sources actually broken" on an ordinary quiet
+checks and alerted the operator "11 sources actually broken" on an ordinary quiet
 spell (the false alarm this fixed). A genuinely dead source is caught on its OWN
 path — `status` blocked/unavailable/error in `pipeline_state`, which
 `zero_streaks()` skips — not by the zero-streak count. The 30-pass
 `ZERO_STREAK_ANOMALY` threshold (still imported from `ingestion/health.py`, one
 constant for every source, no per-tier split) now only decides when the *warning*
 appears. Guards: the fleet-of-zero-streaks case in `test_supervisor_alerting.py`
-and the end-to-end no-email check in `test_ops_agents.py`. See `docs/AUTONOMY.md` §3.
+and the end-to-end no-alert check in `test_ops_agents.py`. See `docs/AUTONOMY.md` §3.
 
 **The supervisor is discovery-aware: a `_sitemap`/`_search` adapter down while
-its PRIMARY feed is healthy is a `warning`, not an emailing `anomaly`
+its PRIMARY feed is healthy is a `warning`, not an alerting `anomaly`
 (2026-08-29).** Same insight as the War Room health demotion
 (`apps/war-room/lib/utils.isDiscoverySource`/`primaryIdOf`), now applied to the
 alert path. `classify_findings` builds a set of outlets whose primary reported
@@ -564,7 +564,7 @@ alert path. `classify_findings` builds a set of outlets whose primary reported
 discovery adapter whose primary is in that set — degraded archive depth is not an
 outage. If the primary is ALSO down the adapter is NOT covered and stays an
 anomaly (a real outlet outage). This is what stops ST's persistently-500ing
-`straits_times_sitemap` from chronic-emailing while `straits_times` RSS publishes
+`straits_times_sitemap` from chronic-alerting while `straits_times` RSS publishes
 fine. Guard: the covered/both-down cases in `test_supervisor_alerting.py`.
 
 **The review-queue alert dedups on WHICH cards wait, not the calendar day
@@ -578,15 +578,15 @@ back". It now keys on a hash of the sorted pending card ids with
 a genuinely new card changes the signature and alerts immediately. Same shape as
 the supervisor's signature dedup below.
 
-**The supervisor's email dedup compares a SIGNATURE of what's broken, not a
+**The supervisor's alert dedup compares a SIGNATURE of what's broken, not a
 fixed key (2026-08-29).** The dedup key used to embed the sorted broken-source
 list, so any churn in *which* sources were anomalous changed the key and the
-once-a-day throttle never engaged — the same standing fleet problem mailed
+once-a-day throttle never engaged — the same standing fleet problem alerted
 twice in one day with "slightly different" source lists. It now reads back the
 signature from the last actual `operator_notified` event and only mails again
 when the current signature differs (a source newly broken, or one recovering);
 `is_serious()`'s reasons are still computed and logged every pass regardless —
-only the email is gated. See `docs/AUTONOMY.md` §3.
+only the alert is gated. See `docs/AUTONOMY.md` §3.
 
 ---
 
