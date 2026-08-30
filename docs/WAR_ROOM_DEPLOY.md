@@ -13,6 +13,31 @@ production deployment.
   at the Vercel deployment (proxied, orange-cloud ☁).
 - Cloudflare Zero Trust is enabled on the account (free tier is sufficient).
 
+### DNS records (Cloudflare zone `yishunagain.com`)
+
+There is no DNS-as-code in this repo — every record is managed by hand in the
+Cloudflare dashboard. This table is the source of truth for what must exist.
+The `warroom` row is the one this document depends on.
+
+| Name | Type | Target | Proxy | Serves |
+|---|---|---|---|---|
+| `warroom` | CNAME | Vercel target for the `war-room` project (`cname.vercel-dns.com` unless Vercel assigns a per-project host — copy the exact value from the Vercel project's **Domains** tab) | **Proxied ☁ (required)** | War Room CMS, behind Cloudflare Access |
+| `www` | CNAME | Vercel target for the `web` project | Proxied ☁ | Public site — canonical host ([site.ts](../apps/web/lib/site.ts)) |
+| `yishunagain.com` (apex) | — | 308-redirect to `www` (Cloudflare Redirect Rule, or Vercel domain redirect) | Proxied ☁ | Apex → www. A POST does **not** survive this redirect (§5, `NEXT_PUBLIC_SITE_URL`) |
+| `assets` | CNAME | R2 custom-domain binding for the `yishun-assets` bucket (created from the R2 dashboard, which writes this record) | Proxied ☁ | Pixel-art / OG images ([r2.config.js](../infra/cloudflare/r2.config.js)) |
+
+⚠️ **`warroom` must be Proxied (orange cloud ☁), not DNS-only.** Cloudflare
+Access only intercepts proxied records. If this record is ever switched to
+DNS-only (grey cloud), the Access login screen stops appearing, no CF-signed JWT
+is ever issued, and `proxy.ts` (§6) 403s every request — the gate fails closed,
+but the CMS is simply unreachable until the record is proxied again. A `503`
+means the app is up but `CF_ACCESS_*` is unset; a login screen that never
+appears means the record went grey.
+
+The agents backend has **no custom domain** — the War Room reaches it at its
+raw Cloud Run `*.a.run.app` host via `AGENTS_API_URL` (§5a), so it needs no DNS
+record here.
+
 ---
 
 ## 2. Create the Cloudflare Access Application
