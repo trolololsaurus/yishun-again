@@ -140,9 +140,10 @@ f9 = sup.classify_findings(
     pipeline_state=[state("stomp")],
     streaks=[{"source_name": "stomp", "consecutive_zeros": sup.ZERO_STREAK_ANOMALY}],
     now=NOW)
-check("threshold reached -> anomaly (same threshold for every source now — "
+check("threshold reached -> zero_streak WARNING, never an anomaly (0 Yishun "
+      "items is normal quiet, correlated across the fleet — must not email; "
       "see test_supervisor_alerting.py)",
-      codes(f9) == ["zero_streak"] and f9[0]["level"] == "anomaly")
+      codes(f9) == ["zero_streak"] and f9[0]["level"] == "warning")
 
 
 # ── supervisor: deriving those streaks from the LIVE surface ─────────────────
@@ -197,10 +198,12 @@ check("the lookback window must exceed the anomaly threshold, or it can never fi
 streak_db = FakeSupabase(
     pipeline_state=[state("stomp"), state("cna"), state("zaobao")],
     pipeline_run_history=hist(*[{"stomp": ("ok", 0), "cna": ("ok", 4)}] * sup.ZERO_STREAK_ANOMALY))
-with mock.patch.object(sup, "notify", return_value=SENT):
+with mock.patch.object(sup, "notify", return_value=SENT) as streak_notify:
     stats = sup.run(supabase_client=streak_db, now=NOW)
-check("run() reads the history table and raises the anomaly end to end",
-      stats["anomalies"] == 1 and stats["errors"] == 0)
+check("run() reads the history table and raises a zero_streak WARNING end to end",
+      stats["warnings"] == 1 and stats["anomalies"] == 0 and stats["errors"] == 0)
+check("...and a zero-streak alone never emails (the spam this fixed)",
+      streak_notify.call_count == 0)
 
 # ── supervisor: fleet-wide + stuck runs ──────────────────────────────────────
 

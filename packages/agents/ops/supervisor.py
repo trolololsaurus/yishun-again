@@ -307,14 +307,28 @@ def classify_findings(*, pipeline_state, streaks=(), stuck=(), now=None) -> list
             sources=sorted(known),
         ))
 
+    # A zero-streak is a WARNING, never an anomaly — it must not drive an email.
+    # `fetched` is 0 Yishun-MATCHING items, not 0 articles served: a single
+    # outlet can legitimately go a month without a Yishun story (Tamil Murasu,
+    # Berita Harian), and that silence is CORRELATED across the fleet (a quiet
+    # week for one small town is quiet for everyone). So a batch of simultaneous
+    # zero-streaks is the resting state, not "N independent breakages" — feeding
+    # them into is_serious()'s ">=3 anomalous, too many to be independent" and
+    # chronic checks mailed the operator "11 sources actually broken" every pass
+    # for what was an ordinary quiet spell. A genuinely dead source surfaces on
+    # its OWN path (status blocked/unavailable/error in pipeline_state), which
+    # zero_streaks() deliberately skips. Logged + shown in the health views;
+    # never a phone buzz.
     for row in streaks or []:
         zeros = int(row.get("consecutive_zeros") or 0)
         name = row.get("source_name") or "?"
         if zeros >= ZERO_STREAK_ANOMALY:
             findings.append(_finding(
-                "anomaly", "zero_streak",
-                f"{name}: fetched 0 items on {zeros} consecutive passes — the "
-                f"listing page probably changed shape",
+                "warning", "zero_streak",
+                f"{name}: 0 Yishun-matching items for {zeros} consecutive passes "
+                f"— usually just a quiet source (an outlet can go a month without "
+                f"a Yishun story), not a fault. A real failure shows as "
+                f"blocked/unavailable/error, not a zero-streak.",
                 source=name, consecutive_zeros=zeros,
             ))
 

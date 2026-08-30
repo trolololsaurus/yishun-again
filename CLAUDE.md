@@ -536,16 +536,34 @@ nothing had failed. It is now **30** — a month of genuine silence. This is a
 display signal only; real failures are `status='error'`, and outage alerting
 lives in `ops/supervisor.py` off `pipeline_run_history`.
 
-**The supervisor's own zero-streak *alert* threshold is that same 30, imported
-from `ingestion/health.py` rather than a second copy of the number (2026-08-29).**
-`report.per_source[].fetched` — what the alert-side streak is measured on — is
-POST-keyword-filter for every source, primary tier included, for the identical
-reason: every `scrapers.scrape_*` module filters before returning anything. An
-earlier fix gave only discovery-tier sources (`_sitemap`/`_search` ids) a longer
-leash and left primary sources at 5, which fired as false "anomalous" primaries
-on ordinary Yishun silence — fixing the assumption for one tier without noticing
-it was wrong for both. There is one tier and one threshold now. See
-`docs/AUTONOMY.md` §3.
+**A zero-streak NEVER emails — it is a `warning`, not an `anomaly` (2026-08-29).**
+`ops/supervisor.py::classify_findings` emits `zero_streak` at `level="warning"`,
+so it is logged and shown in the health views but is invisible to `is_serious()`,
+which only ever counts `anomaly`-level findings. This is deliberate and load-
+bearing: a zero-streak is 0 Yishun-*matching* items, which for a single outlet is
+normal (Tamil Murasu / Berita Harian can go a month), and that silence is
+CORRELATED across the fleet — a quiet week for one small town is quiet for
+everyone. Treating a batch of simultaneous zero-streaks as `anomaly` fed
+`is_serious()`'s ">=3 sources, too many to be independent" and chronic-broken
+checks and mailed the operator "11 sources actually broken" on an ordinary quiet
+spell (the false alarm this fixed). A genuinely dead source is caught on its OWN
+path — `status` blocked/unavailable/error in `pipeline_state`, which
+`zero_streaks()` skips — not by the zero-streak count. The 30-pass
+`ZERO_STREAK_ANOMALY` threshold (still imported from `ingestion/health.py`, one
+constant for every source, no per-tier split) now only decides when the *warning*
+appears. Guards: the fleet-of-zero-streaks case in `test_supervisor_alerting.py`
+and the end-to-end no-email check in `test_ops_agents.py`. See `docs/AUTONOMY.md` §3.
+
+**The review-queue alert dedups on WHICH cards wait, not the calendar day
+(2026-08-29).** `ops/auto_publish.py::_notify_review_queue` keyed on
+`review_queue:{today}` and rode `notify()`'s 180-minute default throttle — but the
+two daily passes run ~12h apart, so the throttle window never reached the earlier
+send and the SAME lingering pending card re-alerted on the next pass. The operator
+saw one unreviewed card announced twice and read it as "rejected cards coming
+back". It now keys on a hash of the sorted pending card ids with
+`throttle_minutes=1440`: an unchanged queue is announced at most once a day, while
+a genuinely new card changes the signature and alerts immediately. Same shape as
+the supervisor's signature dedup below.
 
 **The supervisor's email dedup compares a SIGNATURE of what's broken, not a
 fixed key (2026-08-29).** The dedup key used to embed the sorted broken-source

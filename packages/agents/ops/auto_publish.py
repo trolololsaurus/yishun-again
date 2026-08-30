@@ -57,6 +57,7 @@ pre-merge state so the operator can undo it (revert-update). See
 check_update_eligibility / _apply_merge and docs/AUTONOMY.md.
 """
 
+import hashlib
 import logging
 import os
 from datetime import datetime, timezone
@@ -951,11 +952,11 @@ def _notify_schema_blocked(why: str, client) -> None:
 
 def _notify_review_queue(rows, stats, threshold, published_titles, merged_titles, client) -> None:
     """
-    Req #4 — one email when cards below the threshold are waiting.
+    Req #4 — one alert when cards below the threshold are waiting.
 
-    Deduped per calendar day: the operator gets told once that there is work,
-    not once per pass. Nothing waiting -> no email at all, so an empty inbox
-    reliably means an empty queue.
+    Deduped on WHICH cards are waiting, so an unchanged queue is announced once
+    and a genuinely new card alerts at once. Nothing waiting -> no alert at all,
+    so a silent phone reliably means an empty queue.
     """
     pending_for_review = [
         r for r in rows
@@ -966,7 +967,6 @@ def _notify_review_queue(rows, stats, threshold, published_titles, merged_titles
     if not pending_for_review:
         return
 
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     lines = [
         f"{len(pending_for_review)} card(s) are waiting for review in the War Room.",
         f"They scored below the {threshold:.0%} auto-publish threshold.",
@@ -1002,10 +1002,25 @@ def _notify_review_queue(rows, stats, threshold, published_titles, merged_titles
 
     lines.append(f"\nReview: {war_room_url('/queue')}")
 
+    # Dedup on the SET of waiting cards, not the calendar day. The old
+    # `review_queue:{today}` key rode notify()'s 180-min default throttle, but
+    # the two daily passes run ~12h apart, so the window never reached back to
+    # the earlier send and the SAME lingering card re-alerted every pass — the
+    # operator saw one unreviewed card announced twice and read it as "rejected
+    # cards coming back". Keying on the sorted pending ids (hashed to stay under
+    # notify's 500-char dedup_key cap) keeps an unchanged queue quiet for the
+    # throttle window while a genuinely new card changes the signature and
+    # alerts immediately; 1440m makes that window a full day, so a still-pending
+    # card nudges once daily at most. Same shape as ops/supervisor.py's dedup.
+    sig = hashlib.sha1(
+        "|".join(sorted(str(r.get("id")) for r in pending_for_review)).encode()
+    ).hexdigest()[:16]
+
     notify(
         "review_queue",
         f"Yishun Again — {len(pending_for_review)} card(s) need review",
         "\n".join(lines) + footer(),
-        dedup_key=f"review_queue:{today}",
+        dedup_key=f"review_queue:{sig}",
+        throttle_minutes=1440,
         client=client,
     )

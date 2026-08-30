@@ -99,8 +99,23 @@ at = sup.classify_findings(
                      "last_run_at": NOW.isoformat(), "consecutive_failures": 0}],
     streaks=[{"source_name": "cna", "consecutive_zeros": sup.ZERO_STREAK_ANOMALY}],
     now=NOW)
-check("...and the same source at the threshold fires (the leash isn't infinite)",
-      codes(at) == ["zero_streak"])
+check("...and the same source at the threshold surfaces as a WARNING, not an "
+      "anomaly (logged/shown, never emailed — 0 Yishun items is normal quiet)",
+      codes(at) == ["zero_streak"] and at[0]["level"] == "warning")
+
+# ── (1a') a WHOLE FLEET of zero-streaks is not serious — the exact false alarm
+#          that mailed "11 sources actually broken" on an ordinary quiet spell.
+fleet_quiet = sup.classify_findings(
+    pipeline_state=[state(s, "ok", failures=0) for s in
+                    ("cna", "stomp", "zaobao", "yahoo", "tamil_murasu")],
+    streaks=[{"source_name": s, "consecutive_zeros": sup.ZERO_STREAK_ANOMALY + 5}
+             for s in ("cna", "stomp", "zaobao", "yahoo", "tamil_murasu")],
+    now=NOW)
+check("five simultaneous zero-streaks -> five warnings, zero anomalies",
+      all(f["level"] == "warning" for f in fleet_quiet) and len(fleet_quiet) == 5)
+check("...and is_serious() returns nothing for them (no '>=3 too many to be "
+      "independent', no chronic-broken email)",
+      sup.is_serious(fleet_quiet, chronic={"cna", "stomp", "zaobao"}) == [])
 
 check("primary and discovery-tier ids share the SAME threshold now — no more "
       "per-tier split", not hasattr(sup, "_is_discovery")

@@ -244,13 +244,16 @@ gets filtered with the rest. Every alert is therefore deduped and throttled, and
 
 Two mechanisms do the work, and they are not the same thing. The **window** is
 per kind (`notify.DEFAULT_THROTTLE_MINUTES`, overridable per call); the **dedup
-key** is what the window is measured against, and most callers put the calendar
-date in it, which is what actually makes an alert once-a-day rather than
-once-a-pass.
+key** is what the window is measured against. A calendar-date key only makes an
+alert once-a-day if the window is *at least* a day: `review_queue` used a
+`<date>` key on the 180-min default window and re-alerted the same waiting card
+on the second daily pass (~12h later, outside the window), so it now keys on a
+hash of the waiting card ids with an explicit 1440-min window — an unchanged
+queue stays quiet, a genuinely new card changes the key and alerts at once.
 
 | Kind | Sent when | Window | Dedup key |
 |---|---|---|---|
-| `review_queue` | Cards below the threshold are waiting (req #4) | 180 min | `review_queue:<date>` — one alert a day at one pass a day |
+| `review_queue` | Cards below the threshold are waiting (req #4) | 1440 min | `review_queue:<hash of the waiting card ids>` — one alert per distinct set of waiting cards; a new card re-alerts, an unchanged queue stays quiet (see below) |
 | `anomaly` | Supervisor finds a *serious* fleet problem (req #9); integrity finds something needing a human (req #10); guardrail #4 flags political content | 60 min default — supervisor overrides to 1440 | `supervisor:<broken sources signature>` — sent only when that signature differs from the last one actually emailed (see below), `integrity:<date>`, `political:<url>` |
 | `maintenance` | Something broke, with a plain-English suggested fix (req #11) | 1440 min | `maintenance:<date>` |
 | `health` | A backend component is down, or the cost guard tripped (req #12) | 60 min | `health:<components down>` |
@@ -298,6 +301,21 @@ log.
 > `ZERO_STREAK_ANOMALY` straight from `ingestion/health.py`'s
 > `ZERO_STREAK_WARNING` (30) — same quantity, same reasoning, one constant so the
 > two can't drift apart again — and applies it to every source.
+>
+> **A zero-streak is a `warning`, never an `anomaly` — it does not email
+> (2026-08-29).** Reaching that 30-pass threshold now only decides when the
+> *warning* appears; `classify_findings` emits `zero_streak` at `level="warning"`,
+> and `is_serious()` only ever counts `anomaly`-level findings, so no number of
+> simultaneous zero-streaks can trip the ">=3 sources, too many to be independent"
+> or chronic-broken email rules. This is the fix for the supervisor mailing "11
+> sources actually broken" on an ordinary quiet spell: 0 Yishun-matching items is
+> normal for one outlet AND correlated across the fleet (a quiet news week for one
+> small town is quiet for all), so a batch of them is the resting state, not
+> evidence of N independent failures. A genuinely dead source still emails via its
+> own path — blocked/unavailable/error in `pipeline_state`, which `zero_streaks()`
+> skips entirely. Guards: the fleet-of-zero-streaks case in
+> `test_supervisor_alerting.py`, the no-email end-to-end check in
+> `test_ops_agents.py`.
 
 > **The email dedup key is now a SIGNATURE comparison, not a fixed key
 > (2026-08-29).** It used to embed the sorted broken-source list, so any churn
