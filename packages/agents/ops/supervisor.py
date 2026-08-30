@@ -60,6 +60,7 @@ run(supabase_client=None, trigger="scheduler") -> dict
 """
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 from ingestion.health import ZERO_STREAK_WARNING as ZERO_STREAK_ANOMALY
@@ -129,6 +130,25 @@ def _client(explicit=None):
     except Exception as exc:                      # noqa: BLE001 - see module docstring
         logger.warning("supervisor: no Supabase client (%s) — nothing to supervise", exc)
         return None
+
+
+# ── Discovery adapters vs primary scrapers ──────────────────────────────────
+# Every outlet has a PRIMARY scraper (`straits_times`) and may also have
+# DISCOVERY adapters — its own Google-News sitemap (`straits_times_sitemap`) or
+# WordPress search (`mustsharenews_search`), a wider net BEHIND the primary. A
+# discovery adapter failing while its outlet's primary is healthy is degraded
+# archive depth, not an outage, and must not email. Mirrors the War Room health
+# demotion (`apps/war-room/lib/utils.isDiscoverySource`/`primaryIdOf`) — both
+# suffixes strip to a real primary source id.
+_DISCOVERY_SUFFIX = re.compile(r"_(sitemap|search)$")
+
+
+def _is_discovery(source_name: str) -> bool:
+    return bool(_DISCOVERY_SUFFIX.search(source_name or ""))
+
+
+def _primary_id(source_name: str) -> str:
+    return _DISCOVERY_SUFFIX.sub("", source_name or "")
 
 
 def _parse_ts(value):
@@ -257,6 +277,17 @@ def classify_findings(*, pipeline_state, streaks=(), stuck=(), now=None) -> list
     down: set[str] = set()
     known: set[str] = set()
 
+    # Outlets whose PRIMARY scraper reported healthy this pass — used below to
+    # demote a covered discovery adapter's finding out of the email path.
+    healthy = {
+        (row.get("source_name") or "?")
+        for row in pipeline_state or []
+        if (row.get("last_status") or "").strip().lower() == "ok"
+    }
+
+    def _covered_discovery(name: str | None) -> bool:
+        return bool(name) and _is_discovery(name) and _primary_id(name) in healthy
+
     for row in pipeline_state or []:
         name = row.get("source_name") or "?"
         known.add(name)
@@ -339,6 +370,18 @@ def classify_findings(*, pipeline_state, streaks=(), stuck=(), now=None) -> list
             f"the container died mid-pass and never closed its run row",
             source=None, run_id=row.get("id"), agent=row.get("agent"),
         ))
+
+    # A covered discovery adapter's anomaly is degraded depth, not an outage:
+    # demote it to a warning (logged, never emailed) as a post-pass so the
+    # per-source creation sites above stay simple. If the outlet's primary is
+    # ALSO down it is not in `healthy`, so the finding stays an anomaly — that
+    # is a real outlet outage. See is_serious(): the email rules count anomalies
+    # only, so this single flip removes it from every one of them at once.
+    for f in findings:
+        if f["level"] == "anomaly" and _covered_discovery(f["source"]):
+            f["level"] = "warning"
+            f["message"] += (f" — discovery adapter; {_primary_id(f['source'])} "
+                             f"primary feed OK, outlet still covered")
 
     return findings
 

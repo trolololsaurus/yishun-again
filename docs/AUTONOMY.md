@@ -316,6 +316,17 @@ log.
 > skips entirely. Guards: the fleet-of-zero-streaks case in
 > `test_supervisor_alerting.py`, the no-email end-to-end check in
 > `test_ops_agents.py`.
+>
+> **Discovery adapters are demoted when their primary is healthy (2026-08-29).**
+> A discovery adapter (`_sitemap`/`_search`, the wider net behind each outlet's
+> primary scraper) that is blocked/unavailable/stale while the outlet's PRIMARY
+> reported `ok` this pass is degraded archive depth, not an outage —
+> `classify_findings` post-demotes its finding from `anomaly` to `warning`, so it
+> is logged but never emails. If the primary is ALSO down it is not covered and
+> stays an anomaly (a real outlet outage). Mirrors the War Room health demotion
+> (`apps/war-room/lib/utils.isDiscoverySource`/`primaryIdOf`); it is what keeps
+> ST's persistently-500ing `straits_times_sitemap` off the operator's phone while
+> `straits_times` RSS is fine.
 
 > **The email dedup key is now a SIGNATURE comparison, not a fixed key
 > (2026-08-29).** It used to embed the sorted broken-source list, so any churn

@@ -117,9 +117,9 @@ check("...and is_serious() returns nothing for them (no '>=3 too many to be "
       "independent', no chronic-broken email)",
       sup.is_serious(fleet_quiet, chronic={"cna", "stomp", "zaobao"}) == [])
 
-check("primary and discovery-tier ids share the SAME threshold now — no more "
-      "per-tier split", not hasattr(sup, "_is_discovery")
-      and not hasattr(sup, "DISCOVERY_ZERO_STREAK_ANOMALY"))
+check("the zero-streak threshold is not split per tier (no separate discovery "
+      "constant) — discovery-awareness lives in the ANOMALY demotion below, not "
+      "in the zero-streak threshold", not hasattr(sup, "DISCOVERY_ZERO_STREAK_ANOMALY"))
 
 health = importlib.import_module("ingestion.health")
 check("the threshold is imported from ingestion/health.py, not a second copy "
@@ -142,6 +142,35 @@ no_evidence = sup.zero_streaks([
 check("...and a blocked pass contributes NO zero-streak evidence at all "
       "(would otherwise double-count the same outage two ways)",
       no_evidence == [])
+
+# ── (1c) discovery-adapter awareness: a `_sitemap`/`_search` adapter down while
+#         its outlet's PRIMARY is healthy is degraded depth, not an outage —
+#         demoted to a warning so it never emails (the ST googlenews.xml 500
+#         that kept turning up in the fleet alert). ─────────────────────────────
+
+print("\nsupervisor — discovery-adapter demotion:")
+
+covered = sup.classify_findings(
+    pipeline_state=[
+        state("straits_times", "ok", failures=0),          # primary healthy -> no finding
+        state("straits_times_sitemap", "unavailable", failures=6),
+    ], now=NOW)
+check("a discovery adapter unavailable for 6 passes, primary feed healthy -> "
+      "WARNING not anomaly (logged, never emailed)",
+      codes(covered) == ["source_unavailable"] and covered[0]["level"] == "warning")
+check("...and the demoted message names the covering primary",
+      "outlet still covered" in covered[0]["message"])
+check("...so is_serious() returns nothing even if it's been chronic for days",
+      sup.is_serious(covered, chronic={"straits_times_sitemap"}) == [])
+
+both_down = sup.classify_findings(
+    pipeline_state=[
+        state("straits_times", "unavailable", failures=4),  # primary ALSO down
+        state("straits_times_sitemap", "unavailable", failures=6),
+    ], now=NOW)
+check("but a discovery adapter down while its primary is ALSO down stays an "
+      "anomaly — that's a real outlet outage, not covered",
+      [f["level"] for f in both_down] == ["anomaly", "anomaly"])
 
 
 # ── (2) state-change dedup: same standing set stays quiet, a new one alerts ──

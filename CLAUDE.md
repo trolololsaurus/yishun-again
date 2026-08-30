@@ -554,6 +554,19 @@ constant for every source, no per-tier split) now only decides when the *warning
 appears. Guards: the fleet-of-zero-streaks case in `test_supervisor_alerting.py`
 and the end-to-end no-email check in `test_ops_agents.py`. See `docs/AUTONOMY.md` §3.
 
+**The supervisor is discovery-aware: a `_sitemap`/`_search` adapter down while
+its PRIMARY feed is healthy is a `warning`, not an emailing `anomaly`
+(2026-08-29).** Same insight as the War Room health demotion
+(`apps/war-room/lib/utils.isDiscoverySource`/`primaryIdOf`), now applied to the
+alert path. `classify_findings` builds a set of outlets whose primary reported
+`ok` this pass, then post-demotes any per-source anomaly (`source_blocked` /
+`source_unavailable` / `source_stale` / `source_never_ran`) whose source is a
+discovery adapter whose primary is in that set — degraded archive depth is not an
+outage. If the primary is ALSO down the adapter is NOT covered and stays an
+anomaly (a real outlet outage). This is what stops ST's persistently-500ing
+`straits_times_sitemap` from chronic-emailing while `straits_times` RSS publishes
+fine. Guard: the covered/both-down cases in `test_supervisor_alerting.py`.
+
 **The review-queue alert dedups on WHICH cards wait, not the calendar day
 (2026-08-29).** `ops/auto_publish.py::_notify_review_queue` keyed on
 `review_queue:{today}` and rode `notify()`'s 180-minute default throttle — but the
