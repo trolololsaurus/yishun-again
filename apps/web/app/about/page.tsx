@@ -44,7 +44,7 @@ export default function AboutPage() {
         </p>
         <p>
           <strong className="text-amber">The Chaos Index.</strong> Every incident is scored:
-          daggers count triple, clowns count 1.5×, hearts subtract. It is not peer-reviewed, and
+          daggers count triple, clowns count 1×, hearts subtract. It is not peer-reviewed, and
           we will not be defending it in an academic journal.
         </p>
       </section>
@@ -90,7 +90,7 @@ export default function AboutPage() {
             </p>
             <p className="text-text-secondary leading-relaxed mt-2">
               Severity is what powers the <strong className="text-text-primary">Chaos Index</strong>. Each
-              incident contributes its severity multiplied by its type — Dark Events ×3, Absurdities ×1.5,
+              incident contributes its severity multiplied by its type — Dark Events ×3, Absurdities ×1,
               Good Vibes ×−1 — and the year&apos;s running total is scaled to a 0–100 score.
             </p>
           </div>

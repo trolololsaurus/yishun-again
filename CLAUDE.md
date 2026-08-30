@@ -982,7 +982,7 @@ homepage. If you want snapshots, you have to build the writer.
 
 **Per-incident points** (these are what Stage 2 stores as `chaos_contribution`):
 - Dagger: `severity × 3.0`
-- Clown: `severity × 1.5`
+- Clown: `severity × 1.0`
 - Heart: `severity × -1.0`
 
 **Aggregate score** (`computeChaosScore`, `apps/web/lib/utils.ts` — the only
