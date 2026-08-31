@@ -2622,7 +2622,7 @@ v1.8 refactor: ⏳ Backfill scope expansion, Wikipedia discovery agent,
 | scrape_jom.cpython-311.pyc in pycache | Low | Cosmetic | Artifact from before Jom scraper was dropped. Harmless. |
 | HWZ historical date filter untested | Low | Backlogged | Uncertain if HWZ search supports date range filtering. Test during 2015 batch. Do not block other runs waiting for this. |
 | Art direction unresolved | Medium | Paused | CivitAI model selection pending. Does not block backfill. |
-| warroom.yishunagain.com DNS | Medium | ⏳ Pending | War Room subdomain DNS not yet configured. |
+| warroom.yishunagain.com DNS | Medium | ✅ Resolved | Configured and proxied through Cloudflare; requests gate to the CF Access login (302 → cloudflareaccess.com, not a raw 503). Verified 2026-08-31. |
 
 ---
 
