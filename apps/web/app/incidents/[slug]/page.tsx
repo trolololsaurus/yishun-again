@@ -121,19 +121,88 @@ export default async function IncidentPage({ params }: Props) {
   const shareUrl    = `${siteUrl}/incidents/${slug}?utm_source=share&utm_medium=share_card&utm_campaign=${incident.classification}`
   const incidentUrl = `${siteUrl}/incidents/${slug}`
 
+  // Known publisher hostnames for sourceOrganization — unknown hosts fall back
+  // to the bare hostname. Signal sources (reddit, edmw/hwz) are never quoted
+  // as source_urls upstream (guardrail #2), so they never reach this map.
+  const PUBLISHER_NAMES: Record<string, string> = {
+    'channelnewsasia.com':   'Channel NewsAsia',
+    'straitstimes.com':      'The Straits Times',
+    'mothership.sg':         'Mothership',
+    'asiaone.com':           'AsiaOne',
+    'stomp.straitstimes.com': 'Stomp',
+    'zaobao.com.sg':         'Lianhe Zaobao',
+    'mustsharenews.com':     'MustShareNews',
+    'theindependent.sg':     'The Independent',
+    'yahoo.com':             'Yahoo News',
+    'shinmin.sg':            'Shin Min Daily News',
+    'beritaharian.sg':       'Berita Harian',
+    'tamilmurasu.com.sg':    'Tamil Murasu',
+  }
+  const publisherName = (hostname: string): string => {
+    for (const [domain, name] of Object.entries(PUBLISHER_NAMES)) {
+      if (hostname === domain || hostname.endsWith(`.${domain}`)) return name
+    }
+    return hostname
+  }
+  const sourceOrgs: { '@type': string; name: string; url: string }[] = []
+  const seenHosts = new Set<string>()
+  for (const url of sourceUrls) {
+    let hostname: string
+    try { hostname = new URL(url).hostname.replace(/^www\./, '') } catch { continue }
+    if (seenHosts.has(hostname)) continue
+    seenHosts.add(hostname)
+    sourceOrgs.push({ '@type': 'Organization', name: publisherName(hostname), url: `https://${hostname}` })
+  }
+
+  const keywords = [
+    incident.classification,
+    incident.custom_label,
+    incident.area_name,
+    'Yishun',
+    'Chaos Index',
+  ].filter(Boolean).join(', ')
+
   const jsonLd = {
     '@context':    'https://schema.org',
     '@type':       'NewsArticle',
     headline:      incident.title,
     description:   incident.summary.replace(/\s+/g, ' ').trim().slice(0, 160),
     datePublished: incident.incident_date,
+    dateModified:  incident.published_at ?? incident.incident_date,
     url:           incidentUrl,
     image:         incident.pixel_art_url ?? `${siteUrl}/og-default.jpg`,
+    isAccessibleForFree: true,
+    inLanguage:    'en-SG',
     publisher: {
       '@type': 'Organization',
       name:    'Yishun Again',
       url:     siteUrl,
     },
+    ...((incident.area_name || incident.block_number) ? {
+      spatialCoverage: {
+        '@type': 'Place',
+        name: [incident.block_number && `Block ${incident.block_number}`, incident.area_name].filter(Boolean).join(', '),
+        ...(incident.latitude != null && incident.longitude != null
+          ? { geo: { '@type': 'GeoCoordinates', latitude: incident.latitude, longitude: incident.longitude } }
+          : {}),
+      },
+    } : {}),
+    ...(sourceOrgs.length > 0 ? { sourceOrganization: sourceOrgs } : {}),
+    keywords,
+    about: [
+      {
+        '@type': 'DefinedTerm',
+        name: 'Chaos Index',
+        description: 'Yishun Again classification-weighted incident severity score',
+        inDefinedTermSet: `${siteUrl}/about`,
+      },
+    ],
+    ...((incident.deaths != null || incident.injuries != null) ? {
+      interactionStatistic: [
+        ...(incident.deaths != null ? [{ '@type': 'InteractionCounter', interactionType: 'https://schema.org/fatalities', userInteractionCount: incident.deaths }] : []),
+        ...(incident.injuries != null ? [{ '@type': 'InteractionCounter', interactionType: 'https://schema.org/injuries', userInteractionCount: incident.injuries }] : []),
+      ],
+    } : {}),
   }
 
   return (
