@@ -2,7 +2,7 @@
 Monthly orchestrator report (req #13).
 
     from ops.monthly_report import run
-    run()                                   # 30 days ending yesterday
+    run()                                   # 30 days ending yesterday (SGT)
     run(period_end=date(2026, 6, 30))       # backfill a month that was missed
     run(period_end=date(2026, 6, 30), force=True)   # regenerate and overwrite
 
@@ -28,8 +28,11 @@ DESIGN RULES (same contract as the rest of ops/):
     alert) unless force=True, and the write itself is an upsert so even a
     concurrent double-trigger cannot duplicate.
 
-A note on windows: the boundaries are UTC, matching how every timestamptz in
-these tables was written. The War Room renders them in SGT.
+A note on windows: the query boundaries are UTC, matching how every timestamptz
+in these tables was written. The War Room renders them in SGT. The DEFAULT
+`period_end` (when the daily cadence step calls `run()` with none) is anchored
+to the SGT calendar date instead — see `window_for()` for why a UTC-anchored
+default sent two monthly reports on the same 1st.
 """
 
 import logging
@@ -42,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 AGENT = "monthly_report"
 WINDOW_DAYS = 30
+SGT = timezone(timedelta(hours=8))
 
 # What one queue card costs a human end-to-end. A stated assumption, not a
 # measurement: the card count is the fact, the minutes are the translation.
@@ -123,14 +127,31 @@ def _unavailable(reason: str) -> dict:
 
 # ── window ─────────────────────────────────────────────────────────────────
 
-def window_for(period_end=None) -> tuple[date, date]:
+def window_for(period_end=None, *, now: datetime | None = None) -> tuple[date, date]:
     """
     (period_start, period_end), inclusive both ends, WINDOW_DAYS long.
 
-    Default end is yesterday: a report generated at 00:05 on the 1st must not
-    claim to cover a day that is five minutes old.
+    Default end is yesterday IN SGT: a report generated at 00:05 on the 1st
+    must not claim to cover a day that is five minutes old.
+
+    Anchored to SGT, not `datetime.now(timezone.utc).date()`, because the
+    cadence itself is SGT (`ops/daily.py::sgt_today`) and the daily chain runs
+    TWICE on the 1st (02:58 and 14:58 SGT) with no period_end passed either
+    time — see the module `run()` docstring's idempotence claim. Those two SGT
+    passes straddle UTC midnight (02:58 SGT = 18:58 UTC the PREVIOUS day; 14:58
+    SGT = 06:58 UTC the SAME day), so a UTC-anchored "yesterday" computed the
+    two passes' windows one day apart — different `(period_start, period_end)`,
+    which defeated both the DB's UNIQUE constraint and notify()'s dedup_key and
+    sent two near-identical monthly reports on the same 1st (observed live,
+    2026-09-01: 2026-08-01..08-30 at the 02:58 pass, 2026-08-02..08-31 at
+    14:58). Pinning to the SGT calendar date makes both passes agree.
+
+    `now` is injectable (keyword-only, defaults to the real clock) so a test
+    can pin the exact UTC instants either side of the straddle and assert they
+    agree — the same pattern as `ops/daily.py::sgt_today`.
     """
-    end = _coerce_date(period_end) or (datetime.now(timezone.utc).date() - timedelta(days=1))
+    sgt_yesterday = (now or datetime.now(timezone.utc)).astimezone(SGT).date() - timedelta(days=1)
+    end = _coerce_date(period_end) or sgt_yesterday
     return end - timedelta(days=WINDOW_DAYS - 1), end
 
 

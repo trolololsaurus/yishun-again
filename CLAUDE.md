@@ -567,6 +567,25 @@ anomaly (a real outlet outage). This is what stops ST's persistently-500ing
 `straits_times_sitemap` from chronic-alerting while `straits_times` RSS publishes
 fine. Guard: the covered/both-down cases in `test_supervisor_alerting.py`.
 
+**The monthly report's default window is anchored to SGT, not UTC
+(2026-09-01).** `ops/monthly_report.py::window_for()`'s default `period_end`
+used to be `datetime.now(timezone.utc).date() - 1 day` — computed fresh at
+call time. The daily chain runs the cadence-gated `monthly_report` step on
+BOTH of the day's SGT passes when `today.day == 1` (02:58 and 14:58 SGT), with
+no `period_end` ever passed, relying on idempotence (`monthly_reports`'
+`UNIQUE (period_start, period_end)` + `notify()`'s dedup_key) to make the
+second call a no-op. But 02:58 SGT is 18:58 UTC the PREVIOUS calendar day and
+14:58 SGT is 06:58 UTC the SAME day — the two passes straddle UTC midnight, so
+a UTC-anchored "yesterday" put them one day apart. Both idempotence checks key
+on the exact period, so two different-but-overlapping windows both wrote and
+both alerted: live on 2026-09-01, one report for 2026-08-01..08-30 (the 02:58
+pass) and a second for 2026-08-02..08-31 (14:58) — a spurious double-send the
+operator read as "you spammed me". `window_for()` now anchors its default on
+`.astimezone(SGT).date()`, matching `ops/daily.py::sgt_today()`'s own reasoning
+that the cadence is discussed and scheduled in SGT. `now` is injectable
+(keyword-only) so a test can pin both straddling instants and assert they
+agree. Guard: the straddle case in `test_monthly_report.py`.
+
 **The review-queue alert dedups on WHICH cards wait, not the calendar day
 (2026-08-29).** `ops/auto_publish.py::_notify_review_queue` keyed on
 `review_queue:{today}` and rode `notify()`'s 180-minute default throttle — but the

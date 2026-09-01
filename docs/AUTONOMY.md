@@ -254,10 +254,10 @@ queue stays quiet, a genuinely new card changes the key and alerts at once.
 | Kind | Sent when | Window | Dedup key |
 |---|---|---|---|
 | `review_queue` | Cards below the threshold are waiting (req #4) | 1440 min | `review_queue:<hash of the waiting card ids>` — one alert per distinct set of waiting cards; a new card re-alerts, an unchanged queue stays quiet (see below) |
-| `anomaly` | Supervisor finds a *serious* fleet problem (req #9); integrity finds something needing a human (req #10); guardrail #4 flags political content | 60 min default — supervisor overrides to 1440 | `supervisor:<broken sources signature>` — sent only when that signature differs from the last one actually emailed (see below), `integrity:<date>`, `political:<url>` |
+| `anomaly` | Supervisor finds a *serious* fleet problem (req #9); integrity finds something needing a human (req #10); guardrail #4 flags political content | 60 min default — supervisor overrides to 1440 | `supervisor:<broken sources signature>` — sent only when that signature differs from the last one actually alerted (see below), `integrity:<date>`, `political:<url>` |
 | `maintenance` | Something broke, with a plain-English suggested fix (req #11) | 1440 min | `maintenance:<date>` |
 | `health` | A backend component is down, or the cost guard tripped (req #12) | 60 min | `health:<components down>` |
-| `monthly_report` | 1st of the month (req #13) | Never throttled | one a month by construction |
+| `monthly_report` | 1st of the month (req #13) | Never throttled | `monthly_report:<period_start>:<period_end>` — one per distinct 30-day window, which is idempotent ONLY because the window itself is now SGT-anchored (see below) |
 
 A single flaky source is **logged, not alerted on**. "Serious" is defined in
 `ops/supervisor.py` and is exactly four shapes, all of which mean the archive has
@@ -343,6 +343,26 @@ log.
 > itself rather than the date, so a second, different problem breaking later the
 > same day still gets its own alert instead of being blocked by the first one's
 > date-scoped key.
+
+> **The monthly report's default window is anchored to SGT, not UTC
+> (2026-09-01).** `ops/daily.py` runs the cadence-gated `monthly_report` step on
+> BOTH of the day's passes (02:58 and 14:58 SGT) whenever `today.day == 1`,
+> relying entirely on idempotence — `monthly_reports`' `UNIQUE (period_start,
+> period_end)` plus `notify()`'s dedup_key — to make the second call a no-op.
+> Neither call ever passes `period_end`, so `ops/monthly_report.py::window_for()`
+> fell back to `datetime.now(timezone.utc).date() - 1 day`, computed fresh at
+> each call. 02:58 SGT is 18:58 UTC the PREVIOUS calendar day; 14:58 SGT is
+> 06:58 UTC the SAME day — the two passes straddle UTC midnight, so "yesterday"
+> disagreed between them by exactly one day. Both idempotence checks key on the
+> exact period, so two different-but-overlapping 30-day windows both wrote a
+> row and both alerted — live on 2026-09-01: one report covering
+> 2026-08-01..08-30 (the 02:58 pass), a second covering 2026-08-02..08-31
+> (14:58) — the operator saw two "monthly" reports a few hours apart. The
+> default now anchors on `.astimezone(SGT).date()`, the same reasoning
+> `sgt_today()` already uses ("the whole schedule is written and discussed in
+> SGT"), so both passes on the same SGT day agree on the window. Guard: the
+> straddle case in `test_monthly_report.py` (pins both UTC instants, asserts
+> `window_for()` returns the identical period for both).
 
 Every attempted send is a row in `notifications` **before** the send, so a
 provider outage loses the delivery, not the alert. With no `TELEGRAM_BOT_TOKEN`

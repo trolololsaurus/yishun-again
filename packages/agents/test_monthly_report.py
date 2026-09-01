@@ -220,8 +220,20 @@ print("monthly report tests:")
 s, e = mr.window_for(END)
 check("window is 30 days inclusive", (e - s).days == 29 and e == END)
 check("period_end accepts an ISO string", mr.window_for("2026-07-20") == (START, END))
-check("default window ends yesterday",
-      mr.window_for()[1] == datetime.now(timezone.utc).date() - timedelta(days=1))
+check("default window ends yesterday IN SGT, not UTC (the same-1st double-send "
+      "this fixed: the 02:58/14:58 SGT passes straddle UTC midnight)",
+      mr.window_for()[1] == datetime.now(timezone.utc).astimezone(mr.SGT).date() - timedelta(days=1))
+
+# ── (regression) the exact live incident: two SGT passes on the 1st straddling
+#    UTC midnight must compute the SAME window, or the DB unique constraint and
+#    notify() dedup both get defeated by a one-day-shifted period_end. ────────
+_02_58_sgt = datetime(2026, 9, 1, 2, 58, tzinfo=mr.SGT)   # = 2026-08-31 18:58 UTC
+_14_58_sgt = datetime(2026, 9, 1, 14, 58, tzinfo=mr.SGT)  # = 2026-09-01 06:58 UTC
+check("the two SGT instants really do straddle a UTC calendar day",
+      _02_58_sgt.astimezone(timezone.utc).date() != _14_58_sgt.astimezone(timezone.utc).date())
+check("...but window_for() agrees on period_end for both (the fix)",
+      mr.window_for(now=_02_58_sgt) == mr.window_for(now=_14_58_sgt)
+      == (date(2026, 8, 2), date(2026, 8, 31)))
 lo, hi = mr._bounds(START, END)
 check("upper bound is exclusive midnight after period_end", hi.startswith("2026-07-21T00:00:00"))
 check("lower bound is midnight on period_start", lo.startswith("2026-06-21T00:00:00"))
