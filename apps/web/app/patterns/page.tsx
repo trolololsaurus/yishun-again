@@ -94,11 +94,12 @@ export default async function PatternsPage() {
                        style={{ width: 96, height: 96 }}>
                     {p.hero_image_url ? (
                       // The art pipeline renders with NEAREST resampling to keep its pixel-art
-                      // edges stepped (art/generate_image.py); the browser's own downscale to a
-                      // 96px box otherwise smooths those edges into a blur. Pin the same intent
-                      // on this side of the pipe.
+                      // edges stepped (art/generate_image.py). next/image's own server-side
+                      // resize smooths that away before the browser ever sees it — imageRendering
+                      // can't un-blur a file that's already been resampled — so skip the
+                      // optimizer here and let the browser do the (pixelated) downscale itself.
                       <Image src={p.hero_image_url} alt="" fill sizes="96px" className="object-cover"
-                             style={{ imageRendering: 'pixelated' }} />
+                             unoptimized style={{ imageRendering: 'pixelated' }} />
                     ) : (
                       <span className="absolute inset-0 flex items-center justify-center font-body text-text-secondary"
                             style={{ fontSize: 9 }}>

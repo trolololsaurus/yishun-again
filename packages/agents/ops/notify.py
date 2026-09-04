@@ -37,6 +37,8 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
+from ops.activity import _client
+
 logger = logging.getLogger(__name__)
 
 TELEGRAM_API = "https://api.telegram.org"
@@ -79,17 +81,6 @@ MUTED_PREFIXES = tuple(
 
 def _is_muted(dedup_key: str) -> bool:
     return bool(MUTED_PREFIXES) and dedup_key.startswith(MUTED_PREFIXES)
-
-
-def _client(explicit=None):
-    if explicit is not None:
-        return explicit
-    try:
-        from classifiers.corroboration import get_supabase_client
-        return get_supabase_client()
-    except Exception as exc:                      # noqa: BLE001
-        logger.debug("notify: no Supabase client (%s)", exc)
-        return None
 
 
 def operator_chat_id() -> str:

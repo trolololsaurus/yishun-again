@@ -63,7 +63,7 @@ import os
 from datetime import datetime, timezone
 
 from classifiers.source_allowlist import is_signal_source
-from ops.activity import AgentRun, agent_enabled
+from ops.activity import AgentRun, _client, agent_enabled
 from ops.notify import footer, notify, war_room_url
 
 logger = logging.getLogger(__name__)
@@ -144,13 +144,6 @@ AUTO_ENRICH_SUMMARY = os.getenv("AUTO_ENRICH_SUMMARY", "false").strip().lower() 
 ART_ENABLED = os.getenv("ART_GENERATION_ENABLED", "false").strip().lower() in ("1", "true", "on", "yes")
 
 _POLITICAL_MARKER = "[POLITICAL CONTENT DETECTED"
-
-
-def _client(explicit=None):
-    if explicit is not None:
-        return explicit
-    from classifiers.corroboration import get_supabase_client
-    return get_supabase_client()
 
 
 def can_record_decisions(client) -> tuple[bool, str]:

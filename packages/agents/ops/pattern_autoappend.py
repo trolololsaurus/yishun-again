@@ -38,6 +38,8 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 
+from ops.activity import _client
+
 logger = logging.getLogger(__name__)
 
 AGENT = "pattern_autoappend"
@@ -59,13 +61,6 @@ def _env(name: str, default, cast=str):
         return cast(raw)
     except ValueError:
         return default
-
-
-def _client(explicit=None):
-    if explicit is not None:
-        return explicit
-    from classifiers.corroboration import get_supabase_client
-    return get_supabase_client()
 
 
 _MATCH_SYSTEM = """\

@@ -64,7 +64,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from ingestion.health import ZERO_STREAK_WARNING as ZERO_STREAK_ANOMALY
-from ops.activity import AgentRun, agent_enabled, recent_events, stale_runs
+from ops.activity import AgentRun, _client, agent_enabled, recent_events, stale_runs
 from ops.notify import footer, notify, war_room_url
 
 logger = logging.getLogger(__name__)
@@ -119,17 +119,6 @@ CHRONIC_DAYS = 3
 # finding restated in a louder voice — and it would alert on every hiccup.
 MIN_FLEET_FOR_FLEETWIDE = 3
 
-
-def _client(explicit=None):
-    """Return a Supabase client, or None. Never raises."""
-    if explicit is not None:
-        return explicit
-    try:
-        from classifiers.corroboration import get_supabase_client
-        return get_supabase_client()
-    except Exception as exc:                      # noqa: BLE001 - see module docstring
-        logger.warning("supervisor: no Supabase client (%s) — nothing to supervise", exc)
-        return None
 
 
 # ── Discovery adapters vs primary scrapers ──────────────────────────────────

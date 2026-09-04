@@ -138,13 +138,8 @@ check("a raising strategy is swallowed; next rung still used",
 check("all-raising chain -> None (no raise)",
       fs.fetch_with_fallback(ART, chain=[_Boom(), _Boom()]) is None)
 
-# ── browser stub: NOT in the default chain, and a no-op ─────────────────────
 check("DEFAULT_CHAIN is exactly [DirectHttpx, WaybackSnapshot]",
       [type(s).__name__ for s in fs.DEFAULT_CHAIN] == ["DirectHttpx", "WaybackSnapshot"])
-check("BrowserService NOT in DEFAULT_CHAIN",
-      not any(isinstance(s, fs.BrowserService) for s in fs.DEFAULT_CHAIN))
-check("BrowserService stub returns None (seam, not implemented)",
-      fs.BrowserService().fetch(ART) is None)
 
 # ── Wayback snapshot resolution reuses backfill_agent.get_wayback_url ────────
 # The reuse is the point (single source of truth for the availability API); the

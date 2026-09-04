@@ -32,7 +32,7 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
-from ops.activity import AgentRun, agent_enabled, recent_events, recent_runs
+from ops.activity import AgentRun, _client, agent_enabled, recent_events, recent_runs
 from ops.notify import footer, notify, war_room_url
 
 logger = logging.getLogger(__name__)
@@ -104,18 +104,6 @@ MIN_INSTANCES_ENV = "CLOUD_RUN_MIN_INSTANCES"
 # which for a cost guard is the safe direction to be wrong in.
 _STAGE1_STAT_KEYS = ("stage1_calls", "stage1_requests")
 _STAGE2_STAT_KEYS = ("stage2_drafts", "stage2_calls", "drafts_written")
-
-
-def _client(explicit=None):
-    """Return a Supabase client, or None. Never raises."""
-    if explicit is not None:
-        return explicit
-    try:
-        from classifiers.corroboration import get_supabase_client
-        return get_supabase_client()
-    except Exception as exc:                      # noqa: BLE001
-        logger.warning("backend_health: no Supabase client (%s)", exc)
-        return None
 
 
 def _check(component: str, status: str, message: str,

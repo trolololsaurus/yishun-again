@@ -25,7 +25,7 @@ run(supabase_client=None, trigger="scheduler") -> dict
 import logging
 from datetime import datetime, timedelta, timezone
 
-from ops.activity import AgentRun, agent_enabled, recent_events, recent_runs
+from ops.activity import AgentRun, _client, agent_enabled, recent_events, recent_runs
 from ops.notify import footer, notify, war_room_url
 
 logger = logging.getLogger(__name__)
@@ -299,17 +299,6 @@ def _compose_digest(issues, window_hours: int) -> tuple[str, str]:
 
 
 # ── Reads ────────────────────────────────────────────────────────────────────
-
-def _client(explicit=None):
-    """Return a Supabase client, or None. Never raises."""
-    if explicit is not None:
-        return explicit
-    try:
-        from classifiers.corroboration import get_supabase_client
-        return get_supabase_client()
-    except Exception as exc:                      # noqa: BLE001
-        logger.warning("maintenance: no Supabase client (%s) — nothing to diagnose", exc)
-        return None
 
 
 def _since_iso(hours: int) -> str:

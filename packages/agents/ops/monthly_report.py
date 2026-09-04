@@ -38,7 +38,7 @@ default sent two monthly reports on the same 1st.
 import logging
 from datetime import date, datetime, timedelta, timezone
 
-from ops.activity import AgentRun, agent_enabled
+from ops.activity import AgentRun, _client, agent_enabled
 from ops.notify import footer, notify, war_room_url
 
 logger = logging.getLogger(__name__)
@@ -61,13 +61,6 @@ _REVIEW_ACTIONS = ("approve", "edit_approve", "reject")
 # Worst-first ranking for health. 'unknown' outranks 'ok' because a component
 # that stopped answering is not a component that is fine.
 _STATUS_RANK = {"ok": 0, "unknown": 1, "degraded": 2, "down": 3}
-
-
-def _client(explicit=None):
-    if explicit is not None:
-        return explicit
-    from classifiers.corroboration import get_supabase_client
-    return get_supabase_client()
 
 
 # ── coercion helpers (every one of these tolerates junk) ────────────────────

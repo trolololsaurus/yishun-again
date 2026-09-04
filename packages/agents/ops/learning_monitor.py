@@ -49,7 +49,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
-from ops.activity import AgentRun, agent_enabled
+from ops.activity import AgentRun, _client, agent_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -85,13 +85,6 @@ DEFAULT_TRUST = 0.500
 # model genuinely should produce mostly clean approvals, so this must only fire
 # when the reading is extreme enough to be ambiguous.
 UNMARKED_BULK_SUSPICION = float(os.getenv("UNMARKED_BULK_SUSPICION", "0.75"))
-
-
-def _client(explicit=None):
-    if explicit is not None:
-        return explicit
-    from classifiers.corroboration import get_supabase_client
-    return get_supabase_client()
 
 
 def _domain(url: str) -> str | None:

@@ -23,7 +23,7 @@ from unittest import mock
 
 import ops.activity as activity
 
-_no_db = mock.patch.object(activity, "_client", return_value=None)
+_no_db = mock.patch.object(activity, "_client", side_effect=lambda explicit=None: explicit)
 _no_db.start()
 
 mr = importlib.import_module("ops.monthly_report")

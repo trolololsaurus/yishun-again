@@ -37,11 +37,11 @@ export function PatternTimeline({ incidents }: { incidents: Node[] }) {
               style={{ width: 112, height: 63 }}
             >
               {inc.pixel_art_url ? (
-                // NEAREST-resampled pixel art (art/generate_image.py) needs the same
-                // hint here — otherwise the browser's downscale to 112px smooths its
-                // hard edges into a blur.
+                // NEAREST-resampled pixel art (art/generate_image.py) — skip next/image's
+                // own server-side resize (it smooths the hard edges into a blur before the
+                // browser ever sees the file) and let the browser downscale it, pixelated.
                 <Image src={inc.pixel_art_url} alt="" fill sizes="112px" className="object-cover"
-                       style={{ imageRendering: 'pixelated' }} />
+                       unoptimized style={{ imageRendering: 'pixelated' }} />
               ) : (
                 <span className="absolute inset-0 flex items-center justify-center font-body text-text-secondary"
                       style={{ fontSize: 9 }}>

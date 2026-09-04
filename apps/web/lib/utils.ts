@@ -124,23 +124,11 @@ export function fmtDate(iso: string | null | undefined): string {
 }
 
 // Compact duration for inter-node gap labels: "55 days", "3 months", "2 yrs 3 mo"
-export function formatDurationGap(start: Date, end: Date): string {
-  const totalMonths = (end.getFullYear() - start.getFullYear()) * 12
-    + (end.getMonth() - start.getMonth())
-  if (totalMonths < 1) {
-    const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000))
-    return `${days} day${days !== 1 ? 's' : ''}`
-  }
-  const years  = Math.floor(totalMonths / 12)
-  const months = totalMonths % 12
-  if (years === 0) return `${months} month${months !== 1 ? 's' : ''}`
-  if (months === 0) return `${years} yr${years !== 1 ? 's' : ''}`
-  return `${years} yr${years !== 1 ? 's' : ''} ${months} mo`
-}
-
 // Duration between two dates expressed as human-readable string.
 // Uses month-based precision; < 1 month falls back to days.
-export function formatDuration(start: Date, end: Date): string {
+// abbrev=true shortens "year"/"month" to "yr"/"mo" once a year is involved
+// (used for compact timeline gaps); under a year always spells "month(s)" out.
+export function formatDuration(start: Date, end: Date, abbrev = false): string {
   const totalMonths = (end.getFullYear() - start.getFullYear()) * 12
     + (end.getMonth() - start.getMonth())
   if (totalMonths < 1) {
@@ -150,8 +138,14 @@ export function formatDuration(start: Date, end: Date): string {
   const years  = Math.floor(totalMonths / 12)
   const months = totalMonths % 12
   if (years === 0) return `${months} month${months !== 1 ? 's' : ''}`
-  if (months === 0) return `${years} year${years !== 1 ? 's' : ''}`
-  return `${years} year${years !== 1 ? 's' : ''} ${months} month${months !== 1 ? 's' : ''}`
+  const yr = abbrev ? `${years} yr${years !== 1 ? 's' : ''}` : `${years} year${years !== 1 ? 's' : ''}`
+  if (months === 0) return yr
+  const mo = abbrev ? `${months} mo` : `${months} month${months !== 1 ? 's' : ''}`
+  return `${yr} ${mo}`
+}
+
+export function formatDurationGap(start: Date, end: Date): string {
+  return formatDuration(start, end, true)
 }
 
 // Timeline roles that conclude a legal story (verdict / sentencing / appeal).

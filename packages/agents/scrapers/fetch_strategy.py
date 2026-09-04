@@ -302,23 +302,10 @@ class WaybackSnapshot(FetchStrategy):
         return None
 
 
-class BrowserService(FetchStrategy):
-    """STUB — the seam for a future on-demand headless-browser fetch.
-
-    Some sources (JS-rendered listings, aggressive bot walls) will yield to a real
-    browser when both direct and Wayback fail. That belongs in a SEPARATE
-    on-demand Cloud Run service (Playwright is too heavy to carry in the agents
-    image and must scale to zero), fronted by an HTTP call from here. Until it
-    exists this rung is a no-op and is deliberately NOT in DEFAULT_CHAIN; wiring it
-    in later needs no change to any call site — only this method and the chain."""
-
-    def fetch(self, url: str, *, timeout: float | None = None) -> FetchResult | None:
-        logger.debug("BrowserService: not implemented — skipping browser rung for %s", url[:80])
-        return None
-
-
-# Direct first (happy path), then the archive. BrowserService is intentionally
-# omitted until the on-demand service exists.
+# Direct first (happy path), then the archive. A browser-rendered fallback
+# (for JS-rendered listings / bot walls that beat both) would need a separate
+# on-demand Cloud Run service — Playwright is too heavy for this image — fronted
+# by an HTTP call from a new FetchStrategy here. Add it when that service exists.
 DEFAULT_CHAIN: list[FetchStrategy] = [DirectHttpx(), WaybackSnapshot()]
 
 

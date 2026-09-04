@@ -135,6 +135,7 @@ export default async function PatternPage({ params }: Props) {
             fill
             sizes="(max-width: 640px) 100vw, 672px"
             className="object-cover"
+            unoptimized
             style={{ imageRendering: 'pixelated' }}
             priority
           />
