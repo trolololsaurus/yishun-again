@@ -72,13 +72,26 @@ export default async function PatternPage({ params }: Props) {
   }
 
   const url = `${SITE_URL}/patterns/${pattern.slug}`
+  // Same enrichment fields as the incident page's NewsArticle JSON-LD
+  // (commit 38903d6) — dateModified, isAccessibleForFree, inLanguage and an
+  // explicit publisher, so a citable page here is held to the same GEO bar
+  // as an individual incident rather than a thinner schema.
   const jsonLd = {
-    '@context':   'https://schema.org',
-    '@type':      'CollectionPage',
-    name:         pattern.title,
-    description:  pattern.thesis.replace(/\s+/g, ' ').trim().slice(0, 160),
+    '@context':    'https://schema.org',
+    '@type':       'CollectionPage',
+    name:          pattern.title,
+    description:   pattern.thesis.replace(/\s+/g, ' ').trim().slice(0, 160),
     url,
-    isPartOf:     { '@type': 'WebSite', name: 'Yishun Again', url: SITE_URL },
+    dateModified:  pattern.updated_at,
+    image:         pattern.hero_image_url ?? `${SITE_URL}/og-default.jpg`,
+    isAccessibleForFree: true,
+    inLanguage:    'en-SG',
+    isPartOf:      { '@type': 'WebSite', name: 'Yishun Again', url: SITE_URL },
+    publisher: {
+      '@type': 'Organization',
+      name:    'Yishun Again',
+      url:     SITE_URL,
+    },
     about: {
       '@type': 'DefinedTerm',
       name: 'Chaos Index',
@@ -118,6 +131,7 @@ export default async function PatternPage({ params }: Props) {
             fill
             sizes="(max-width: 640px) 100vw, 672px"
             className="object-cover"
+            style={{ imageRendering: 'pixelated' }}
             priority
           />
         </div>

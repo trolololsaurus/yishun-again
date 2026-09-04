@@ -34,10 +34,12 @@ export default async function PatternsPage() {
     .from('patterns')
     .select('slug,title,thesis,hero_image_url,incident_ids')
     .eq('published', true)
-    .order('created_at', { ascending: false })
     .returns<PatternRow[]>()
 
-  const rows = patterns ?? []
+  // Most incidents first. cardinality() isn't sortable in a PostgREST .order(),
+  // so this sorts the small fetched set in JS rather than adding a SQL view.
+  const rows = [...(patterns ?? [])]
+    .sort((a, b) => (b.incident_ids?.length ?? 0) - (a.incident_ids?.length ?? 0))
 
   // One query for the date range across every pattern's incidents: gather all
   // ids, fetch (id, incident_date) once, then min/max per pattern in JS. Cheaper
@@ -66,8 +68,8 @@ export default async function PatternsPage() {
         PATTERNS
       </h1>
       <p className="text-text-secondary leading-relaxed mb-8" style={{ fontSize: '16px' }}>
-        Some things happen in Yishun more than once. These are the recurring stories the
-        archive keeps surfacing — each one backed by the incidents underneath it.
+        Phenomena happen. And they happen in Yishun, stranger than fiction. These are the
+        recurring stories the archive keeps surfacing — each one backed by the incidents underneath it.
       </p>
 
       {rows.length === 0 ? (
@@ -90,7 +92,12 @@ export default async function PatternsPage() {
                   <div className="relative flex-none overflow-hidden border border-border bg-surface"
                        style={{ width: 96, height: 96 }}>
                     {p.hero_image_url ? (
-                      <Image src={p.hero_image_url} alt="" fill sizes="96px" className="object-cover" />
+                      // The art pipeline renders with NEAREST resampling to keep its pixel-art
+                      // edges stepped (art/generate_image.py); the browser's own downscale to a
+                      // 96px box otherwise smooths those edges into a blur. Pin the same intent
+                      // on this side of the pipe.
+                      <Image src={p.hero_image_url} alt="" fill sizes="96px" className="object-cover"
+                             style={{ imageRendering: 'pixelated' }} />
                     ) : (
                       <span className="absolute inset-0 flex items-center justify-center font-body text-text-secondary"
                             style={{ fontSize: 9 }}>
