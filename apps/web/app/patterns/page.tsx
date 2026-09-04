@@ -116,8 +116,17 @@ export default async function PatternsPage() {
                     <p className="text-text-secondary leading-relaxed mb-2 line-clamp-2" style={{ fontSize: '14px' }}>
                       {p.thesis.slice(0, 160).trimEnd()}{p.thesis.length > 160 ? '…' : ''}
                     </p>
-                    <div className="text-text-secondary" style={{ fontSize: '12px' }}>
-                      {count} incident{count !== 1 ? 's' : ''}{range ? ` · ${range}` : ''}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-text-secondary" style={{ fontSize: '12px' }}>
+                        {count} incident{count !== 1 ? 's' : ''}{range ? ` · ${range}` : ''}
+                      </div>
+                      {/* Explicit call to action, not just a hover cue — the whole
+                          card is already a link, but this is what makes clicking
+                          through feel like the obvious next step. */}
+                      <span className="font-body font-bold text-amber-lt group-hover:underline flex-none whitespace-nowrap"
+                            style={{ fontSize: 12 }}>
+                        Read the pattern →
+                      </span>
                     </div>
                   </div>
                 </Link>
