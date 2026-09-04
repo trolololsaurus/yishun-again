@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { validateUUID, applyUpdate } from '@/lib/utils'
+import { validateUUID, applyUpdate, applySignalCorroboration } from '@/lib/utils'
 
 interface ConfirmUpdateBody {
   updated_summary?: string
@@ -33,19 +33,19 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
   // Guardrail #2: a signal source's URL may never become a quoted citation.
   // 'edmw' is the tolerated legacy alias for the canonical 'signal' — see
-  // classifiers/source_allowlist.py's SIGNAL_TYPES.
-  if (item.source_type === 'signal' || item.source_type === 'edmw') {
-    return NextResponse.json(
-      { error: 'This update’s source is a signal (forum/UGC) — it cannot be merged into source_urls. Reject it instead.' },
-      { status: 400 },
-    )
-  }
+  // classifiers/source_allowlist.py's SIGNAL_TYPES. That does NOT mean the
+  // update is worthless — a signal corroborating an already-published incident
+  // is exactly the "Forum buzz" case a signal-only match on a BRAND NEW incident
+  // already gets (edmw_signal_count, bumped at initial publish). So a signal
+  // source still confirms as an update — it just takes the corroboration-only
+  // path (applySignalCorroboration) instead of the source_urls/timeline merge.
+  const isSignal = item.source_type === 'signal' || item.source_type === 'edmw'
 
   // Fetch the existing published incident. `summary` is selected so the undo
   // snapshot can restore it (an operator edit below replaces it).
   const { data: existing, error: incFetchErr } = await supabase
     .from('incidents')
-    .select('id,source_urls,source_timeline,update_count,incident_date,first_reported_at,is_developing,summary')
+    .select('id,source_urls,source_timeline,update_count,incident_date,first_reported_at,is_developing,summary,edmw_signal_count')
     .eq('id', targetId)
     .single()
 
@@ -58,16 +58,21 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   const sourceName  = (rc.source_name as string) ?? item.source_type ?? 'unknown'
   const headline    = (item.proposed_title ?? (rc.title as string) ?? '').slice(0, 200)
 
-  // applyUpdate owns the merge math (source_urls, timeline, dates, update_count)
-  // and returns the pre-merge snapshot the undo route restores from. See
-  // lib/utils.ts — the autonomous auto-merge (PR #2) mirrors it in Python.
-  const { updates, snapshot } = applyUpdate(existing, {
-    newSourceUrl,
-    sourceName,
-    headline,
-    newDate: (rc.date as string) || (rc.published_at as string) || null,
-    updatedSummary: body.updated_summary,
-  })
+  // applyUpdate owns the citation merge (source_urls, timeline, dates,
+  // update_count); applySignalCorroboration owns the signal-only path
+  // (edmw_signal_count, never source_urls). Both return the pre-merge snapshot
+  // the undo route restores from. See lib/utils.ts — the autonomous auto-merge
+  // (PR #2) mirrors applyUpdate in Python; it does not (yet) mirror the signal
+  // path, so signal corroboration stays an operator-only action for now.
+  const { updates, snapshot } = isSignal
+    ? applySignalCorroboration(existing, { updatedSummary: body.updated_summary })
+    : applyUpdate(existing, {
+        newSourceUrl,
+        sourceName,
+        headline,
+        newDate: (rc.date as string) || (rc.published_at as string) || null,
+        updatedSummary: body.updated_summary,
+      })
   const updatedSummary = (body.updated_summary ?? '').trim()
 
   // Claim the queue item BEFORE mutating the incident. The old order updated

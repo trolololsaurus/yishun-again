@@ -13,12 +13,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { applyUpdate, revertUpdate, type IncidentMergeState } from './utils.ts'
+import { applyUpdate, revertUpdate, applySignalCorroboration, type IncidentMergeState } from './utils.ts'
 
 // The fields applyUpdate/revertUpdate touch — what "== x" is measured over.
 const FIELDS = [
   'source_urls', 'source_timeline', 'update_count',
   'incident_date', 'first_reported_at', 'is_developing', 'summary',
+  'edmw_signal_count',
 ] as const
 
 function pick(state: Record<string, unknown>) {
@@ -43,6 +44,7 @@ const base: IncidentMergeState = {
   first_reported_at: '2026-08-01',
   is_developing:     false,
   summary:           'Original summary.',
+  edmw_signal_count: 0,
 }
 
 test('a plain merge of a newer source round-trips', () => {
@@ -106,4 +108,42 @@ test('a dateless candidate never corrupts the dates, and still undoes', () => {
     headline:     'no date',
     newDate:      null,
   })
+})
+
+// ── Signal (forum/UGC) corroboration — guardrail #2's non-citation path ──────
+//
+// A signal source (Reddit/EDMW) confirming an update must NEVER touch
+// source_urls/source_timeline (that would be a citation) — it only bumps
+// edmw_signal_count, the same "Forum buzz" counter a signal-only match on a
+// brand-new incident gets. applySignalCorroboration shares revertUpdate with
+// applyUpdate, so the round-trip contract must hold here too.
+
+test('signal corroboration bumps edmw_signal_count and round-trips, never touching source_urls', () => {
+  const before = pick(base as unknown as Record<string, unknown>)
+  const { updates, snapshot } = applySignalCorroboration(base, {})
+  assert.equal(updates.source_urls, undefined, 'signal path must not set source_urls')
+  assert.equal(updates.source_timeline, undefined, 'signal path must not set source_timeline')
+  const after = { ...base, ...updates }
+  assert.equal(after.edmw_signal_count, 1, 'count bumped by exactly one')
+  assert.notDeepEqual(pick(after), before, 'apply should mutate the incident')
+  const restored = { ...after, ...revertUpdate(snapshot) }
+  assert.deepEqual(pick(restored), before, 'revert(applySignalCorroboration(x)) must equal x')
+})
+
+test('signal corroboration with an operator-edited summary round-trips', () => {
+  const before = pick(base as unknown as Record<string, unknown>)
+  const { updates, snapshot } = applySignalCorroboration(base, { updatedSummary: 'Edited on signal confirm.' })
+  const after = { ...base, ...updates }
+  assert.equal(after.summary, 'Edited on signal confirm.')
+  const restored = { ...after, ...revertUpdate(snapshot) }
+  assert.deepEqual(pick(restored), before)
+})
+
+test('a second signal corroboration on an already-corroborated incident accumulates', () => {
+  const oncePrepped = { ...base, edmw_signal_count: 3 }
+  const { updates, snapshot } = applySignalCorroboration(oncePrepped, {})
+  assert.equal(updates.edmw_signal_count, 4)
+  const after = { ...oncePrepped, ...updates }
+  const restored = { ...after, ...revertUpdate(snapshot) }
+  assert.equal(restored.edmw_signal_count, 3, 'undo returns to the pre-corroboration count, not 0')
 })

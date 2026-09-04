@@ -73,21 +73,22 @@ export default async function QueuePage() {
   if (targetIds.length > 0) {
     const { data: targets } = await supabase
       .from('incidents')
-      .select('id,title,summary,slug,classification,severity,incident_date,source_urls,update_count,is_developing')
+      .select('id,title,summary,slug,classification,severity,incident_date,source_urls,update_count,is_developing,edmw_signal_count')
       .in('id', targetIds)
 
     for (const t of targets ?? []) {
       targetIncidents[t.id] = {
-        id:             t.id,
-        title:          t.title,
-        summary:        t.summary,
-        slug:           t.slug,
-        classification: t.classification,
-        severity:       t.severity,
-        incident_date:  t.incident_date,
-        source_urls:    t.source_urls ?? [],
-        update_count:   t.update_count ?? 0,
-        is_developing:  t.is_developing ?? false,
+        id:                t.id,
+        title:             t.title,
+        summary:           t.summary,
+        slug:              t.slug,
+        classification:    t.classification,
+        severity:          t.severity,
+        incident_date:     t.incident_date,
+        source_urls:       t.source_urls ?? [],
+        update_count:      t.update_count ?? 0,
+        is_developing:     t.is_developing ?? false,
+        edmw_signal_count: t.edmw_signal_count ?? 0,
       }
     }
   }

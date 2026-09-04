@@ -44,6 +44,13 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
   const conf     = item.agent_confidence
   const newUrl   = item.source_url
   const headline = item.proposed_title ?? ''
+  // Guardrail #2: a signal (forum/UGC) source is never a citation candidate, so
+  // this card must not read as "here's a new Source to add" — it corroborates
+  // only (bumps edmw_signal_count, "Forum buzz"), same as a signal-only match on
+  // a brand new incident. See applySignalCorroboration in lib/utils.ts. 'edmw'
+  // is a legacy DB value the SourceType union doesn't carry — untyped raw rows
+  // only, handled server-side in confirm-update/route.ts.
+  const isSignal = item.source_type === 'signal'
 
   async function post(endpoint: string, body?: unknown) {
     const res = await fetch(`/api/queue/${item.id}/${endpoint}`, {
@@ -118,8 +125,8 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
 
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-cyan-500/40">
-        <span className="px-2 py-0.5 bg-cyan-500 text-bg font-bold uppercase text-xs">
-          NEW UPDATE
+        <span className={`px-2 py-0.5 text-bg font-bold uppercase text-xs ${isSignal ? 'bg-purple' : 'bg-cyan-500'}`}>
+          {isSignal ? 'NEW SIGNAL' : 'NEW UPDATE'}
         </span>
         <span className={`font-bold text-sm ${CLASS_COLOR[targetIncident.classification] ?? ''}`}>
           {CLASS_ICON[targetIncident.classification]} {CLASS_LABEL[targetIncident.classification]}
@@ -153,21 +160,31 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
               {targetIncident.update_count > 0 && (
                 <span className="text-cyan-400">{targetIncident.update_count} update{targetIncident.update_count !== 1 ? 's' : ''} already merged</span>
               )}
+              {targetIncident.edmw_signal_count > 0 && (
+                <span className="text-purple">⚡{targetIncident.edmw_signal_count} forum signal{targetIncident.edmw_signal_count !== 1 ? 's' : ''}</span>
+              )}
             </div>
           </div>
         </div>
 
-        {/* New source */}
+        {/* New source, or — for a signal — corroboration only */}
         <div>
           <div className="text-text-secondary mb-2 uppercase tracking-widest text-xs">
-            New Source
+            {isSignal ? 'New Signal (forum / UGC)' : 'New Source'}
           </div>
-          <div className="border border-border bg-bg p-3 space-y-1">
+          <div className={`border p-3 space-y-1 ${isSignal ? 'border-purple/40 bg-purple/5' : 'border-border bg-bg'}`}>
             <div className="text-text-primary text-sm">{headline}</div>
             <a href={safeHref(newUrl)} target="_blank" rel="noopener noreferrer"
                className="text-yellow text-sm hover:underline break-all">
               {newUrl}
             </a>
+            {isSignal && (
+              <div className="text-purple text-xs pt-1">
+                Guardrail #2 — never a citation. Confirming counts this as forum
+                corroboration only ({targetIncident.edmw_signal_count} → {targetIncident.edmw_signal_count + 1}); it is
+                not added to Sources.
+              </div>
+            )}
           </div>
         </div>
 
@@ -305,9 +322,11 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
           <button
             onClick={handleConfirmUpdate}
             disabled={loading}
-            className="px-4 py-2 bg-cyan-600 text-white text-sm font-bold hover:bg-cyan-500 transition-colors disabled:opacity-50"
+            className={`px-4 py-2 text-white text-sm font-bold transition-colors disabled:opacity-50 ${
+              isSignal ? 'bg-purple hover:bg-purple/80' : 'bg-cyan-600 hover:bg-cyan-500'
+            }`}
           >
-            {loading ? '…' : 'Confirm Update ✓'}
+            {loading ? '…' : isSignal ? 'Confirm as Signal ✓' : 'Confirm Update ✓'}
           </button>
         </div>
       </div>

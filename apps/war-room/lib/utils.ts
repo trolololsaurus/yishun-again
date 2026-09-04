@@ -272,6 +272,7 @@ export interface IncidentMergeState {
   first_reported_at: string | null
   is_developing:     boolean | null
   summary:           string | null
+  edmw_signal_count: number | null
 }
 
 export interface MergeInput {
@@ -293,6 +294,7 @@ export interface UpdateSnapshot {
   first_reported_at: string | null
   is_developing:     boolean
   summary:           string | null
+  edmw_signal_count: number
 }
 
 export function applyUpdate(
@@ -317,6 +319,7 @@ export function applyUpdate(
     first_reported_at: existing.first_reported_at ?? null,
     is_developing:     existingDeveloping,
     summary:           existing.summary ?? null,
+    edmw_signal_count: existing.edmw_signal_count ?? 0,
   }
 
   // Merge source_urls — never store the same citation twice.
@@ -354,6 +357,41 @@ export function applyUpdate(
   return { updates, snapshot }
 }
 
+/**
+ * A signal (EDMW/Reddit — forum/UGC) source can never become a quoted citation
+ * (guardrail #2), so it does not go through applyUpdate's source_urls/timeline
+ * merge at all. It still corroborates the incident: bumps edmw_signal_count, the
+ * same "Forum buzz" counter a signal-only match on a BRAND NEW incident gets at
+ * initial publish (see the approve route). Everything else — source_urls,
+ * source_timeline, dates, update_count — is left untouched; the snapshot still
+ * carries their current values so revertUpdate's uniform restore has something
+ * correct to write back (a no-op for those fields).
+ */
+export function applySignalCorroboration(
+  existing: IncidentMergeState,
+  input: { updatedSummary?: string },
+): { updates: Record<string, unknown>; snapshot: UpdateSnapshot } {
+  const snapshot: UpdateSnapshot = {
+    source_urls:       existing.source_urls ?? [],
+    source_timeline:   Array.isArray(existing.source_timeline) ? existing.source_timeline : [],
+    update_count:      existing.update_count ?? 0,
+    incident_date:     existing.incident_date ?? null,
+    first_reported_at: existing.first_reported_at ?? null,
+    is_developing:     existing.is_developing ?? false,
+    summary:           existing.summary ?? null,
+    edmw_signal_count: existing.edmw_signal_count ?? 0,
+  }
+
+  const updates: Record<string, unknown> = {
+    edmw_signal_count: snapshot.edmw_signal_count + 1,
+    is_developing:     true,
+  }
+  const updatedSummary = (input.updatedSummary ?? '').trim()
+  if (updatedSummary) updates.summary = updatedSummary
+
+  return { updates, snapshot }
+}
+
 /** The patch that restores an incident to its pre-merge snapshot. */
 export function revertUpdate(snap: UpdateSnapshot): Record<string, unknown> {
   return {
@@ -364,6 +402,7 @@ export function revertUpdate(snap: UpdateSnapshot): Record<string, unknown> {
     first_reported_at: snap.first_reported_at,
     is_developing:     snap.is_developing,
     summary:           snap.summary,
+    edmw_signal_count: snap.edmw_signal_count,
   }
 }
 

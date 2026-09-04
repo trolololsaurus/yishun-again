@@ -77,16 +77,17 @@ export interface AgentRelatedIncident {
 
 // Lightweight incident snapshot passed to UpdateCard / related-incident banners
 export interface IncidentPreview {
-  id:             string
-  title:          string
-  summary:        string
-  slug:           string
-  classification: Classification
-  severity:       number
-  incident_date:  string
-  source_urls:    string[]
-  update_count:   number
-  is_developing:  boolean
+  id:                string
+  title:             string
+  summary:           string
+  slug:              string
+  classification:    Classification
+  severity:          number
+  incident_date:     string
+  source_urls:       string[]
+  update_count:      number
+  is_developing:     boolean
+  edmw_signal_count: number
 }
 
 // ── Image generation state (migration 014) ──────────────────────────────────
