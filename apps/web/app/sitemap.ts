@@ -21,6 +21,18 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     }
   })
 
+  const { data: patterns } = await supabase
+    .from('patterns')
+    .select('slug,updated_at')
+    .eq('published', true)
+
+  const patternRoutes: MetadataRoute.Sitemap = (patterns ?? []).map(p => ({
+    url:             `${SITE_URL}/patterns/${p.slug}`,
+    ...(p.updated_at ? { lastModified: new Date(p.updated_at) } : {}),
+    changeFrequency: 'weekly' as const,
+    priority:        0.6,
+  }))
+
   return [
     {
       url:             `${SITE_URL}/`,  // trailing slash — matches the Feed canonical
@@ -35,9 +47,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority:        0.9,
     },
     {
-      url:             `${SITE_URL}/timeline`,
+      url:             `${SITE_URL}/patterns`,
       lastModified:    new Date(),
-      changeFrequency: 'daily',
+      changeFrequency: 'weekly',
       priority:        0.6,
     },
     {
@@ -46,6 +58,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'monthly',
       priority:        0.6,
     },
+    ...patternRoutes,
     ...incidentRoutes,
   ]
 }

@@ -5,12 +5,11 @@ import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { buildHref } from '@/lib/params'
 
-// Labels only — the routes stay `/` and `/timeline`.
 const LINKS: Array<{ href: string; label: string }> = [
-  { href: '/',         label: 'FEED'    },
-  { href: '/map',      label: 'MAP'     },
-  { href: '/timeline', label: 'HISTORY' },
-  { href: '/about',    label: 'ABOUT'   },
+  { href: '/',         label: 'FEED'     },
+  { href: '/map',      label: 'MAP'      },
+  { href: '/patterns', label: 'PATTERNS' },
+  { href: '/about',    label: 'ABOUT'    },
 ]
 
 // Shared markup. `hrefFor` decides whether the query string is carried across

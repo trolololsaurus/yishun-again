@@ -94,6 +94,12 @@ const nextConfig = {
         destination: '/incidents/safra-yishun-student-death-jethro-puah-2021',
         permanent: true,
       },
+      // /timeline (HISTORY) was replaced by /patterns. Preserve the indexed URL.
+      {
+        source: '/timeline',
+        destination: '/patterns',
+        permanent: true,
+      },
     ]
   },
 }

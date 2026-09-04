@@ -70,6 +70,19 @@ LOCATION_THRESHOLD      = 5
 CRIMETYPE_MIN_SEVERITY  = 4
 ALERT_DEDUP_DAYS        = 30
 
+# Values equal to the town itself carry zero discriminating signal — every
+# incident on this site is already in Yishun/Nee Soon, so a cluster keyed
+# on the town name alone tells the operator nothing. This is a known
+# constant, not something to be learned or inferred.
+#
+# Sub-areas ("Yishun Central", "Yishun Ave 1", "Yishun St 81") are NOT
+# here and must never be added automatically — they discriminate and are
+# exactly the clusters this detector exists to find.
+#
+# If a new broad/whole-town synonym starts firing false clusters, add its
+# lowercase string here. That edit is the entire maintenance mechanism.
+BROAD_LOCATION_STOPLIST = {"yishun", "nee soon", "nee soon central"}
+
 # Cap Haiku entity-extraction calls per run. Env-settable so the operator can
 # raise it without a redeploy when the archive outgrows it — see the module
 # docstring for why exceeding it is a coverage limit, not just a cost one.
@@ -359,6 +372,12 @@ def _check_location_patterns(supabase, incidents: list[dict]) -> int:
             area_groups[area.lower()].append(inc)
 
     for area_lower, matching_incs in area_groups.items():
+        if area_lower in BROAD_LOCATION_STOPLIST:
+            logger.debug(
+                "Location pattern SKIP — broad area '%s' (%d incidents, no discriminating signal)",
+                area_lower, len(matching_incs),
+            )
+            continue
         if len(matching_incs) < LOCATION_THRESHOLD:
             continue
         area_label = area_lower.title()

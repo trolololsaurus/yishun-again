@@ -17,6 +17,8 @@ Runs the whole fleet in a deliberate order and returns a single report.
      7. backend_health   Supabase / R2 / API / cost guard (#12)
      8. pattern_detection  entity / crime-type / location alerts — AFTER publish,
                          so today's incidents are in the pool it scans
+    8b. pattern_autoappend confidence-gated append of new incidents to curated
+                         patterns (>=0.85) — reversible in the War Room (#PATTERNS)
      9. lifecycle        Mondays: auto-conclude developing stories idle 180 days
     10. source_discovery first Monday: novel outlets -> sources, unapproved
     11. maintenance      reads everything above and mails ONE digest — so it must
@@ -354,6 +356,17 @@ def run(dry_run: bool = False, trigger: str = "scheduler",
             return discovery_run(supabase_client=supabase_client)
 
         _cadence_step("pattern_detection", _pattern, steps, arun, plan["pattern_detection"])
+
+        # 8b. Pattern auto-append — after pattern_detection, so any incidents this
+        # pass published are candidates. Confidence-gated (>=0.85), reversible in
+        # the War Room, and off if PATTERN_AUTO_APPEND_ENABLED is unset to false.
+        # Honours dry_run internally (scores, writes nothing).
+        def _autoappend():
+            from ops.pattern_autoappend import run as autoappend_run
+            return autoappend_run(supabase_client=supabase_client, dry_run=dry_run, trigger="chained")
+
+        _step("pattern_autoappend", _autoappend, steps, arun)
+
         _cadence_step("lifecycle", _lifecycle, steps, arun, plan["lifecycle"])
         _cadence_step("source_discovery", _discovery, steps, arun, plan["source_discovery"])
 

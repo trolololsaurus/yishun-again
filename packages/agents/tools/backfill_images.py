@@ -75,28 +75,11 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-_REPO_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
-)
+from tools._env import load_env as _load_env  # noqa: E402
 
 COST_PER_IMAGE_USD = 0.0336  # gemini-3.1-flash-lite-image, standard rate (docs/ART_PIPELINE.md)
 
 INCIDENT_COLUMNS = "id,slug,title,summary,classification,severity,area_name,tags,image_status"
-
-
-def _load_env() -> None:
-    if os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SECRET_KEY"):
-        return
-    path = os.path.join(_REPO_ROOT, ".env")
-    if not os.path.exists(path):
-        return
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, val = line.split("=", 1)
-            os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
 
 
 def main() -> int:
