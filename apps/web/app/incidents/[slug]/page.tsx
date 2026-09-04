@@ -4,7 +4,7 @@ import { notFound }      from 'next/navigation'
 import Link              from 'next/link'
 import { supabase }      from '@/lib/supabase'
 import { classIcon, classColor, classTooltip, HYPE_TOOLTIP, severityDiamonds, severityTooltip, hypeMeter, hypeFromSources, fmtDate, formatDuration, formatDurationGap, lastVerdictEntry, verdictNoun, collapseTimelineByDate, sharedLocationLabel, dateFromUrl, toParagraphs, uniqueSources, canonicalUrl, foreignSourceNote } from '@/lib/utils'
-import { ShareButton }   from './ShareButton'
+import { ShareButton }   from '@/components/ShareButton'
 import { UTMLogger }     from '@/components/UTMLogger'
 import { PageViewTracker } from '@/components/PageViewTracker'
 import { SITE_URL }      from '@/lib/site'
@@ -515,13 +515,13 @@ export default async function IncidentPage({ params }: Props) {
         </div>
       )}
 
-      {/* Share */}
+      {/* Back link, then Share on the right — same order as the pattern page */}
       <div className="flex items-center gap-4 border-t border-border pt-4">
-        <ShareButton url={shareUrl} title={incident.title} incidentId={incident.id} />
         <Link href="/" className="font-body text-text-secondary hover:text-text-primary"
               style={{ fontSize: '14px' }}>
           ← Back to map
         </Link>
+        <ShareButton url={shareUrl} title={incident.title} incidentId={incident.id} />
       </div>
 
       <Suspense fallback={null}>

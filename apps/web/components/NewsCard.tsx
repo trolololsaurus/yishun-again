@@ -11,7 +11,7 @@ import {
 } from '@/lib/utils'
 import type { Incident } from '@/lib/types'
 import { SITE_URL } from '@/lib/site'
-import { ShareButton } from '@/app/incidents/[slug]/ShareButton'
+import { ShareButton } from '@/components/ShareButton'
 
 type Row = Pick<Incident,
   'id' | 'slug' | 'title' | 'summary' | 'classification' | 'custom_label' | 'severity'

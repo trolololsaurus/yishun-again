@@ -67,7 +67,8 @@ export default async function PatternsPage() {
       <h1 className="font-display text-amber mb-3 leading-relaxed" style={{ fontSize: '32px' }}>
         PATTERNS
       </h1>
-      <p className="text-text-secondary leading-relaxed mb-8" style={{ fontSize: '16px' }}>
+      {/* Same body colour/size as /about's intro (text-text-primary, 16px) for consistency. */}
+      <p className="text-text-primary leading-relaxed mb-8" style={{ fontSize: '16px' }}>
         Phenomena happen. And they happen in Yishun, stranger than fiction. These are the
         recurring stories the archive keeps surfacing — each one backed by the incidents underneath it.
       </p>

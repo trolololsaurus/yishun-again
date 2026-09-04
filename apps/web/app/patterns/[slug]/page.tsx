@@ -7,6 +7,7 @@ import { SITE_URL } from '@/lib/site'
 import { PUBLIC_INCIDENT_COLUMNS } from '@/lib/publicColumns'
 import { toParagraphs } from '@/lib/utils'
 import { PatternTimeline } from '@/components/PatternTimeline'
+import { ShareButton } from '@/components/ShareButton'
 import type { Incident } from '@/lib/types'
 
 export const revalidate = 300
@@ -72,6 +73,9 @@ export default async function PatternPage({ params }: Props) {
   }
 
   const url = `${SITE_URL}/patterns/${pattern.slug}`
+  // Same shape as the incident page's shareUrl — utm_campaign has no
+  // classification equivalent here, so it's just the content type.
+  const shareUrl = `${url}?utm_source=share&utm_medium=share_card&utm_campaign=pattern`
   // Same enrichment fields as the incident page's NewsArticle JSON-LD
   // (commit 38903d6) — dateModified, isAccessibleForFree, inLanguage and an
   // explicit publisher, so a citable page here is held to the same GEO bar
@@ -154,11 +158,12 @@ export default async function PatternPage({ params }: Props) {
         <PatternTimeline incidents={incidents} />
       </div>
 
-      <div className="border-t border-border pt-4">
+      <div className="flex items-center gap-4 border-t border-border pt-4">
         <Link href="/patterns" className="font-body text-text-secondary hover:text-text-primary"
               style={{ fontSize: '14px' }}>
           ← All patterns
         </Link>
+        <ShareButton url={shareUrl} title={pattern.title} />
       </div>
     </article>
   )

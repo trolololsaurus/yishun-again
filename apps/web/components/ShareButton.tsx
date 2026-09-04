@@ -3,14 +3,18 @@
 import { useState } from 'react'
 import { getSessionId, sendTrackingBeacon } from '@/lib/tracking'
 
-export function ShareButton({ url, title, incidentId }: { url: string; title: string; incidentId: string }) {
+// Shared by incident and pattern pages. incidentId is omitted (stays null in
+// page_events) on any page that isn't backed by a real incidents.id — the
+// column is a real FK (migration 019), so passing a non-incident id would
+// either fail the insert or, worse, silently misattribute the share.
+export function ShareButton({ url, title, incidentId }: { url: string; title: string; incidentId?: string }) {
   const [copied, setCopied] = useState(false)
 
   function logShare() {
     sendTrackingBeacon({
       id:          crypto.randomUUID(),
       session_id:  getSessionId(),
-      incident_id: incidentId,
+      incident_id: incidentId ?? null,
       path:        window.location.pathname,
       event_type:  'share',
     })
