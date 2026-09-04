@@ -116,18 +116,18 @@ export default async function PatternsPage() {
                     <p className="text-text-secondary leading-relaxed mb-2 line-clamp-2" style={{ fontSize: '14px' }}>
                       {p.thesis.slice(0, 160).trimEnd()}{p.thesis.length > 160 ? '…' : ''}
                     </p>
-                    <div className="text-text-secondary" style={{ fontSize: '12px' }}>
-                      {count} incident{count !== 1 ? 's' : ''}{range ? ` · ${range}` : ''}
-                    </div>
                     {/* Same call-to-action word, casing and styling as the feed
-                        card's "READ MORE" toggle (NewsCard.tsx) — bottom-left,
-                        font-display, amber, letter-spaced. */}
-                    <span
-                      className="inline-block font-display mt-2"
-                      style={{ fontSize: 10, letterSpacing: '0.1em', color: 'var(--color-amber)' }}
-                    >
-                      READ MORE
-                    </span>
+                        card's "READ MORE" toggle (NewsCard.tsx) — font-display,
+                        amber, letter-spaced — on one line with the meta. */}
+                    <div className="flex items-center gap-2 mt-2" style={{ fontSize: '12px' }}>
+                      <span className="font-display" style={{ fontSize: 10, letterSpacing: '0.1em', color: 'var(--color-amber)' }}>
+                        READ MORE
+                      </span>
+                      <span aria-hidden className="text-border">|</span>
+                      <span className="text-text-secondary">
+                        {count} incident{count !== 1 ? 's' : ''}{range ? ` · ${range}` : ''}
+                      </span>
+                    </div>
                   </div>
                 </Link>
               </li>
