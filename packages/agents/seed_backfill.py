@@ -94,6 +94,23 @@ def _extract(html: str, fallback_url: str) -> tuple[str, str, str | None]:
         m = re.search(r"/(\d{4})/(\d{2})/(\d{2})/", fallback_url)
         if m:
             date = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    if not date:
+        # Byline text with no <time>/meta tag at all (e.g. Coconuts' plain
+        # "Apr 27, 2018" span, class="post-timeago") — the LLM fallback below
+        # has no date in `body` to read, and hallucinates one instead of
+        # returning null. Read the human-formatted byline date directly, only
+        # from a byline-labelled element — a bare month/day/year scan anywhere
+        # in the page hits related-post teasers and footer boilerplate instead.
+        m = re.search(
+            r'class=["\'][^"\']*(?:timeago|post-date|entry-date|byline)[^"\']*["\']'
+            r'[^>]*>\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)'
+            r'[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})\b', html, re.IGNORECASE)
+        if m:
+            try:
+                date = datetime.strptime(f"{m.group(1)} {m.group(2)} {m.group(3)}",
+                                          "%b %d %Y").strftime("%Y-%m-%d")
+            except ValueError:
+                pass
     return title, body, date
 
 
@@ -173,11 +190,15 @@ def fetch_article(url: str) -> dict | None:
         return None
 
     # Date recovery when <meta>/URL-path gave nothing (gov sites, Mothership
-    # /YYYY/MM/ links, Wayback snapshots): month-only URL first, then LLM reads
-    # the date cues in the article text.
+    # /YYYY/MM/ links, Wayback snapshots): the URL's own /YYYY/MM/ segment is a
+    # deterministic, publisher-set value and must win over the LLM guess — the
+    # LLM almost never returns null (it will read a YEAR MENTIONED IN THE BODY
+    # as if it were the publish date), so `llm or url_month` let a confident
+    # wrong guess permanently shadow a reliable one. Two Mothership URLs under
+    # /2025/06/ were dated 2024-06-01 and 2024-06-03 this way before the fix.
     if not date:
         mm = re.search(r"/(\d{4})/(\d{2})/(?:\d{2}/)?", url)
-        date = _date_from_text(title or "", body) or (f"{mm.group(1)}-{mm.group(2)}-01" if mm else None)
+        date = (f"{mm.group(1)}-{mm.group(2)}-01" if mm else None) or _date_from_text(title or "", body)
 
     logger.info("fetched [%s] %s | %s | %s", used, _host(url), date, (title or "")[:70])
     return {
