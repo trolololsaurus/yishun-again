@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { validateUUID } from '@/lib/utils'
+import { revalidatePattern } from '@/lib/revalidate'
 
 // Manually attach an incident to a pattern. Accepts a UUID or a slug. Adds to
 // incident_ids and CLEARS any prior exclusion (an operator re-adding something
@@ -34,7 +35,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
   const { data: pattern, error: pErr } = await supabase
     .from('patterns')
-    .select('id,incident_ids,excluded_incident_ids')
+    .select('id,slug,incident_ids,excluded_incident_ids')
     .eq('id', pid).single()
   if (pErr || !pattern) return NextResponse.json({ error: 'Pattern not found' }, { status: 404 })
 
@@ -51,5 +52,11 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     console.error('POST /api/patterns/[id]/attach:', error)
     return NextResponse.json({ error: 'Attach failed' }, { status: 500 })
   }
+
+  // Fire-and-log: the attach already committed, so a revalidate failure
+  // shouldn't fail the request — same reasoning as revalidateIncident.
+  const revalidate = await revalidatePattern(pattern.slug)
+  if (!revalidate.ok) console.error('attach — revalidate failed (non-fatal):', revalidate.reason)
+
   return NextResponse.json({ ok: true, incident: resolved })
 }

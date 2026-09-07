@@ -15,7 +15,11 @@ Every append is REVERSIBLE and AUDITED:
     records the decision;
   - the operator's undo (War Room) removes the id and lists it in
     `excluded_incident_ids`, which this agent treats as a permanent "never
-    re-add" — so a reversed decision does not come back the next pass.
+    re-add" — so a reversed decision does not come back the next pass;
+  - /patterns and the touched pattern's /patterns/[slug] are revalidated on
+    the public site (see _revalidate_patterns) — without it the new count
+    sits behind ISR's `revalidate = 300` cache with no way to force it, same
+    trap the image-rectify path solves for incident pages.
 
 Bounds on cost: only incidents published within PATTERN_AUTO_APPEND_LOOKBACK_DAYS
 (default 3 — the twice-daily cadence means a new incident is still seen a couple
@@ -139,6 +143,7 @@ def run(supabase_client=None, *, dry_run: bool = False, trigger: str = "manual")
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=lookback)).isoformat()
     appended_ids: list[str] = []
+    touched_pattern_slugs: set[str] = set()
 
     with AgentRun(AGENT, trigger=trigger, client=sb) as run_:
         run_.stat("dry_run", dry_run)
@@ -202,6 +207,7 @@ def run(supabase_client=None, *, dry_run: bool = False, trigger: str = "manual")
                 if _append(sb, pat, cid, conf, reason, run_):
                     stats["appended"] += 1
                     appended_ids.append(cid)
+                    touched_pattern_slugs.add(pat["slug"])
                     existing.add(cid)   # don't re-score this cid again for this pattern
                 else:
                     stats["errors"] += 1
@@ -216,6 +222,8 @@ def run(supabase_client=None, *, dry_run: bool = False, trigger: str = "manual")
             run_.stat(k, v)
 
     _notify_if_appended(sb, appended_ids, dry_run)
+    if not dry_run:
+        _revalidate_patterns(touched_pattern_slugs)
     return stats
 
 
@@ -281,6 +289,42 @@ def _notify_if_appended(sb, appended_ids: list[str], dry_run: bool) -> None:
         )
     except Exception as exc:                          # noqa: BLE001
         logger.debug("autoappend notify failed: %s", exc)
+
+
+def _revalidate_patterns(slugs: set[str]) -> None:
+    """
+    Bust the public site's ISR cache for /patterns + each touched pattern's
+    detail page — same trap as image rectification: this agent mutates an
+    EXISTING patterns row that /patterns and /patterns/[slug] already have
+    cached, and nothing else in this module's write path busts that cache.
+    Without this, a fresh append sits invisible for up to `revalidate = 300`
+    seconds with no way to force it (this is the Python side of the same fix
+    apps/war-room/lib/revalidate.ts applies for the attach/detach routes).
+
+    Degrades to a debug log if REVALIDATE_SECRET/NEXT_PUBLIC_SITE_URL are not
+    set on this backend — ops/ never raises.
+    """
+    if not slugs:
+        return
+    base   = (os.getenv("NEXT_PUBLIC_SITE_URL") or "").rstrip("/")
+    secret = (os.getenv("REVALIDATE_SECRET") or "").strip()
+    if not base or not secret:
+        logger.debug("autoappend: skipping revalidate — "
+                      "NEXT_PUBLIC_SITE_URL/REVALIDATE_SECRET not set")
+        return
+    import httpx
+    for slug in slugs:
+        try:
+            r = httpx.post(
+                f"{base}/api/revalidate",
+                json={"pattern": slug},
+                headers={"Authorization": f"Bearer {secret}"},
+                timeout=10.0,
+            )
+            if r.status_code != 200:
+                logger.warning("autoappend: revalidate %s -> HTTP %d", slug, r.status_code)
+        except Exception as exc:                      # noqa: BLE001
+            logger.warning("autoappend: revalidate %s failed: %s", slug, exc)
 
 
 def _anthropic():

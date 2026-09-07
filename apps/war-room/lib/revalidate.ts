@@ -79,3 +79,46 @@ export async function revalidateIncident(slug: string): Promise<RevalidateResult
     return { ok: false, reason: e instanceof Error ? e.message : 'revalidate call failed' }
   }
 }
+
+/**
+ * Bust the ISR cache for /patterns plus one pattern's detail page.
+ *
+ * Same trap as revalidateIncident, different route: attach/detach (and the
+ * pattern_autoappend agent) mutate an EXISTING patterns row that /patterns and
+ * /patterns/[slug] already have cached — nothing else in the pattern edit
+ * paths busts that cache, so a stale incident count could sit for up to
+ * `revalidate = 300` seconds with no way to force it.
+ */
+export async function revalidatePattern(slug: string): Promise<RevalidateResult> {
+  const base   = (process.env.NEXT_PUBLIC_SITE_URL ?? '').replace(/\/+$/, '')
+  const secret = (process.env.REVALIDATE_SECRET ?? '').trim()
+
+  if (!base || !secret) {
+    return {
+      ok: false,
+      reason: 'NEXT_PUBLIC_SITE_URL or REVALIDATE_SECRET is not set on the War Room',
+    }
+  }
+  if (!/^[a-z0-9-]+$/.test(slug)) {
+    return { ok: false, reason: `pattern slug "${slug}" is not [a-z0-9-]` }
+  }
+
+  try {
+    const res = await fetch(`${base}/api/revalidate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${secret}`,
+      },
+      body:     JSON.stringify({ pattern: slug }),
+      redirect: 'error',
+      signal:   AbortSignal.timeout(REVALIDATE_TIMEOUT_MS),
+    })
+    if (!res.ok) {
+      return { ok: false, reason: `revalidate returned HTTP ${res.status}` }
+    }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : 'revalidate call failed' }
+  }
+}

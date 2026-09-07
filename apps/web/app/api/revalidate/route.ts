@@ -37,16 +37,28 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await req.json().catch(() => ({}))
-  const slug  = typeof body?.slug === 'string' ? body.slug.replace(/[^a-z0-9-]/g, '') : null
+  const body   = await req.json().catch(() => ({}))
+  const slug    = typeof body?.slug === 'string' ? body.slug.replace(/[^a-z0-9-]/g, '') : null
+  const pattern = typeof body?.pattern === 'string' ? body.pattern.replace(/[^a-z0-9-]/g, '') : null
 
   revalidatePath('/', 'page')
   revalidatePath('/incidents/[slug]', 'page')
   if (slug) revalidatePath(`/incidents/${slug}`, 'page')
 
+  // Pattern edits (attach/detach, auto-append) mutate an existing patterns row —
+  // the same "update-after-insert" trap the incident-slug path above exists for,
+  // just for /patterns and its detail page instead of /incidents/[slug].
+  if (pattern) {
+    revalidatePath('/patterns', 'page')
+    revalidatePath(`/patterns/${pattern}`, 'page')
+  }
+
   return NextResponse.json({
     revalidated: true,
-    paths: ['/', '/incidents/[slug]', ...(slug ? [`/incidents/${slug}`] : [])],
+    paths: [
+      '/', '/incidents/[slug]', ...(slug ? [`/incidents/${slug}`] : []),
+      ...(pattern ? ['/patterns', `/patterns/${pattern}`] : []),
+    ],
     at: new Date().toISOString(),
   })
 }

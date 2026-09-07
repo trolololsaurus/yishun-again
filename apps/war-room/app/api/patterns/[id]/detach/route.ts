@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { validateUUID } from '@/lib/utils'
+import { revalidatePattern } from '@/lib/revalidate'
 
 // The operator's reversal. Removes an incident from a pattern and records it in
 // excluded_incident_ids so the auto-append agent never re-adds it. Works for
@@ -56,6 +57,9 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     operator_note: `Removed from pattern '${pattern.slug}'${wasAuto ? ' (was auto-appended)' : ''}.`,
   })
   if (sigErr) console.error('detach — training_signal insert failed (non-fatal):', sigErr)
+
+  const revalidate = await revalidatePattern(pattern.slug)
+  if (!revalidate.ok) console.error('detach — revalidate failed (non-fatal):', revalidate.reason)
 
   return NextResponse.json({ ok: true })
 }
