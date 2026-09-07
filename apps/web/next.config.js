@@ -94,6 +94,11 @@ const nextConfig = {
         destination: '/incidents/safra-yishun-student-death-jethro-puah-2021',
         permanent: true,
       },
+      {
+        source: '/incidents/pma-rider-crash-yishun-pedestrian-path',
+        destination: '/incidents/pma-rider-overturn-yishun-park-connector',
+        permanent: true,
+      },
       // /timeline (HISTORY) was replaced by /patterns. Preserve the indexed URL.
       {
         source: '/timeline',
