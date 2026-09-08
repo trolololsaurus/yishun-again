@@ -587,8 +587,9 @@ def run_ingestion_pass(
     # `now` that is not the real current time gets a deadline already in the past
     # and the pass aborts before fetching a single source — reporting an empty
     # `per_source` and advancing no watermarks, which reads exactly like "no news
-    # today". `test_watermark_advance.py` pins `now` to the 14:58 SGT slot and so
-    # was only valid during a ~20-minute real-time window each day.
+    # today". `test_watermark_advance.py` pins `now` to a real scheduled-pass slot
+    # (15:58 SGT, changed from 14:58 on 2026-09-08) and so was only valid during a
+    # ~20-minute real-time window each day.
     #
     # Monotonic also makes the budget immune to an NTP step or a DST jump
     # mid-pass, which a wall-clock deadline is not.

@@ -17,7 +17,7 @@ existing seed backfill (seed_backfill.py), which fetches, drafts and queues them
 for operator review exactly like any other source.
 
 It is deliberately NOT a daily Source. Topic x year is static history — running it
-on every 14:58 pass would re-buy the same queries daily for no new signal. Run it
+on every scheduled pass would re-buy the same queries daily for no new signal. Run it
 occasionally, review the manifest, then feed it to seed_backfill.
 
 WHY DUCKDUCKGO, AND WHY KEYLESS

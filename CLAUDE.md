@@ -275,7 +275,8 @@ prose, never merges it) — the mechanism that corrupted a live incident via a R
 merge. Guard: `test_summary_enrichment.py`.
 
 **The pipeline is autonomous as of July 2026.** One Cloud Scheduler job runs
-**twice daily at 02:58 and 14:58 SGT** and POSTs `/orchestrator/daily`, which runs twelve agents in a
+**twice daily at 03:58 and 15:58 SGT** (changed from 02:58/14:58 on 2026-09-08)
+and POSTs `/orchestrator/daily`, which runs twelve agents in a
 fixed order (`ops/daily.py`): recalibration → ingestion → auto-publish →
 integrity → supervisor → learning monitor → backend health → pattern detection →
 lifecycle (Mondays) → source discovery (first Monday) → maintenance digest →

@@ -10,7 +10,8 @@ operator when something actually needs a person."
 
 ## 1. What runs, when
 
-One Cloud Scheduler job runs **twice daily at 02:58 and 14:58 SGT** and POSTs to
+One Cloud Scheduler job runs **twice daily at 03:58 and 15:58 SGT** (changed
+from 02:58/14:58 on 2026-09-08) and POSTs to
 `/orchestrator/daily` on the `yishun-agents` Cloud Run service. That single
 endpoint runs twelve steps in a fixed order (`packages/agents/ops/daily.py`):
 
@@ -963,7 +964,7 @@ gcloud run services update yishun-agents --region asia-southeast1 \
 #   AUTO_MERGE_MATCH_CONFIDENCE=0.95  same-event bar (the strict, wrong-merge axis)
 #   AUTO_MERGE_MAX_PER_RUN=25         blast-radius cap per pass
 ```
-Takes effect on the next scheduled pass (02:58 / 14:58 SGT) — no redeploy.
+Takes effect on the next scheduled pass (03:58 / 15:58 SGT) — no redeploy.
 
 **Watch the first few passes:**
 | Signal | Where |

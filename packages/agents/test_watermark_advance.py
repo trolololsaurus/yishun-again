@@ -49,7 +49,7 @@ def check(name, cond, detail=""):
 # ── The pass clock. Candidates are dated in July so the same-day grace only
 #    applies where a test deliberately dates one on PASS_DATE. ────────────────
 PASS_DATE = date(2026, 8, 1)
-NOW = datetime(2026, 8, 1, 6, 58, tzinfo=timezone.utc)   # 14:58 SGT, the real slot
+NOW = datetime(2026, 8, 1, 7, 58, tzinfo=timezone.utc)   # 15:58 SGT, the real slot
 START = date(2026, 7, 20)                                 # persisted watermark
 
 
@@ -304,7 +304,7 @@ for mode, grouper in (("off", None), ("on", lambda cands: [[i] for i in range(le
     # before fetching anything: empty `per_source`, zero Stage 1 calls, no
     # watermark moved. Indistinguishable from "no news today".
     #
-    # This whole file pins `now` to the 14:58 SGT slot, so every assertion below
+    # This whole file pins `now` to the 15:58 SGT slot, so every assertion below
     # silently depended on the real clock being within max_duration of it — the
     # suite was only valid for ~20 real minutes a day. Guard it directly.
     store = FakeStateStore({"CNA": START})

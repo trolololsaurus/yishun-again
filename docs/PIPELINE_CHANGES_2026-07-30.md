@@ -480,7 +480,8 @@ is the common case, so both of these are part of the fix, not decoration.
    newest-first the candidates it never examined were the *older* ones — silently
    dropped.
 2. **Same-day grace.** A decided candidate dated on or after the pass date is held
-   anyway. An outlet publishes all day; the pass runs once, at 14:58 SGT.
+   anyway. An outlet publishes all day; the pass runs at 03:58/15:58 SGT
+   (changed from 02:58/14:58 on 2026-09-08).
    Advancing onto today's date would drop everything that source filed after the
    pass ran, unseen and unlogged — far worse than the cost bug being fixed.
 

@@ -46,8 +46,8 @@ decoration.
    own successfully-decided siblings.
 
 2. **Same-day grace.** A decided candidate dated on or after the pass date is
-   recorded as unresolved anyway. An outlet publishes all day; the pass runs once
-   (14:58 SGT). Advancing to today's date would drop everything that source
+   recorded as unresolved anyway. An outlet publishes all day; the pass runs
+   twice (03:58/15:58 SGT). Advancing to today's date would drop everything that source
    published after the pass ran — unseen, unlogged, and a far worse failure than
    the cost bug this module exists to fix. The grace costs at most ONE extra pass
    per article, because tomorrow that date is in the past and advances normally.

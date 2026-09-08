@@ -936,7 +936,7 @@ def _notify_schema_blocked(why: str, client) -> None:
          "the War Room. But nothing will auto-publish until migration 011 is applied.\n\n"
          "Apply packages/db/migrations/011_autonomy_ops_schema.sql by hand in the\n"
          "Supabase SQL Editor (there is no migration runner — QA M15), then the next\n"
-         "14:58 SGT pass will pick it up with no redeploy needed."
+         "scheduled pass (03:58 or 15:58 SGT) will pick it up with no redeploy needed."
          + footer()),
         dedup_key="schema_blocked:auto_publish",
         client=client,

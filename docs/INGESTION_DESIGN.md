@@ -91,7 +91,8 @@ recommended fix was:
 > Cloud Run wakes, serves one ingestion pass, and scales back to zero. This is the standard
 > serverless-cron pattern, costs negligibly, and resolves the `min-instances 0` contradiction.
 
-**What was built:** one Cloud Scheduler job at **14:58 SGT daily** POSTs `/orchestrator/daily`
+**What was built:** one Cloud Scheduler job at **03:58 and 15:58 SGT daily**
+(changed from 02:58/14:58 on 2026-09-08) POSTs `/orchestrator/daily`
 (`main.py`), which runs the whole agent chain in `ops/daily.py`; its ingestion step is the call to
 `run_ingestion_pass(get_enabled_sources(), …)`. A single pass can also be triggered on its own via
 `POST /pipeline/run?dry_run=…`. Both endpoints require the ops token. There is no
@@ -465,7 +466,7 @@ then Futurist/Forward). Read §5.3 before changing first-run behaviour.
 > - **Retry floor** — only decided dates strictly *below* the earliest unresolved date advance.
 >   Without it a candidate that hit a transient error is silently dropped by its own
 >   successfully-decided siblings.
-> - **Same-day grace** — never advance onto the pass's own date. The pass runs once (14:58 SGT)
+> - **Same-day grace** — never advance onto the pass's own date. The pass runs at 03:58/15:58 SGT
 >   and the source publishes all day; advancing to today would drop everything published after the
 >   pass ran, unseen and unlogged. Costs at most one extra pass per article.
 >

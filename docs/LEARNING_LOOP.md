@@ -338,7 +338,7 @@ explicitly not in the build order.
 
 ```
         ┌─────────────────────────────────────────────────────────────┐
-        │  FUTURIST AGENT — run_ingestion_pass() (daily, 14:58 SGT)    │
+        │  FUTURIST AGENT — run_ingestion_pass() (twice daily, SGT)    │
         │  reads source_reputation + recent operator examples          │
         │  → steers FROZEN model in-context (Phase 1)                  │
         └───────────────┬─────────────────────────────────────────────┘

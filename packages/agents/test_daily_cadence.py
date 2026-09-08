@@ -123,8 +123,8 @@ check("the skip list covers every step cadence_plan decides",
 
 print("\nsgt_today:")
 
-check("14:58 SGT (06:58 UTC) is the same calendar day either way",
-      daily.sgt_today(datetime(2026, 8, 3, 6, 58, tzinfo=timezone.utc)) == FIRST_MONDAY)
+check("15:58 SGT (07:58 UTC) is the same calendar day either way",
+      daily.sgt_today(datetime(2026, 8, 3, 7, 58, tzinfo=timezone.utc)) == FIRST_MONDAY)
 check("00:30 SGT Monday is still SUNDAY in UTC — the gate must not miss it",
       daily.sgt_today(datetime(2026, 8, 2, 16, 30, tzinfo=timezone.utc)) == FIRST_MONDAY)
 check("23:30 SGT Monday is still Monday",

@@ -112,7 +112,8 @@ async def trigger_daily(
     _: None = Depends(_require_ops_token),
 ):
     """
-    THE production entry point. Cloud Scheduler POSTs here once a day at 14:58 SGT.
+    THE production entry point. Cloud Scheduler POSTs here twice daily, at
+    03:58 and 15:58 SGT (changed from 02:58/14:58 on 2026-09-08).
 
     Runs ingestion -> auto-publish -> integrity -> supervisor -> learning ->
     health -> pattern detection -> recalibration -> lifecycle (Mondays) ->

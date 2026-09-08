@@ -1,5 +1,6 @@
 """
-The daily orchestrator (req #13) — one entry point the scheduler calls at 14:58 SGT.
+The daily orchestrator (req #13) — one entry point the scheduler calls twice
+daily, at 03:58 and 15:58 SGT (changed from 02:58/14:58 on 2026-09-08).
 
 Runs the whole fleet in a deliberate order and returns a single report.
 
@@ -108,8 +109,8 @@ def sgt_today(now: datetime | None = None) -> date:
     """
     Today's date in Singapore time.
 
-    The whole schedule is written and discussed in SGT ("14:58 SGT", "Mondays"),
-    so the cadence gates must agree with the operator's calendar. For the 14:58
+    The whole schedule is written and discussed in SGT ("15:58 SGT", "Mondays"),
+    so the cadence gates must agree with the operator's calendar. For the 15:58
     SGT trigger the UTC date happens to match, but a manual 02:00 SGT trigger is
     still the previous day in UTC — which would fire Monday's lifecycle run on a
     Sunday.

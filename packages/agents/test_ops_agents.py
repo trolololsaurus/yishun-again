@@ -2,7 +2,7 @@
 Self-contained tests for the three ops agents. No pytest, no DB, no network.
 Run: .venv/Scripts/python.exe test_ops_agents.py
 
-These agents run unattended at 14:58 daily and alert a human via Telegram, so
+These agents run unattended twice daily (03:58/15:58 SGT) and alert a human via Telegram, so
 the two things
 worth pinning down are the two things that are expensive to get wrong:
 
@@ -158,7 +158,7 @@ print("\nsupervisor — zero streaks from pipeline_run_history:")
 
 def hist(*passes):
     """Newest-first run history. Each pass is {source: (status, fetched)}."""
-    return [{"ran_at": f"2026-07-{20 - n:02d}T14:58:00+00:00", "dry_run": False,
+    return [{"ran_at": f"2026-07-{20 - n:02d}T15:58:00+00:00", "dry_run": False,
              "report": {"per_source": [
                  {"name": name, "status": status, "fetched": fetched}
                  for name, (status, fetched) in p.items()]}}
