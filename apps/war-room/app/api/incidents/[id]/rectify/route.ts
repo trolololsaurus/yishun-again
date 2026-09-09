@@ -52,6 +52,19 @@ function mergeAttempts(
     .map((a, i) => ({ ...(a as Record<string, unknown>), n: i + 1 }))
 }
 
+/**
+ * The R2 object key behind a public art URL, for image_history (migration 025).
+ * `https://assets.yishunagain.com/pixel-art/{stem}.png?v=hash` -> `pixel-art/{stem}.png`.
+ * The cleanup sweep deletes by this key, so it must match what upload_to_r2 wrote.
+ */
+function keyFromArtUrl(url: string): string {
+  try {
+    return new URL(url).pathname.replace(/^\/+/, '')
+  } catch {
+    return url.split('?')[0].replace(/^\/+/, '')
+  }
+}
+
 export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
   const id = validateUUID(params.id)
@@ -67,7 +80,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
   const { data: incident, error: fetchErr } = await supabase
     .from('incidents')
-    .select('id, slug, title, summary, tags, image_status, image_prompt, image_attempts')
+    .select('id, slug, title, summary, tags, image_status, image_prompt, image_attempts, pixel_art_url, image_history')
     .eq('id', id)
     .single()
 
@@ -124,7 +137,15 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   // Composing the prompt HERE in TypeScript was the alternative and is rejected
   // for the reason artGenerate.ts already gives: it would put a second copy of
   // art/prompt_template.py and the suppression gate into a second language.
+  // Short-lived revert history (migration 025). A re-render must not clobber the
+  // image the operator might want back, so the rectify render writes to a fresh
+  // UNIQUE key (`{slug}--{ms}`) and the outgoing image is pushed onto
+  // image_history at its own surviving URL. "Revert" is then a DB pointer swap
+  // (revert-image route), not a re-render. ops/image_cleanup.py expires history
+  // past 8h / the newest 3, so this never accumulates.
   const compose = prompt === ''
+  const objectStem = `${incident.slug}--${Date.now()}`
+
   const art = compose
     ? await generateIncidentArt({
         slug:      incident.slug,
@@ -136,6 +157,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         slug:   incident.slug,
         prompt,
         incident: { title: incident.title, summary: incident.summary, tags: incident.tags },
+        objectStem,
       })
 
   // Append and renumber. render_prompt always reports n=1, so replacing would
@@ -189,6 +211,24 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     })
   }
 
+  // Revert-history bookkeeping (migration 025). The rectify render went to a new
+  // unique key, so the outgoing image is still live at its own URL — push it
+  // onto image_history so revert-image can swap back to it. Only on the rectify
+  // path and only when an image was actually displaced; the compose path uses
+  // the base key for an imageless row, so there is nothing to preserve.
+  // Untouched in the failure branch above — a failed re-render displaced
+  // nothing. Not capped here: ops/image_cleanup.py is the sole pruner, so
+  // trimming here would orphan the R2 object it needs to find.
+  const priorHistory = Array.isArray(incident.image_history) ? incident.image_history : []
+  const history = (!compose && incident.pixel_art_url)
+    ? [...priorHistory, {
+        key:        keyFromArtUrl(incident.pixel_art_url),
+        url:        incident.pixel_art_url,
+        prompt:     incident.image_prompt ?? '',
+        created_at: new Date().toISOString(),
+      }]
+    : priorHistory
+
   // Compare-and-set on the same status list: two operators on the same row, or
   // a suppression landing in between, must not both win.
   const { data: updated, error: updErr } = await supabase
@@ -198,6 +238,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
       image_status:   'ok',
       image_prompt:   art.final_prompt || prompt || null,
       image_attempts: attempts,
+      image_history:  history,
     })
     .eq('id', id)
     .in('image_status', RETRYABLE_STATUSES)
@@ -230,5 +271,8 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     // See the failure branch: the client needs the real prompt to put in the
     // box, otherwise "reject and re-roll with a tweak" rewrites the whole thing.
     final_prompt: art.final_prompt || prompt || '',
+    // The revert history after this render, so the card can offer the newest few
+    // previous images without a reload.
+    image_history: history,
   })
 }

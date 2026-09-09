@@ -112,6 +112,16 @@ export interface ImageAttempt {
   reason?: string
 }
 
+// A superseded image kept briefly for operator revert (migration 025). `key` is
+// the R2 object key (the cleanup sweep deletes by it), `url` the public URL,
+// `created_at` the instant it stopped being live (its 8h TTL clock starts then).
+export interface ImageVersion {
+  key:        string
+  url:        string
+  prompt:     string
+  created_at: string
+}
+
 /**
  * The rectification queue. Mirrors `idx_incidents_image_status` in 014 exactly.
  *
@@ -181,7 +191,7 @@ export function rectifyBlockReason(
  */
 export const RECTIFY_COLUMNS =
   'id, title, slug, classification, custom_label, severity, area_name, block_number, ' +
-  'pixel_art_url, image_status, image_prompt, image_attempts, published_at'
+  'pixel_art_url, image_status, image_prompt, image_attempts, published_at, image_history'
 
 export interface RectifyItem {
   id:             string
@@ -197,6 +207,9 @@ export interface RectifyItem {
   image_prompt:   string | null
   image_attempts: ImageAttempt[] | null
   published_at:   string | null
+  // Short-lived revert history (migration 025), newest last. The card offers
+  // the most recent few; ops/image_cleanup.py expires them past 8h / newest 3.
+  image_history:  ImageVersion[] | null
 }
 
 const IMAGE_STATUSES: readonly string[] = [
@@ -232,6 +245,7 @@ export interface Incident {
   image_status:        ImageStatus | null
   image_prompt:        string | null
   image_attempts:      ImageAttempt[] | null
+  image_history:       ImageVersion[] | null
   slug:                string
   seo_title:           string | null
   seo_description:     string | null

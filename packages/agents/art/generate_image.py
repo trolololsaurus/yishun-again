@@ -639,7 +639,26 @@ def _default_r2_client():
     )
 
 
-def upload_to_r2(data: bytes, slug: str, client) -> str:
+def delete_from_r2(key: str, client=None) -> None:
+    """
+    Delete one object by its full key (e.g. "pixel-art/{slug}--123.png").
+
+    Used by ops/image_cleanup.py to expire superseded rectification versions
+    (migration 025). DELETE is free on R2 and idempotent — deleting a missing key
+    is not an error — so a double-run or a already-gone object is harmless.
+
+    Raises on a transport/credential fault so the caller can record it; the
+    cleanup sweep wraps this and never lets it propagate (ops must not raise).
+    """
+    if not (isinstance(key, str) and key.strip()):
+        return
+    if client is None:
+        client = _default_r2_client()
+    bucket = os.environ["CF_R2_BUCKET_NAME"]
+    client.delete_object(Bucket=bucket, Key=key)
+
+
+def upload_to_r2(data: bytes, slug: str, client, *, key_stem: str | None = None) -> str:
     """
     PUT the object, then HEAD it and confirm size and content type.
 
@@ -649,19 +668,28 @@ def upload_to_r2(data: bytes, slug: str, client) -> str:
 
     ## Why the URL carries a ?v= content hash
 
-    The key is stable (`pixel-art/{slug}.png`) so regeneration overwrites in
-    place and never orphans objects. But the object is served with a one-year
-    max-age, and a stable URL plus a long TTL means a regenerated image never
-    reaches anyone who already loaded the old one — measured, not theorised: a
-    regeneration under a changed prompt was still served as the previous bytes
-    from cache. That silently defeats operator rectification (B4b), where the
-    whole point is replacing an image someone has already seen.
+    The key is normally stable (`pixel-art/{slug}.png`) so regeneration
+    overwrites in place and never orphans objects. But the object is served with
+    a one-year max-age, and a stable URL plus a long TTL means a regenerated
+    image never reaches anyone who already loaded the old one — measured, not
+    theorised: a regeneration under a changed prompt was still served as the
+    previous bytes from cache. That silently defeats operator rectification
+    (B4b), where the whole point is replacing an image someone has already seen.
 
-    Hashing the bytes into the query string keeps the long TTL, keeps one object
-    per incident, and changes the URL exactly when the picture changes.
+    Hashing the bytes into the query string keeps the long TTL and changes the
+    URL exactly when the picture changes.
+
+    ## key_stem — the alternate key for one-level undo (B4b, migration 025)
+
+    Operator rectification passes `key_stem=f"{slug}--alt"` so a re-render writes
+    to a SECOND object instead of clobbering the one the operator might want
+    back. The War Room ping-pongs between the two stems, so at most two objects
+    exist per incident and the displaced image survives at its own stable URL —
+    which is what makes "bring back the previous image" a pointer swap rather
+    than a re-render. Defaults to `slug`, so every other caller is unchanged.
     """
     bucket = os.environ["CF_R2_BUCKET_NAME"]
-    key = f"{R2_PREFIX}/{slug}.png"
+    key = f"{R2_PREFIX}/{key_stem or slug}.png"
 
     client.put_object(Bucket=bucket, Key=key, Body=data,
                       ContentType="image/png", CacheControl="public, max-age=31536000")
@@ -755,7 +783,7 @@ def _render_sensitive(incident: dict, slug: str, classification: str, *,
 
 
 def render_prompt(prompt: str, slug: str, *, incident: dict | None = None,
-                  genai_client=None, r2_client=None) -> ImageResult:
+                  genai_client=None, r2_client=None, key_stem: str | None = None) -> ImageResult:
     """
     Render ONE fixed prompt for one slug. No Haiku, no ladder, no budget.
 
@@ -818,7 +846,7 @@ def render_prompt(prompt: str, slug: str, *, incident: dict | None = None,
         data = crop_to_target(raw)
         if r2_client is None:
             r2_client = _default_r2_client()
-        url = upload_to_r2(data, slug, r2_client)
+        url = upload_to_r2(data, slug, r2_client, key_stem=key_stem)
     except _Refusal as exc:
         logger.warning("art.render_prompt: refused — %s", exc.reason)
         return ImageResult(status="refused", final_prompt=prompt,

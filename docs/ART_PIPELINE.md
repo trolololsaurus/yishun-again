@@ -549,6 +549,7 @@ image_status     ok | suppressed | refused | transient | invalid | skipped
                  | pending | no_image_final
 image_prompt     the full assembled prompt of the last attempt
 image_attempts   [{n, prompt, outcome, reason}] — what was tried, what was refused
+image_history    [{key, url, prompt, created_at}] — short-lived revert history (§6.3)
 ```
 
 **Why the War Room goes over HTTP rather than reimplementing.** The generator is
@@ -567,6 +568,32 @@ degrades to `pending`.
 
 Neither path can block a publish. Every failure returns a status; the row is
 inserted regardless and the frontend degrades to the placeholder.
+
+### 6.3 Operator revert history — migration 025
+
+Regeneration used to overwrite the image in place at the stable key
+`pixel-art/{slug}.png` (§8a), so an operator who re-rolled an image they liked
+had no way back — the bytes were gone. The rectify path now renders to a
+**unique key** (`pixel-art/{slug}--{ms}.png`, passed as `object_stem` to
+`/art/rectify` → `upload_to_r2(key_stem=…)`) and pushes the outgoing image onto
+`incidents.image_history`. "Revert" (`/api/incidents/[id]/revert-image`) is then
+a pure DB pointer swap — the chosen version becomes `pixel_art_url` and the
+displaced one joins `image_history` — no re-render, no byte copy, cache-safe
+because the keys and `?v=` hashes differ. The War Room card shows the newest few
+as a click-to-restore strip.
+
+History is deliberately **short-lived**. `ops/image_cleanup.py`, a
+non-cadence-gated step on the twice-daily chain (`ops/daily.py`, step 7b),
+deletes both the R2 object and the entry once it is older than
+`IMAGE_HISTORY_TTL_HOURS` (default 8) or beyond the newest `IMAGE_HISTORY_KEEP`
+(default 3). Effective lifetime is ~8–20h given the ~12h gap between passes — a
+dedicated cron was declined in favour of this piggyback. The **live** image is
+never in `image_history`, so the sweep can never delete the picture a page is
+serving; a failed R2 delete keeps the entry for the next pass rather than
+orphaning the object. Cleanup honours `dry_run` (reports, deletes nothing).
+Storage stays negligible — a few hundred KB per recently-rectified incident,
+gone within a day. Guards: `test_image_cleanup.py`, and the endpoint/exposure
+checks in `test_rectify_guards.py`.
 
 #### Persistence — migrations 014 and 015
 
@@ -745,8 +772,13 @@ objects, but the object is served with `max-age=31536000`. Measured on 31 July
 *previous* bytes, because neither the key nor the URL had changed. That silently
 defeats operator rectification (B4b), whose entire purpose is replacing an image
 someone has already seen. Hashing the bytes into the query string keeps the long
-TTL, keeps one object per incident, and changes the URL exactly when the picture
-does.
+TTL and changes the URL exactly when the picture does.
+
+The stable key applies to the generate/auto-publish path. The **rectify** path
+instead renders to a unique key `pixel-art/{slug}--{ms}.png` so the displaced
+image survives for revert (§6.3), so an actively-rectified incident briefly
+holds the live object plus up to a few short-lived history objects — all pruned
+back by `ops/image_cleanup.py` within ~8–20h.
 
 ⚠️ **`generate_image` uploads BEFORE the caller decides whether to keep the
 result.** There is no render-without-upload mode, so a "dry run" that only

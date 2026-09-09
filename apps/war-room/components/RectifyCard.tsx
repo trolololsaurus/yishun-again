@@ -6,7 +6,7 @@ import { classColor, classIcon, classLabel, severityDiamonds } from '@/lib/utils
 // RECTIFY_COLUMNS and RectifyItem live in lib/types.ts, not here. A server
 // component cannot import a runtime VALUE from a 'use client' module — it gets
 // a client-reference proxy, which typechecks and then fails at request time.
-import type { ImageAttempt, RectifyItem } from '@/lib/types'
+import type { ImageAttempt, ImageVersion, RectifyItem } from '@/lib/types'
 
 export type { RectifyItem }
 
@@ -48,11 +48,19 @@ function RectifyCard({
   const attempts = item.image_attempts ?? []
   const [draft,   setDraft]   = useState(item.image_prompt ?? attempts.at(-1)?.prompt ?? '')
   const [notes,   setNotes]   = useState('')
-  const [busy,    setBusy]    = useState<null | 'rectify' | 'no-image'>(null)
+  const [busy,    setBusy]    = useState<null | 'rectify' | 'no-image' | 'revert-image'>(null)
   const [error,   setError]   = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
   const [result,  setResult]  = useState<{ url: string | null; status: string; attempts: ImageAttempt[] } | null>(null)
   const [confirmNoImage, setConfirmNoImage] = useState(false)
+  // Short-lived revert history (migration 025), newest last. Re-roll freely: the
+  // recent images are one click from coming back until the cleanup sweep expires
+  // them (~8h). Showing the newest few is the whole undo affordance.
+  const [history, setHistory] = useState<ImageVersion[]>(item.image_history ?? [])
+
+  // Newest first, capped — the DB may briefly hold more than this between sweeps.
+  const HISTORY_SHOWN = 3
+  const previous = [...history].reverse().slice(0, HISTORY_SHOWN)
 
   const shown = result?.attempts ?? attempts
   // A render landed and is on screen waiting to be judged. This is the state the
@@ -77,7 +85,11 @@ function RectifyCard({
     return `${base}\n\nOPERATOR ADJUSTMENTS (these take priority):\n${add}`
   }
 
-  async function post(path: 'rectify' | 'no-image', body?: Record<string, unknown>) {
+  // Every request goes through this ONE helper with a typed path, so the set of
+  // reachable endpoints is closed and every fetch targets the same
+  // /api/incidents/<id>/<path> shape — guardrail #5 cannot be reached via some
+  // other URL. Adding an endpoint means adding a member here, nothing else.
+  async function post(path: 'rectify' | 'no-image' | 'revert-image', body?: Record<string, unknown>) {
     setBusy(path)
     setError(null)
     setWarning(null)
@@ -96,7 +108,29 @@ function RectifyCard({
         return
       }
 
+      // Revert is a pointer swap, not a render: the response carries the now-live
+      // image and prompt and the refreshed history (the displaced image joined
+      // it), so the strip stays usable to flip between versions.
+      if (path === 'revert-image') {
+        setResult({ url: data.url ?? null, status: 'ok', attempts: result?.attempts ?? attempts })
+        if (typeof data.image_prompt === 'string') setDraft(data.image_prompt)
+        if (Array.isArray(data.image_history)) setHistory(data.image_history)
+        if (data.revalidated === false) {
+          setWarning(
+            'Reverted, but the live page was NOT revalidated' +
+            (data.revalidate_reason ? ` (${data.revalidate_reason})` : '') +
+            ' — it may keep serving the other image for up to an hour.',
+          )
+        }
+        return
+      }
+
       setResult({ url: data.url ?? null, status: data.status, attempts: data.attempts ?? [] })
+      // The render pushed the displaced image onto the revert history; refresh
+      // the strip so it appears without a reload.
+      if (data.status === 'ok' && Array.isArray(data.image_history)) {
+        setHistory(data.image_history)
+      }
 
       // Fill the box with the prompt that was ACTUALLY rendered from, so the
       // next edit is an edit. On the compose path the operator started from an
@@ -174,6 +208,38 @@ function RectifyCard({
                 Rendered just now. Keep it, or adjust the prompt below and regenerate.
               </p>
             )}
+          </div>
+        )}
+
+        {/* Revert strip (migration 025). The recent images this incident had
+            before the current one — click one to bring it back. They expire on
+            their own (~8h) via the cleanup sweep, so this is a short window, not
+            a permanent gallery. */}
+        {previous.length > 0 && (
+          <div className="space-y-1">
+            <div className="text-text-secondary uppercase tracking-widest text-xs">
+              Previous images — click to restore
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {previous.map(v => (
+                <button
+                  key={v.url}
+                  onClick={() => post('revert-image', { url: v.url })}
+                  disabled={busy !== null}
+                  title="Make this the live image again. You can switch back afterwards."
+                  className="relative border border-border hover:border-yellow disabled:opacity-40"
+                  style={{ width: 96, height: 96 }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={v.url} alt="Previous version" className="w-full h-full object-cover" />
+                  {busy === 'revert-image' && (
+                    <span className="absolute inset-0 flex items-center justify-center bg-bg/70 text-text-primary text-xs">
+                      …
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

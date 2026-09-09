@@ -340,10 +340,17 @@ async def rectify_incident_art(
     suppression comes back as an ordinary 200 ImageResult with
     `status='suppressed'`, exactly as the `incident`-derived gate already did.
 
-    Body: `{slug, prompt, incident?, suppressed?}`.
+    Body: `{slug, prompt, incident?, suppressed?, object_stem?}`.
     Returns the ImageResult contract: `{url, status, attempts, final_prompt}`.
+
+    `object_stem` is the R2 key stem the render writes to (migration 025's
+    one-level undo). The War Room ping-pongs it between `{slug}` and
+    `{slug}--alt` so a re-render never clobbers the image the operator might
+    revert to. Optional and validated the same way as slug; omitted → the render
+    uses the slug, i.e. unchanged behaviour.
     """
     import asyncio
+    import re
     from art.generate_image import ImageResult, render_prompt
 
     slug = (payload.get("slug") or "").strip()
@@ -357,11 +364,18 @@ async def rectify_incident_art(
         # outcome, so the client never has to infer state from a status code.
         return ImageResult(status="suppressed", final_prompt=prompt).as_dict()
 
+    # The stem becomes an R2 object key, so hold it to the same URL-safe shape as
+    # the slug rather than trusting the caller. A bad value falls back to the
+    # slug — the render still succeeds, it just writes the base key.
+    object_stem = payload.get("object_stem")
+    if not (isinstance(object_stem, str) and re.fullmatch(r"[a-z0-9-]+", object_stem)):
+        object_stem = None
+
     incident = payload.get("incident") if isinstance(payload.get("incident"), dict) else None
 
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
-        None, lambda: render_prompt(prompt, slug, incident=incident))
+        None, lambda: render_prompt(prompt, slug, incident=incident, key_stem=object_stem))
     return result.as_dict()
 
 

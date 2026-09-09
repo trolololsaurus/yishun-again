@@ -286,14 +286,14 @@ check("the view is reachable from the nav", "'/rectify'" in nav_tsx)
 public_cols = (WEB / "lib" / "publicColumns.ts")
 pc = public_cols.read_text(encoding="utf-8") if public_cols.exists() else ""
 check("internal image columns are NOT exposed publicly",
-      not any(c in pc for c in ("image_prompt", "image_status", "image_attempts")),
+      not any(c in pc for c in ("image_prompt", "image_status", "image_attempts", "image_history")),
       "-> prompts would be served to the open internet")
 
 # The card routes every request through one helper with a typed path, so the
 # reachable endpoints are the union members, not literals in the fetch call.
 paths = set(re.findall(r"post\(\s*'([a-z-]+)'", _card_code))
-check("exactly two endpoints are called (retry-as-is and leave-pending add none)",
-      paths == {"rectify", "no-image"}, f"-> {sorted(paths)}")
+check("exactly three endpoints are called (rectify, no-image, revert-image)",
+      paths == {"rectify", "no-image", "revert-image"}, f"-> {sorted(paths)}")
 check("every request goes to /api/incidents/<id>/<path> and nowhere else",
       _card_code.count("fetch(") == 1
       and "/api/incidents/${item.id}/${path}" in _card_code)

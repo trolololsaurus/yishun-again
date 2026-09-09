@@ -16,6 +16,8 @@ Runs the whole fleet in a deliberate order and returns a single report.
                          pass rather than yesterday's (#9)
      6. learning_monitor rebuild source_reputation, snapshot the deltas (#5)
      7. backend_health   Supabase / R2 / API / cost guard (#12)
+    7b. image_cleanup    expire short-lived rectification image history (>8h or
+                         beyond newest 3) from R2 + the row (migration 025)
      8. pattern_detection  entity / crime-type / location alerts — AFTER publish,
                          so today's incidents are in the pool it scans
     8b. pattern_autoappend confidence-gated append of new incidents to curated
@@ -334,10 +336,18 @@ def run(dry_run: bool = False, trigger: str = "scheduler",
             from ops.backend_health import run as health_run
             return health_run(supabase_client=supabase_client, trigger="chained")
 
+        # Short-lived rectification image history (migration 025). Not
+        # cadence-gated — it runs every pass, and honours dry_run internally (it
+        # reports what it would expire and deletes nothing).
+        def _image_cleanup():
+            from ops.image_cleanup import run as cleanup_run
+            return cleanup_run(supabase_client=supabase_client, dry_run=dry_run, trigger="chained")
+
         _step("integrity", _integrity, steps, arun)
         _step("supervisor", _supervisor, steps, arun)
         _step("learning_monitor", _learning, steps, arun)
         _step("backend_health", _health, steps, arun)
+        _step("image_cleanup", _image_cleanup, steps, arun)
 
         # ── 8-10. Cadence-gated editorial agents ────────────────────────────
         # Wired in 2026-07-30. Along with recalibration above, these were

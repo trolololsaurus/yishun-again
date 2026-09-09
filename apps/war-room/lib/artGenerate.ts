@@ -132,6 +132,10 @@ export async function rectifyIncidentArt(args: {
   slug: string
   prompt: string
   incident?: { title?: string | null; summary?: string | null; tags?: string[] | null }
+  // R2 key stem the render writes to (migration 025's one-level undo). The
+  // caller ping-pongs it between `{slug}` and `{slug}--alt` so a re-render keeps
+  // the displaced image alive for revert. Omitted → the backend uses the slug.
+  objectStem?: string
 }): Promise<ImageResult> {
   const base  = (process.env.AGENTS_API_URL ?? '').replace(/\/+$/, '')
   const token = process.env.OPS_TOKEN ?? ''
@@ -145,7 +149,10 @@ export async function rectifyIncidentArt(args: {
     const res = await fetch(`${base}/art/rectify`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'X-Ops-Token': token },
-      body:    JSON.stringify({ slug: args.slug, prompt: args.prompt, incident: args.incident }),
+      body:    JSON.stringify({
+        slug: args.slug, prompt: args.prompt, incident: args.incident,
+        object_stem: args.objectStem,
+      }),
       signal:  controller.signal,
     })
     // NOTE: an HTTP status is NOT how suppression is signalled. It used to be —

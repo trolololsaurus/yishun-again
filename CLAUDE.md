@@ -276,12 +276,13 @@ merge. Guard: `test_summary_enrichment.py`.
 
 **The pipeline is autonomous as of July 2026.** One Cloud Scheduler job runs
 **twice daily at 03:58 and 15:58 SGT** (changed from 02:58/14:58 on 2026-09-08)
-and POSTs `/orchestrator/daily`, which runs twelve agents in a
+and POSTs `/orchestrator/daily`, which runs thirteen agents in a
 fixed order (`ops/daily.py`): recalibration → ingestion → auto-publish →
-integrity → supervisor → learning monitor → backend health → pattern detection →
-lifecycle (Mondays) → source discovery (first Monday) → maintenance digest →
-monthly report (1st). Steps are failure-isolated: one agent crashing does not
-cost you the rest.
+integrity → supervisor → learning monitor → backend health → image cleanup →
+pattern detection → lifecycle (Mondays) → source discovery (first Monday) →
+maintenance digest → monthly report (1st). Steps are failure-isolated: one agent
+crashing does not cost you the rest. (Image cleanup expires short-lived
+rectification image history — see the art guardrail #5 note and migration 025.)
 
 **The cadence lives in `ops/daily.py` and nowhere else.** There is no in-process
 scheduler: `main.py` used to carry a single-job APScheduler behind
@@ -718,6 +719,14 @@ semantics via REST — this project has no SQL runner.
 status vocabulary. Without 014 the War Room rectify queue errors out — it selects
 those columns directly. Art generation runs on the operator approve path, so
 these are not optional.
+
+**025 (image revert history)** adds `incidents.image_history` (JSONB, default
+`[]`). ⚠️ Load-bearing, same failure mode as 014: `/rectify` SELECTs it, so
+without this the rectify page errors. It backs one-level-plus operator revert —
+each rectify render writes to a unique R2 key and pushes the displaced image onto
+`image_history`; `ops/image_cleanup.py` (daily chain step 7b) deletes those
+objects + entries past `IMAGE_HISTORY_TTL_HOURS` (8) or the newest
+`IMAGE_HISTORY_KEEP` (3). See `docs/ART_PIPELINE.md` §6.3.
 
 **018 (undo an applied update)** — adds `'update_reverted'` to
 `war_room_queue.status` and `'auto_update'` + `'update_reverted'` to
