@@ -17,7 +17,7 @@ const MAP_DESCRIPTION =
 export const metadata: Metadata = {
   title:       { absolute: MAP_TITLE },
   description: MAP_DESCRIPTION,
-  alternates:  { canonical: `${SITE_URL}/map` },
+  alternates:  { canonical: `${SITE_URL}/map`, types: { 'application/rss+xml': `${SITE_URL}/feed.xml` } },
   openGraph: {
     title:       MAP_TITLE,
     description: MAP_DESCRIPTION,

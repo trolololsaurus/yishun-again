@@ -17,7 +17,7 @@ export const metadata: Metadata = {
   // title already carries the brand.
   title:       { absolute: FEED_TITLE },
   description: FEED_DESCRIPTION,
-  alternates:  { canonical: `${SITE_URL}/` },
+  alternates:  { canonical: `${SITE_URL}/`, types: { 'application/rss+xml': `${SITE_URL}/feed.xml` } },
   openGraph: {
     title:       FEED_TITLE,
     description: FEED_DESCRIPTION,

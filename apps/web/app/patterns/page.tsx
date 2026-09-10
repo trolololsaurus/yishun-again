@@ -10,7 +10,7 @@ export const revalidate = 300
 export const metadata: Metadata = {
   title:       'Patterns',
   description: 'The recurring stories of Yishun — cats, the Devil’s Ring, and the estate’s own cast of characters, drawn from the incident archive.',
-  alternates:  { canonical: `${SITE_URL}/patterns` },
+  alternates:  { canonical: `${SITE_URL}/patterns`, types: { 'application/rss+xml': `${SITE_URL}/feed.xml` } },
   openGraph: {
     title:       'Patterns — Yishun Again',
     description: 'The recurring stories of Yishun, drawn from the incident archive.',

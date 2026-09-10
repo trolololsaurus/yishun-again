@@ -4,7 +4,7 @@ import { SITE_URL } from '@/lib/site'
 export const metadata: Metadata = {
   title:       'About',
   description: "What is Yishun Again? A satirical incident archive for Yishun, Nee Soon — Singapore's most eventful estate.",
-  alternates:  { canonical: `${SITE_URL}/about` },
+  alternates:  { canonical: `${SITE_URL}/about`, types: { 'application/rss+xml': `${SITE_URL}/feed.xml` } },
   openGraph: {
     title:       'About — Yishun Again',
     description: "What is Yishun Again? A satirical incident archive for Yishun, Nee Soon — Singapore's most eventful estate.",
