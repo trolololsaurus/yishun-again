@@ -17,6 +17,11 @@ export const metadata: Metadata = {
     locale:   'en_SG',
     type:     'website',
   },
+  alternates: {
+    types: {
+      'application/rss+xml': `${SITE_URL}/feed.xml`,
+    },
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -49,7 +49,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title:       pattern.title,
     description: desc,
-    alternates:  { canonical: url },
+    alternates:  { canonical: url, types: { 'application/rss+xml': `${SITE_URL}/feed.xml` } },
     openGraph:   { title: pattern.title, description: desc, url, images: image, type: 'article' },
     twitter:     { card: 'summary_large_image' },
   }
