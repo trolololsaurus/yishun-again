@@ -76,6 +76,9 @@ const TRACKING_PARAMS = new Set([
   'fbclid', 'gclid', 'dclid', 'msclkid', 'igshid', 'twclid',
   'mc_cid', 'mc_eid', '_ga', 'cmpid', 'cmp', 'spm',
   'at_medium', 'at_campaign', 'oc',
+  // Stomp re-serves an updated article at ...?ai-allowed=1 (its AI-crawler
+  // flag); same article, new URL. Without this it counts as a second source.
+  'ai-allowed',
 ])
 
 export function canonicalUrl(url: string): string {

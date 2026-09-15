@@ -76,6 +76,9 @@ STOMP = "https://www.stomp.sg/singapore-seen/workers-yishun-worksite-uncover-sli
 check("tracking param stripped", sa.canonical_url(STOMP + "?ref=home-editors-picks") == sa.canonical_url(STOMP))
 check("the production duplicate is caught", sa.same_article(STOMP, STOMP + "?ref=home-editors-picks"))
 check("utm_* stripped", sa.same_article(STOMP, STOMP + "?utm_source=x&utm_campaign=y"))
+# Stomp's AI-crawler re-serve: same article, ?ai-allowed=1 appended. Slipped
+# dedup as an "update" and dup'd 3 live incidents' Stomp source (Sep 2026).
+check("ai-allowed re-serve is the same article", sa.same_article(STOMP, STOMP + "?ai-allowed=1"))
 check("fragment stripped", sa.same_article(STOMP, STOMP + "#comments"))
 check("trailing slash ignored", sa.same_article(STOMP, STOMP + "/"))
 check("www. ignored", sa.same_article("https://stomp.sg/a", "https://www.stomp.sg/a"))

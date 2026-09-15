@@ -73,6 +73,10 @@ _TRACKING_PARAMS = frozenset({
     "fbclid", "gclid", "dclid", "msclkid", "igshid", "twclid",
     "mc_cid", "mc_eid", "_ga", "cmpid", "cmp", "spm",
     "at_medium", "at_campaign", "oc",
+    # Stomp re-serves an updated article at ...?ai-allowed=1 (its AI-crawler
+    # flag). Same article, new URL — without this it slips dedup as an "update"
+    # and lands twice in source_urls, inflating the corroboration count by one.
+    "ai-allowed",
 })
 
 
