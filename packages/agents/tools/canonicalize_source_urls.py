@@ -16,6 +16,12 @@ position) and correcting corroboration_count when the collapse drops a
 duplicate. Idempotent: canonical_url is a fixed point, so a second run is a
 no-op.
 
+NOT source_timeline: a story timeline legitimately maps several dated nodes
+(report -> trial -> verdict, spanning years) to ONE source URL, so two entries
+sharing a canonical URL are indistinguishable from a re-served duplicate by any
+stored field (verified: roles are null, dates differ in both cases). Collapsing
+it by URL would delete real progression nodes.
+
     ./.venv/Scripts/python.exe tools/canonicalize_source_urls.py            # dry run
     ./.venv/Scripts/python.exe tools/canonicalize_source_urls.py --apply
 """
