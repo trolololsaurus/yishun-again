@@ -41,7 +41,15 @@ MODEL = "claude-haiku-4-5-20251001"
 def _fetch_corrections(supabase_client) -> dict:
     """
     Query training_signals for all operator corrections.
-    Returns dict keyed by signal_type containing (from, to) Counter objects.
+
+    Returns dict keyed by signal_type. Most values are Counters over (from, to)
+    tuples; "reject_reason" is a Counter over the bare reason string, since a
+    rejection has no "corrected to" value — the reason itself (duplicate,
+    too_thin, ...) IS the pattern worth surfacing. Without this, a systematic
+    miss like "the agent keeps proposing already-published old incidents as
+    new" (reject_reason='duplicate') leaves no trace here: it was never a
+    classification/severity/role edit, so recalibration was structurally blind
+    to it before this signal type was added.
     """
     result = (
         supabase_client.table("training_signals")
@@ -49,7 +57,7 @@ def _fetch_corrections(supabase_client) -> dict:
             "action,original_classification,edited_classification,"
             "original_severity,edited_severity,"
             "agent_role_proposed,operator_role_confirmed,"
-            "operator_changes"
+            "operator_changes,reject_reason"
         )
         .execute()
     )
@@ -58,6 +66,7 @@ def _fetch_corrections(supabase_client) -> dict:
     classification_corrections: Counter = Counter()
     severity_corrections:       Counter = Counter()
     role_corrections:           Counter = Counter()
+    reject_reason_corrections:  Counter = Counter()
 
     for row in rows:
         # Classification edits
@@ -78,10 +87,16 @@ def _fetch_corrections(supabase_client) -> dict:
         if proposed and confirmed and proposed != confirmed:
             role_corrections[(proposed, confirmed)] += 1
 
+        # Rejections — counted by reason, not by an edit pair
+        reason = row.get("reject_reason")
+        if row.get("action") == "reject" and reason:
+            reject_reason_corrections[reason] += 1
+
     return {
         "classification": classification_corrections,
         "severity":       severity_corrections,
         "role":           role_corrections,
+        "reject_reason":  reject_reason_corrections,
     }
 
 
@@ -96,9 +111,17 @@ def _generate_mistakes(
     signal_type: str,
     corrections: Counter,
 ) -> list[str]:
-    """Ask Haiku to convert (from, to) correction counts into plain-English mistakes."""
+    """Ask Haiku to convert correction counts into plain-English mistakes.
+
+    Most signal types count (from, to) edit pairs; "reject_reason" counts a
+    bare reason string (there is no "corrected to" for a rejection), so it is
+    formatted as a plain tally instead of an arrow.
+    """
     top = corrections.most_common(10)
-    lines = "\n".join(f"  {count}× {orig!r} → {edited!r}" for (orig, edited), count in top)
+    if top and isinstance(top[0][0], tuple):
+        lines = "\n".join(f"  {count}× {orig!r} → {edited!r}" for (orig, edited), count in top)
+    else:
+        lines = "\n".join(f"  {count}× {key!r}" for key, count in top)
 
     response = client.messages.create(
         model=MODEL,
@@ -113,7 +136,8 @@ def _generate_mistakes(
             "role":    "user",
             "content": (
                 f"Signal type: {signal_type}\n"
-                f"Top operator corrections (agent output → operator correction, count):\n"
+                f"Top operator corrections, or rejection reasons if this signal type "
+                f"is 'reject_reason' (agent output → operator correction, count):\n"
                 f"{lines}\n\n"
                 "Write 3 rules to help the agent avoid these mistakes."
             ),

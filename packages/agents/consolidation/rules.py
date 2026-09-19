@@ -9,8 +9,17 @@ before/around the Claude judgement call.
 import os
 import re
 
-# Fetch up to this many recent published incidents for comparison.
-CANDIDATE_FETCH_LIMIT = 50
+# Fetch up to this many published incidents for comparison, ordered
+# most-recent-first. This is NOT the cost control (MIN_KEYWORD_OVERLAP below
+# is — it's what bounds how many of these ever reach a Haiku call), so it must
+# comfortably exceed the archive size rather than trail it. A low limit here
+# silently excludes anything published long ago from the comparison pool
+# altogether: the 2008 Yishun triple murder (backfilled, published_at
+# 2012-11-30) sat outside a 50-row recency window while 200+ incidents from
+# 2026 out-ranked it, so a 2026 "on this day" retrospective about it was never
+# even shown to the judge and queued as a brand-new incident. Bump this before
+# the archive grows past it.
+CANDIDATE_FETCH_LIMIT = 2000
 
 # Fetch up to this many recent UNPROCESSED war_room_queue items for comparison.
 # Catches duplicates that arrive across successive passes before any sibling is
