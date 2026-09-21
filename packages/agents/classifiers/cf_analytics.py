@@ -98,14 +98,19 @@ query($zoneTag: string, $day: Date) {
 }
 """
 
-# "30d" is deliberately absent. Confirmed live (2026-08-27): this dataset's
-# retention on this zone's plan caps at "1w1d" (8 days) TOTAL — a query for
-# anything older is rejected outright, separate from and in addition to the
-# 1-day-per-query span cap above. A 30-day option would silently return only
-# the ~7 retrievable days, mislabeled as 30, while burning ~23 always-failing
-# requests every load. If a paid tier ever changes this, re-verify live
-# before re-adding — don't assume a longer retention window exists.
-WINDOWS = {"24h": None, "7d": 7}  # days is None for 24h (hourly, not daily)
+# Retention on this zone: re-verify live before trusting this number, it has
+# already moved once. Confirmed live 2026-08-27 at "1w1d" (8 days) TOTAL —
+# anything older rejected outright. Re-confirmed live 2026-09-21: now "4w3d"
+# (31 days) — the exact boundary probed day-by-day, 30 days back succeeds, 31
+# fails with `code: "quota"`, `"cannot request data older than 4w3d"`. This is
+# a ROLLING window measured from request time, not a fixed historical cutoff,
+# so a 30-day option stays valid indefinitely without drifting stale the way a
+# hardcoded date would — it always asks for "yesterday back N days" relative
+# to whenever the request runs, which is by definition inside the retained
+# span. `_get_multi_day` already loops one query per day (the 1-day span-per-
+# query cap below is unrelated to retention depth and still applies), so nDays
+# just needed a bigger number here, not new code.
+WINDOWS = {"24h": None, "7d": 7, "30d": 30}  # days is None for 24h (hourly, not daily)
 
 
 def _run_query(client: httpx.Client, query: str, variables: dict, label: str) -> dict:
@@ -214,13 +219,14 @@ def _get_multi_day(client: httpx.Client, zone_tag: str, days: int) -> dict:
 def get_traffic_summary(window: str = "7d") -> dict:
     """Zone-level Cloudflare traffic for the given window.
 
-    window: "24h" (hourly buckets, one request) or "7d" (daily buckets, one
-    request per day — free-plan quota caps a single query at a 1-day span
-    regardless of grouping granularity). "30d" is not supported — see WINDOWS.
+    window: "24h" (hourly buckets, one request) or "7d"/"30d" (daily buckets,
+    one request per day — free-plan quota caps a single query at a 1-day span
+    regardless of grouping granularity, so 30d costs 30 sequential requests).
+    See WINDOWS for the retention ceiling this depends on.
 
     Returns:
         {
-          "window": "24h" | "7d",
+          "window": "24h" | "7d" | "30d",
           "granularity": "hour" | "day",
           "points": [{"t": ISO8601, "visits": int, "requests": int}, ...],
           "countries": [{"country": "SG", "visits": int}, ...],   # top 10

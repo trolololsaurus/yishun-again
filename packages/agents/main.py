@@ -401,7 +401,7 @@ async def autonomy_report(_: None = Depends(_require_ops_token)):
 
 @app.get("/analytics/cloudflare", tags=["ops"])
 async def cloudflare_traffic(
-    window: str = Query("7d", pattern="^(24h|7d)$"),
+    window: str = Query("7d", pattern="^(24h|7d|30d)$"),
     _: None = Depends(_require_ops_token),
 ):
     """Zone-level Cloudflare traffic (visits/requests/country/referrer/device)

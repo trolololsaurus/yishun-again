@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 
-const VALID_WINDOWS = new Set(['24h', '7d'])
+const VALID_WINDOWS = new Set(['24h', '7d', '30d'])
 
 export async function GET(req: Request) {
   const agentsUrl = (process.env.AGENTS_API_URL ?? '').replace(/\/+$/, '')

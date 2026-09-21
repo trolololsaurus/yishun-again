@@ -7,7 +7,7 @@ Does NOT test the live GraphQL call (needs network + a real token); it tests
 the two pieces that turn raw per-day rows into the dashboard's daily/top10
 shape, since that's the part a refactor is most likely to quietly break.
 """
-from classifiers.cf_analytics import _tally, _top10, get_traffic_summary
+from classifiers.cf_analytics import WINDOWS, _tally, _top10, get_traffic_summary
 
 passed = failed = 0
 
@@ -59,17 +59,24 @@ except ValueError:
 except Exception as exc:
     check("bad window raises ValueError", False, f"wrong exception type: {exc!r}")
 
-# '30d' is not a bug to silently fix — this zone's plan cannot retrieve data
-# that old (confirmed live, 2026-08-27: "cannot request data older than
-# 1w1d"). If someone re-adds it without re-verifying against a live token,
-# this catches it.
+# '30d' WAS rejected here (confirmed live 2026-08-27: this zone's plan capped
+# retention at "1w1d", 8 days). Re-verified live 2026-09-21: retention is now
+# "4w3d" (31 days) — the boundary was probed day-by-day, 30 days back succeeds
+# and 31 fails with `code: "quota"` — so 30d is a genuinely retrievable window
+# and belongs in WINDOWS. This guard now checks the opposite: that WINDOWS
+# still rejects an UNSUPPORTED window ('3d') before touching the network,
+# same as the bad-window check above. If retention ever regresses, catch it by
+# re-verifying live (see cf_analytics.py's WINDOWS comment), not by editing
+# this test to expect a raise again on faith.
+check("'30d' is a supported window (live-verified 2026-09-21, see WINDOWS)",
+      "30d" in WINDOWS)
 try:
-    get_traffic_summary("30d")
-    check("'30d' is rejected (not a supported window on this plan)", False, "did not raise")
+    get_traffic_summary("3d")
+    check("an unsupported window ('3d') still raises ValueError", False, "did not raise")
 except ValueError:
-    check("'30d' is rejected (not a supported window on this plan)", True)
+    check("an unsupported window ('3d') still raises ValueError", True)
 except Exception as exc:
-    check("'30d' is rejected (not a supported window on this plan)", False, f"wrong exception type: {exc!r}")
+    check("an unsupported window ('3d') still raises ValueError", False, f"wrong exception type: {exc!r}")
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

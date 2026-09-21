@@ -40,7 +40,7 @@ interface AnalyticsData {
 interface CloudflarePoint { t: string; visits: number; requests: number }
 
 interface CloudflareData {
-  window:        '24h' | '7d'
+  window:        '24h' | '7d' | '30d'
   granularity:   'hour' | 'day'
   points:        CloudflarePoint[]
   countries:     { country: string; visits: number }[]
@@ -214,9 +214,13 @@ function useFetch<T>(url: string) {
   return { data, loading, error, load, setLoading }
 }
 
-// '30d' deliberately absent — this zone's Cloudflare plan caps retention on
-// this dataset at ~8 days total (confirmed live), not just 1 day per query.
-const CF_WINDOWS = ['24h', '7d'] as const
+// '30d' re-verified live 2026-09-21: this zone's Cloudflare plan now retains
+// this dataset 31 days (was ~8 when last checked 2026-08-27 — that plan/
+// retention limit moved). See packages/agents/classifiers/cf_analytics.py's
+// WINDOWS comment before trusting this without re-checking against a live
+// token; a regression there surfaces as `errors` entries on this tile, not a
+// crash (each day is its own request, one failure doesn't blank the rest).
+const CF_WINDOWS = ['24h', '7d', '30d'] as const
 type CfWindow = typeof CF_WINDOWS[number]
 
 export default function AnalyticsPage() {
