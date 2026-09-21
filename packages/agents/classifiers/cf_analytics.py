@@ -1,5 +1,6 @@
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
@@ -107,9 +108,9 @@ query($zoneTag: string, $day: Date) {
 # so a 30-day option stays valid indefinitely without drifting stale the way a
 # hardcoded date would — it always asks for "yesterday back N days" relative
 # to whenever the request runs, which is by definition inside the retained
-# span. `_get_multi_day` already loops one query per day (the 1-day span-per-
-# query cap below is unrelated to retention depth and still applies), so nDays
-# just needed a bigger number here, not new code.
+# span. `_get_multi_day` still loops one query per day (the 1-day span-per-
+# query cap below is unrelated to retention depth and still applies) — it now
+# runs that loop concurrently rather than sequentially, see its own comment.
 WINDOWS = {"24h": None, "7d": 7, "30d": 30}  # days is None for 24h (hourly, not daily)
 
 
@@ -178,6 +179,48 @@ def _get_24h(client: httpx.Client, zone_tag: str) -> dict:
     return {"points": points, "countries": countries, "devices": devices, "referrers": referrers, "errors": errors}
 
 
+# Verified live 2026-09-21: 20 concurrent requests against this zone/token
+# completed in ~2s with zero rate-limiting (all 200 OK). httpx.Client's
+# connection pool is documented thread-safe, so the per-day queries below
+# fire through the SAME client from a small thread pool instead of one
+# request at a time — a sequential 30d window (60 serial requests: main +
+# referrer x 30 days) measured 16s end to end, which was the entire cause of
+# the "why is there lag on 24h/7d/30d" complaint. Kept below the tested 20 for
+# margin, not at it.
+_MAX_CONCURRENT_REQUESTS = 15
+
+
+def _fetch_day(client: httpx.Client, zone_tag: str, day: date, want_referrer: bool) -> dict:
+    """One day's worth of data (+ referrers if want_referrer). Never raises —
+    a failed day is an error entry and a missing point, not a crashed batch."""
+    variables = {"zoneTag": zone_tag, "day": day.isoformat()}
+    point = None
+    countries: dict[str, int] = {}
+    devices: dict[str, int] = {}
+    referrers: dict[str, int] = {}
+    errors: list[str] = []
+
+    try:
+        zone = _run_query(client, _DAY_QUERY, variables, day.isoformat())
+        total = zone["total"][0] if zone["total"] else {"sum": {"visits": 0}, "count": 0}
+        point = {"t": f"{day.isoformat()}T00:00:00Z",
+                 "visits": total["sum"]["visits"], "requests": total["count"]}
+        countries = _tally(zone["byCountry"], "clientCountryName")
+        devices = _tally(zone["byDevice"], "clientDeviceType")
+    except Exception as exc:
+        _record_failure(errors, day.isoformat(), exc)
+
+    if want_referrer:
+        try:
+            referer_zone = _run_query(client, _DAY_REFERER_QUERY, variables, f"{day.isoformat()} referrers")
+            referrers = _tally(referer_zone["byReferer"], "clientRefererHost")
+        except Exception as exc:
+            _record_failure(errors, f"{day.isoformat()} (referrers)", exc)
+
+    return {"point": point, "countries": countries, "devices": devices,
+            "referrers": referrers, "errors": errors}
+
+
 def _get_multi_day(client: httpx.Client, zone_tag: str, days: int) -> dict:
     points: list[dict] = []
     countries: dict[str, int] = {}
@@ -185,32 +228,38 @@ def _get_multi_day(client: httpx.Client, zone_tag: str, days: int) -> dict:
     referrers: dict[str, int] = {}
     errors: list[str] = []
 
-    for i in range(1, days + 1):
-        day = date.today() - timedelta(days=i)
-        variables = {"zoneTag": zone_tag, "day": day.isoformat()}
-        try:
-            zone = _run_query(client, _DAY_QUERY, variables, day.isoformat())
-        except Exception as exc:
-            _record_failure(errors, day.isoformat(), exc)
-            continue
+    day_list = [date.today() - timedelta(days=i) for i in range(1, days + 1)]
 
-        total = zone["total"][0] if zone["total"] else {"sum": {"visits": 0}, "count": 0}
-        points.append({
-            "t": f"{day.isoformat()}T00:00:00Z",
-            "visits": total["sum"]["visits"],
-            "requests": total["count"],
-        })
-        for k, v in _tally(zone["byCountry"], "clientCountryName").items():
-            countries[k] = countries.get(k, 0) + v
-        for k, v in _tally(zone["byDevice"], "clientDeviceType").items():
-            devices[k] = devices.get(k, 0) + v
+    # Referrer access is a property of the TOKEN/ZONE, not the day — every
+    # day tested since 7d existed has 403'd on this token (see the module
+    # docstring). A single probe before the parallel batch below decides
+    # whether to ask for referrers AT ALL, instead of every day separately
+    # rediscovering the same always-true fact — up to `days - 1` requests
+    # that were guaranteed to fail, now zero.
+    referrers_available = True
+    probe_day = day_list[0]
+    try:
+        _run_query(client, _DAY_REFERER_QUERY, {"zoneTag": zone_tag, "day": probe_day.isoformat()},
+                   f"{probe_day.isoformat()} referrers (probe)")
+    except Exception as exc:
+        referrers_available = False
+        _record_failure(errors, "referrers (probed once — unavailable on "
+                        "this token, skipped for the rest of the window)", exc)
 
-        try:
-            referer_zone = _run_query(client, _DAY_REFERER_QUERY, variables, f"{day.isoformat()} referrers")
-            for k, v in _tally(referer_zone["byReferer"], "clientRefererHost").items():
+    with ThreadPoolExecutor(max_workers=_MAX_CONCURRENT_REQUESTS) as pool:
+        futures = [pool.submit(_fetch_day, client, zone_tag, day, referrers_available)
+                   for day in day_list]
+        for future in as_completed(futures):
+            result = future.result()
+            if result["point"]:
+                points.append(result["point"])
+            for k, v in result["countries"].items():
+                countries[k] = countries.get(k, 0) + v
+            for k, v in result["devices"].items():
+                devices[k] = devices.get(k, 0) + v
+            for k, v in result["referrers"].items():
                 referrers[k] = referrers.get(k, 0) + v
-        except Exception as exc:
-            _record_failure(errors, f"{day.isoformat()} (referrers)", exc)
+            errors.extend(result["errors"])
 
     points.sort(key=lambda p: p["t"])
     return {"points": points, "countries": countries, "devices": devices, "referrers": referrers, "errors": errors}
