@@ -94,8 +94,8 @@ collection (the module-level `SystemExit` aborts the run). Run them directly:
 for f in test_*.py; do ./.venv/Scripts/python.exe "$f" || echo "FAIL $f"; done
 ```
 
-All are offline — no network, no API keys, no DB. There are **45 test files** and
-they all pass as of 2026-08-29; a red file is a real regression, not a flake.
+All are offline — no network, no API keys, no DB. There are **49 test files** and
+they all pass as of 2026-09-21; a red file is a real regression, not a flake.
 
 The web app has tests too, added 2026-08-04 — `apps/web/lib/utils.test.ts`, run
 with `npm test` from `apps/web`. There is no test framework installed: it uses

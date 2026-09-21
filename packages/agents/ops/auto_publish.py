@@ -945,11 +945,14 @@ def _notify_schema_blocked(why: str, client) -> None:
 
 def _notify_review_queue(rows, stats, threshold, published_titles, merged_titles, client) -> None:
     """
-    Req #4 — one alert when cards below the threshold are waiting.
+    Req #4 — one alert when cards below the threshold are waiting, PLUS
+    guaranteed surfacing of auto-merges (they mutate a LIVE incident, so they
+    must never ride only on there also being something pending for review).
 
-    Deduped on WHICH cards are waiting, so an unchanged queue is announced once
-    and a genuinely new card alerts at once. Nothing waiting -> no alert at all,
-    so a silent phone reliably means an empty queue.
+    Deduped on WHICH cards are waiting / were auto-merged or -published, so an
+    unchanged queue is announced once and a genuinely new card or merge alerts
+    at once. Nothing to report -> no alert at all, so a silent phone reliably
+    means an empty queue with nothing auto-mutated.
     """
     pending_for_review = [
         r for r in rows
@@ -957,14 +960,17 @@ def _notify_review_queue(rows, stats, threshold, published_titles, merged_titles
         and not (r.get("raw_content") or {}).get("notification_type")
         and (r.get("agent_confidence") is None or float(r.get("agent_confidence")) < threshold)
     ]
-    if not pending_for_review:
+    if not pending_for_review and not merged_titles and not published_titles:
         return
 
-    lines = [
-        f"{len(pending_for_review)} card(s) are waiting for review in the War Room.",
-        f"They scored below the {threshold:.0%} auto-publish threshold.",
-        "",
-    ]
+    if pending_for_review:
+        lines = [
+            f"{len(pending_for_review)} card(s) are waiting for review in the War Room.",
+            f"They scored below the {threshold:.0%} auto-publish threshold.",
+            "",
+        ]
+    else:
+        lines = ["Nothing waiting for review this pass — everything cleared automatically.", ""]
     if published_titles:
         lines += [f"Auto-published without review this pass ({len(published_titles)}):"]
         lines += [f"  + {t}" for t in published_titles[:10]]
@@ -977,15 +983,16 @@ def _notify_review_queue(rows, stats, threshold, published_titles, merged_titles
         lines += [f"  ~ {t}" for t in merged_titles[:10]]
         lines += ["  (undo any of these from the War Room queue's Recently-merged panel)", ""]
 
-    lines.append("Waiting for you:")
-    for r in sorted(pending_for_review,
-                    key=lambda x: -(float(x.get("agent_confidence") or 0)))[:20]:
-        conf = r.get("agent_confidence")
-        conf_s = f"{float(conf):.0%}" if conf is not None else " ?  "
-        kind = "UPDATE" if r.get("status") == "update" else "NEW   "
-        lines.append(f"  [{conf_s:>4}] {kind} {(r.get('proposed_title') or '(untitled)')[:70]}")
-    if len(pending_for_review) > 20:
-        lines.append(f"  ... and {len(pending_for_review) - 20} more")
+    if pending_for_review:
+        lines.append("Waiting for you:")
+        for r in sorted(pending_for_review,
+                        key=lambda x: -(float(x.get("agent_confidence") or 0)))[:20]:
+            conf = r.get("agent_confidence")
+            conf_s = f"{float(conf):.0%}" if conf is not None else " ?  "
+            kind = "UPDATE" if r.get("status") == "update" else "NEW   "
+            lines.append(f"  [{conf_s:>4}] {kind} {(r.get('proposed_title') or '(untitled)')[:70]}")
+        if len(pending_for_review) > 20:
+            lines.append(f"  ... and {len(pending_for_review) - 20} more")
 
     blocked = {k: v for k, v in stats["reasons"].items()
                if k not in ("below_threshold", "not_pending", "notification_row")}
@@ -1006,12 +1013,20 @@ def _notify_review_queue(rows, stats, threshold, published_titles, merged_titles
     # alerts immediately; 1440m makes that window a full day, so a still-pending
     # card nudges once daily at most. Same shape as ops/supervisor.py's dedup.
     sig = hashlib.sha1(
-        "|".join(sorted(str(r.get("id")) for r in pending_for_review)).encode()
+        "|".join(sorted(str(r.get("id")) for r in pending_for_review)
+                 + sorted(published_titles) + sorted(merged_titles)).encode()
     ).hexdigest()[:16]
+
+    if pending_for_review:
+        title = f"Yishun Again — {len(pending_for_review)} card(s) need review"
+    elif merged_titles:
+        title = f"Yishun Again — auto-merged {len(merged_titles)} update(s), queue clear"
+    else:
+        title = "Yishun Again — auto-publish pass, queue clear"
 
     notify(
         "review_queue",
-        f"Yishun Again — {len(pending_for_review)} card(s) need review",
+        title,
         "\n".join(lines) + footer(),
         dedup_key=f"review_queue:{sig}",
         throttle_minutes=1440,

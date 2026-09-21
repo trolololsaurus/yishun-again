@@ -167,14 +167,18 @@ Every auto-publish writes a `training_signals` row with `action='auto_approve'`,
 `decided_by='agent'`. That flag is what keeps the agent from grading its own
 homework — see §4.
 
-### 2b. Auto-merge: applying an update unattended (`AUTO_MERGE_ENABLED`, default OFF)
+### 2b. Auto-merge: applying an update unattended (`AUTO_MERGE_ENABLED`)
+
+**Enabled in production 2026-09-21** (operator decision — ≥0.95-confidence
+updates now apply without waiting for a War Room click). Off unset, on with
+`AUTO_MERGE_ENABLED=true`; see the runbook (§7) to flip it either way.
 
 An `update` row merges a new source into an **already-published** incident
 (appends to `source_urls`/`source_timeline`, bumps `update_count`, recomputes the
 dates). That is a live-incident mutation, and a wrong merge is near-invisible —
 one extra URL in a source list — and hits the source-integrity constraint. So it
-is a **separate, opt-in decision**, off by default. With `AUTO_MERGE_ENABLED`
-unset, every update row is held for the operator, unchanged.
+is a **separate, opt-in decision**. With `AUTO_MERGE_ENABLED` unset, every
+update row is held for the operator, unchanged.
 
 When on, a merge auto-applies only when **both** confidences clear **and** the
 appended source is verifiable. `check_update_eligibility` (same fail-open
@@ -204,6 +208,18 @@ Safety properties mirror auto-publish:
   before the incident is touched; a race with an operator confirm/reject loses the
   claim harmlessly. An incident-update failure releases the claim back to `update`.
 - **Blast radius cap.** `AUTO_MERGE_MAX_PER_RUN` (25) bounds one pass.
+- **Every auto-merge is reported, even when the queue fully clears.**
+  `_notify_review_queue` used to return early whenever nothing was left
+  `pending_for_review`, so a pass that auto-merged updates but had nothing else
+  waiting sent **no Telegram message at all** — silent live-incident mutation,
+  the exact thing the undo net exists to make visible. Fixed 2026-09-21: the
+  function now fires whenever there is something pending, merged, *or*
+  published, with a title that reflects which ("auto-merged N update(s), queue
+  clear" when nothing else is waiting). The dedup signature was fixed at the
+  same time — it hashed only pending-card ids, so two different merge-only
+  passes could dedupe against each other under the 1440-min throttle; it now
+  also hashes the merged/published titles. Guard:
+  `test_notify_review_queue.py`.
 - **Summary refresh is separately gated.** By default the auto path only does the
   mechanical merge and leaves the prose alone. When `AUTO_ENRICH_SUMMARY` is on
   (its own flag, off by default), it *also* applies the ingestion-time enriched
