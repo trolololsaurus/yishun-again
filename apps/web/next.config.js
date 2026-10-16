@@ -75,6 +75,11 @@ const nextConfig = {
   async redirects() {
     return [
       {
+        source: '/incidents/yishun-ebike-theft-arrested-oct-2026',
+        destination: '/incidents/yishun-motorcycle-theft-teens-arrested-oct-2026',
+        permanent: true,
+      },
+      {
         source: '/incidents/yishun-group-knife-attack-block-243-carpark-jul-2026',
         destination: '/incidents/yishun-ring-road-rioting-carpark-brawl-jul-2026',
         permanent: true,
