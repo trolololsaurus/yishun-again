@@ -52,7 +52,7 @@ R2_ENDPOINT_TEMPLATE = "https://{account}.r2.cloudflarestorage.com"
 # table rather than a single per-call number so the arithmetic below is
 # auditable when prices move.
 _USD_PER_MTOK: dict[str, tuple[float, float]] = {
-    "claude-haiku-4-5":  (1.00, 5.00),    # Stage 2 classify (filters/stage2_writer.py)
+    "claude-haiku-5-5":  (0.10, 0.50),    # Stage 2 classify (prompts up to 100K tokens)
     "claude-sonnet-4-6": (3.00, 15.00),   # Stage 2 write
 }
 
@@ -62,7 +62,7 @@ _USD_PER_MTOK: dict[str, tuple[float, float]] = {
 # These are deliberately generous — a cost guard that under-estimates is a cost
 # guard that never fires.
 _STAGE2_SHAPE: dict[str, tuple[str, int, int]] = {
-    "classify": ("claude-haiku-4-5",  2_500,   300),
+    "classify": ("claude-haiku-5-5",  2_500,   300),
     "write":    ("claude-sonnet-4-6", 3_000, 1_200),
 }
 
@@ -72,7 +72,7 @@ def _call_usd(model: str, tokens_in: int, tokens_out: int) -> float:
     return (tokens_in * price_in + tokens_out * price_out) / 1_000_000
 
 
-# One queued draft = one classify call + one write call. ~= $0.031 today.
+# One queued draft = one classify call + one write call. ~= $0.0274 today.
 STAGE2_USD_PER_DRAFT = round(sum(_call_usd(*shape) for shape in _STAGE2_SHAPE.values()), 5)
 
 # Stage 1 runs on the Gemini free tier, which is capped by requests-per-day

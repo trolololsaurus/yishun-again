@@ -47,7 +47,7 @@ from ops.activity import _client
 logger = logging.getLogger(__name__)
 
 AGENT = "pattern_autoappend"
-MATCH_MODEL = "claude-haiku-4-5-20251001"
+MATCH_MODEL = "claude-haiku-5-5"
 
 
 def _env(name: str, default, cast=str):

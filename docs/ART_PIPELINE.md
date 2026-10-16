@@ -104,7 +104,7 @@ therefore reflects what the card actually says.
 
 **Model:** Haiku only. Never Sonnet. The task is constrained rewriting, not
 composition, and the input is at most ~1600 characters of summary.
-`IMAGE_SCENE_MODEL`, default `claude-haiku-4-5-20251001` — the same
+`IMAGE_SCENE_MODEL`, default `claude-haiku-5-5` — the same
 env-var-not-hardcoded rule as §1.1.
 
 ### 3.1 Output must be Nano Banana compliant

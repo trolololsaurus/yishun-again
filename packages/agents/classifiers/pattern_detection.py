@@ -133,7 +133,7 @@ def _extract_entities(
 
     try:
         response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-haiku-5-5",
             max_tokens=256,
             temperature=0.0,
             system=_ENTITY_SYSTEM,

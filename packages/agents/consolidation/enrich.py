@@ -32,7 +32,7 @@ from filters.stage2_writer import _get_client, _parse_json, find_ungrounded
 
 logger = logging.getLogger(__name__)
 
-MODEL = os.getenv("STAGE2_WRITE_MODEL", "claude-haiku-4-5-20251001")
+MODEL = os.getenv("STAGE2_WRITE_MODEL", "claude-haiku-5-5")
 ENRICH_MAX_TOKENS = int(os.getenv("ENRICH_MAX_TOKENS", "1200"))
 
 _SYSTEM = """\

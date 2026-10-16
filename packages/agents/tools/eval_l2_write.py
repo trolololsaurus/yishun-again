@@ -1,5 +1,5 @@
 """
-Stage-2 WRITE model eval: claude-sonnet-4-6 vs claude-haiku-4-5 (programme 3.1).
+Stage-2 WRITE model eval: claude-sonnet-4-6 vs claude-haiku-5-5 (programme 3.1).
 
 Measures whether Haiku can replace Sonnet as MODEL_WRITE, BEFORE anything in the
 pipeline changes. Writes no pipeline code and does not modify stage2_writer.py:
@@ -52,7 +52,7 @@ OUT_DIR = _AGENTS_ROOT / "tools" / "eval_out"
 
 MODELS = {
     "sonnet": "claude-sonnet-4-6",
-    "haiku":  "claude-haiku-4-5-20251001",
+    "haiku":  "claude-haiku-5-5",
 }
 WORKERS = 4
 BLIND_SEED = 20260730          # fixed so the blind assignment is reproducible

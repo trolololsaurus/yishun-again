@@ -199,7 +199,7 @@ trusting this table.
 | Backend | FastAPI | 0.115.14 / Python 3.11 |
 | Agent hosting | Google Cloud Run | asia-southeast1 |
 | Stage 1 filter | Gemini API | gemini-3.1-flash-lite |
-| Stage 2 writer | Anthropic API | claude-haiku-4-5-20251001 (classify **and** write) |
+| Stage 2 writer | Anthropic API | claude-haiku-5-5 (classify **and** write) |
 | Orchestrator | *hand-rolled* — see below | — |
 | Image gen | Gemini image API | gemini-3.1-flash-lite-image |
 | Scheduling | Cloud Scheduler (POSTs `/orchestrator/daily`) | — |

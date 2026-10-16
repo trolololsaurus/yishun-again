@@ -37,7 +37,7 @@ load_dotenv(override=False)
 
 logger = logging.getLogger(__name__)
 
-MODEL_CLASSIFY = "claude-haiku-4-5-20251001"
+MODEL_CLASSIFY = "claude-haiku-5-5"
 # Env-overridable so a rollback is a config change, not a redeploy.
 #
 # Moved from claude-sonnet-4-6 after the 3.1 eval (tools/eval_l2_write.py) over 30
@@ -47,7 +47,7 @@ MODEL_CLASSIFY = "claude-haiku-4-5-20251001"
 # across 3/15, and matched it on format compliance (100% on slug, title, and both
 # SEO limits for both models). It also ran ~24% shorter and breached the 1600-char
 # ceiling far less often (4/30 vs 10/29).
-MODEL_WRITE    = os.getenv("STAGE2_WRITE_MODEL", "claude-haiku-4-5-20251001")
+MODEL_WRITE    = os.getenv("STAGE2_WRITE_MODEL", "claude-haiku-5-5")
 
 # ── Summary length: arithmetic, not an instruction the model self-polices ────
 #

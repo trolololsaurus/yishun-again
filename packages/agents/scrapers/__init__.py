@@ -471,7 +471,7 @@ def translate_article(title: str, content: str, source_lang: str) -> tuple[str, 
     client = anthropic.Anthropic(api_key=api_key)
 
     response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+        model="claude-haiku-5-5",
         max_tokens=1024,
         temperature=0.1,
         system=(

@@ -136,7 +136,7 @@ def _date_from_text(title: str, body: str) -> str | None:
         # ANTHROPIC_API_KEY is in the environment.
         client = anthropic.Anthropic()
         r = client.messages.create(
-            model="claude-haiku-4-5-20251001", max_tokens=60, temperature=0,
+            model="claude-haiku-5-5", max_tokens=60, temperature=0,
             system=_DATE_SYS,
             messages=[{"role": "user", "content": f"TITLE: {title}\nCONTENT: {body[:1800]}"}],
         )

@@ -71,7 +71,7 @@ IMAGE_HEIGHT = int(os.getenv("IMAGE_HEIGHT", "630"))
 
 # The scene writer is Haiku only. The task is constrained rewriting over at most
 # ~1600 characters of summary, not composition (ART_PIPELINE.md §3).
-SCENE_MODEL = os.getenv("IMAGE_SCENE_MODEL", "claude-haiku-4-5-20251001")
+SCENE_MODEL = os.getenv("IMAGE_SCENE_MODEL", "claude-haiku-5-5")
 
 # Hard timeout on both external calls. This path blocks an operator's approve
 # click, so a hang is worse than a failure.

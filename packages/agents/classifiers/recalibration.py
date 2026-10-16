@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 CORRECTION_THRESHOLD = 20
 CALIBRATION_LOG_PATH = Path(__file__).parent / "calibration_log.json"
-MODEL = "claude-haiku-4-5-20251001"
+MODEL = "claude-haiku-5-5"
 
 
 # ── Correction analysis ───────────────────────────────────────────────────────

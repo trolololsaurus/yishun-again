@@ -51,7 +51,7 @@ load_dotenv(override=False)
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-haiku-4-5-20251001"
+MODEL = "claude-haiku-5-5"
 
 # Output caps, env-overridable — raising one is the whole fix for a truncation,
 # and it should not need a redeploy. Measured against the full live pool (53

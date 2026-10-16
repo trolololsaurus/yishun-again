@@ -35,7 +35,7 @@ docs/              Spec, autonomy runbook, pipeline change records
 | Image storage | Cloudflare R2 |
 | Backend | FastAPI 0.115.x / Python 3.11 |
 | Stage 1 filter | Gemini `gemini-3.1-flash-lite` |
-| Stage 2 classify + write | Anthropic `claude-haiku-4-5-20251001` |
+| Stage 2 classify + write | Anthropic `claude-haiku-5-5` |
 | Image gen | Gemini `gemini-3.1-flash-lite-image` |
 | Scheduling | Cloud Scheduler → `POST /orchestrator/daily` at 03:58 & 15:58 SGT |
 
