@@ -1,11 +1,6 @@
 """
-Guards ops/auto_publish.py::_notify_review_queue against the "silent merge"
-bug: before this fix the function returned early whenever nothing was
-`pending_for_review`, so a pass that auto-merged updates into live incidents
-but also fully cleared the review queue sent NO Telegram message at all —
-exactly the case AUTO_MERGE_ENABLED makes routine. It also hashed only
-pending-card ids into the dedup signature, so two different merge-only passes
-would have deduped against each other under the 1440-minute throttle.
+Checks that auto-publish Telegram reports use current review cards, group
+repeated titles, and deduplicate using stable queue ids.
 
 Run: .venv/Scripts/python.exe test_notify_review_queue.py
 """
@@ -25,57 +20,76 @@ def check(name, cond):
     failed += 0 if cond else 1
 
 
-def run(rows, stats, threshold, published_titles, merged_titles):
+def run(rows, merged_titles=None, published_ids=None, merged_ids=None):
     with mock.patch.object(ap, "notify") as m:
-        ap._notify_review_queue(rows, stats, threshold, published_titles, merged_titles, client=None)
+        ap._notify_review_queue(
+            rows, merged_titles or [], client=None,
+            published_queue_ids=published_ids or [], merged_queue_ids=merged_ids or [],
+        )
         return m
 
 
-empty_stats = {"reasons": {}}
+print("\n=== concise pass summary ===")
 
-# 1. Merge-only pass, nothing left pending -> must still notify.
-m = run(rows=[], stats=empty_stats, threshold=0.95,
-        published_titles=[], merged_titles=["Cyclist update merged"])
-check("merge-only pass with empty queue still sends a notification", m.called)
+# A live-incident mutation must be reported even after the queue is empty.
+m = run(rows=[], merged_titles=["Cyclist update merged"], merged_ids=["q-merge"])
+check("merge-only pass with empty queue sends a notification", m.called)
 if m.called:
-    _, kwargs = m.call_args
-    args = m.call_args.args
-    subject = args[1] if len(args) > 1 else kwargs.get("subject")
-    body = args[2] if len(args) > 2 else kwargs.get("body")
-    check("subject mentions the merge, not '0 card(s) need review'",
-          "merged" in subject.lower() and "0 card" not in subject.lower())
-    check("body lists the merged title", "Cyclist update merged" in body)
+    subject, body = m.call_args.args[1:3]
+    check("title does not claim cards need review", "need review" not in subject)
+    check("summary reports current empty War Room queue", "Needs review now: 0" in body)
+    check("merged title is included for audit", "Cyclist update merged" in body)
 
-# 2. Nothing pending, nothing merged, nothing published -> stays silent.
-m = run(rows=[], stats=empty_stats, threshold=0.95,
-        published_titles=[], merged_titles=[])
-check("fully empty pass sends nothing", not m.called)
+m = run(rows=[], merged_titles=["Cyclist update merged", "Cyclist update merged"],
+        merged_ids=["q-merge-1", "q-merge-2"])
+check("repeated merge titles are grouped with their action count",
+      "Cyclist update merged (2 updates)" in m.call_args.args[2])
 
-# 3. Two merge-only passes with DIFFERENT merged titles must not share a
-#    dedup key (the old signature ignored merged/published titles entirely).
-m1 = run(rows=[], stats=empty_stats, threshold=0.95,
-         published_titles=[], merged_titles=["Story A merged"])
-m2 = run(rows=[], stats=empty_stats, threshold=0.95,
-         published_titles=[], merged_titles=["Story B merged"])
-key1 = m1.call_args.kwargs.get("dedup_key")
-key2 = m2.call_args.kwargs.get("dedup_key")
-check("different merges this pass get different dedup keys", key1 != key2)
-
-# 4. Pending-for-review behaviour is unchanged (regression guard).
-pending_row = {"id": "q1", "status": "pending", "raw_content": {},
-               "agent_confidence": 0.97, "proposed_title": "High confidence draft",
-               "_hold_reason": "possible_published_duplicate"}
-m = run(rows=[pending_row],
-        stats={"reasons": {"eligible": 1, "possible_published_duplicate": 1}},
-        threshold=0.95,
-        published_titles=[], merged_titles=[])
-check("still-pending card triggers the review-queue notification", m.called)
+m = run(rows=[], published_ids=["q-published"])
+check("successful publication is reported", m.called)
 if m.called:
-    subject = m.call_args.args[1]
     body = m.call_args.args[2]
-    check("subject still counts the pending card", "1 card" in subject)
-    check("successful eligibility count is not reported as held", "eligible: 1" not in body)
-    check("duplicate hold reason is written for a human", "possible duplicate of a published incident" in body)
+    check("publication count is reported without repeating incident titles",
+          "Published this pass: 1" in body and "Auto-published without review" not in body)
+    check("empty live review queue is stated explicitly", "Needs review now: 0" in body)
+
+m = run(rows=[])
+check("empty pass with no actions stays silent", not m.called)
+
+print("\n=== current queue and deduplication ===")
+
+pending = {"id": "q1", "status": "pending", "raw_content": {},
+           "agent_confidence": 0.97, "proposed_title": "High confidence draft",
+           "_hold_reason": "possible_published_duplicate"}
+m = run(rows=[pending])
+check("current pending card triggers a review notification", m.called)
+if m.called:
+    subject, body = m.call_args.args[1:3]
+    check("subject counts current queue cards", "1 card" in subject)
+    check("specific hold reason is readable", "possible duplicate of a published incident" in body)
+    check("summary does not include historical eligibility totals", "eligible:" not in body)
+
+m_same = run(rows=[pending])
+m_new = run(rows=[pending, {**pending, "id": "q2", "proposed_title": "Another draft"}])
+key_same = m_same.call_args.kwargs["dedup_key"]
+key_unchanged = run(rows=[pending]).call_args.kwargs["dedup_key"]
+key_new = m_new.call_args.kwargs["dedup_key"]
+check("same pending-card state gets the same dedup key", key_same == key_unchanged)
+check("new queue id changes the dedup key", key_same != key_new)
+
+duplicates = [
+    {"id": "q1", "status": "pending", "raw_content": {},
+     "agent_confidence": 0.97, "proposed_title": "Cat rescued from Yishun void deck",
+     "_hold_reason": "per_run_cap_hit"},
+    {"id": "q2", "status": "pending", "raw_content": {},
+     "agent_confidence": 0.96, "proposed_title": "Cat rescued from Yishun void deck",
+     "_hold_reason": "per_run_cap_hit"},
+]
+m = run(rows=duplicates)
+body = m.call_args.args[2]
+check("repeated card titles are grouped into one human-readable line",
+      body.count("Cat rescued from Yishun void deck") == 1 and "(2 cards)" in body)
+check("grouped line retains the hold reason", "per-pass auto-publish limit reached" in body)
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

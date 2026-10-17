@@ -233,6 +233,18 @@ check("the cadence decision is recorded on the report",
 check("the summary surfaces cadence outcomes, not just the queue counts",
       "2 pattern alert(s)" in report["summary"] and "1 auto-concluded" in report["summary"])
 
+original_auto_publish = _STEP_MODULES["ops.auto_publish"]
+try:
+    _STEP_MODULES["ops.auto_publish"] = {
+        "run": {"published": 0, "needs_review": None},
+    }
+    unverified_report, _ = run_chain(day=TUESDAY)
+finally:
+    _STEP_MODULES["ops.auto_publish"] = original_auto_publish
+check("daily summary marks an unverified review count instead of reporting zero",
+      "review queue unverified" in unverified_report["summary"]
+      and "None for review" not in unverified_report["summary"])
+
 
 # ── the chain on an ordinary day ────────────────────────────────────────────
 

@@ -6,8 +6,8 @@ Runs immediately after the ingestion pass. Two jobs:
   1. Every `pending` queue row that clears the confidence threshold and the
      source, date, factual-integrity and duplicate checks can publish without a
      human — with the decision recorded as a training signal.
-  2. Held rows stay in the War Room and trigger ONE alert with plain-language
-     reasons, while successful publications are listed separately.
+  2. Held rows trigger ONE concise alert based on a refreshed War Room queue;
+     successful publishes are counted and reviewable holds include reasons.
 
 ## Why this is a faithful port and not a second implementation
 
@@ -880,7 +880,8 @@ def _log_training_signal(item: dict, incident_id: str, client, run: AgentRun) ->
 def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler") -> dict:
     """Auto-publish eligible rows, then notify about the rest. Never raises."""
     stats = {"considered": 0, "published": 0, "merged": 0, "skipped": 0, "failed": 0,
-             "needs_review": 0, "reasons": {}, "dry_run": dry_run}
+             "needs_review": None, "review_queue_verified": False,
+             "reasons": {}, "dry_run": dry_run}
 
     if not agent_enabled(AGENT):
         logger.warning("auto_publish: disabled via AGENT_DISABLED")
@@ -964,8 +965,9 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
             from art.generate_image import AttemptBudget
             art_budget = AttemptBudget()
 
-        published_titles: list[str] = []
         merged_titles: list[str] = []
+        published_queue_ids: list[str] = []
+        merged_queue_ids: list[str] = []
         for row_index, item in enumerate(rows):
             # ── Auto-merge branch (update rows) ──────────────────────────────
             # Only when AUTO_MERGE_ENABLED; otherwise update rows fall through to
@@ -999,6 +1001,7 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
                     item["status"] = "update_approved"
                     stats["merged"] += 1
                     merged_titles.append((item.get("proposed_title") or "")[:80])
+                    merged_queue_ids.append(str(item.get("id")))
                     arun.success("auto_merged",
                                  f"{(item.get('proposed_title') or '')[:70]} -> {merged_id} "
                                  f"(match={(item.get('raw_content') or {}).get('_match_confidence')})",
@@ -1046,7 +1049,6 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
 
             if dry_run:
                 stats["published"] += 1
-                published_titles.append((item.get("proposed_title") or "")[:80])
                 arun.info("would_publish", f"[dry-run] {(item.get('proposed_title') or '')[:70]}")
                 continue
 
@@ -1054,7 +1056,7 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
             if incident_id:
                 item["status"] = "approved"
                 stats["published"] += 1
-                published_titles.append((item.get("proposed_title") or "")[:80])
+                published_queue_ids.append(str(item.get("id")))
                 # Include successes from this pass in the duplicate guard so
                 # duplicate queue rows cannot all publish against the same
                 # start-of-pass archive snapshot.
@@ -1073,23 +1075,45 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
                 stats["failed"] += 1
                 item["_hold_reason"] = "publish_failed"
 
-        stats["needs_review"] = sum(
-            1 for row in rows
-            if row.get("status") in ("pending", "update")
-            and not (row.get("raw_content") or {}).get("notification_type")
-        )
+        # The in-memory rows are only the pass-start snapshot. Refresh the same
+        # pending/update view the War Room uses before reporting counts; a human
+        # may have acted during this pass, and our writes may have changed it.
+        review_rows = None
+        try:
+            review_rows = _fetch_current_review_queue(client)
+            prior_by_id = {str(row["id"]): row for row in rows if row.get("id") is not None}
+            for row in review_rows:
+                prior = prior_by_id.get(str(row.get("id")))
+                if prior and prior.get("_hold_reason"):
+                    row["_hold_reason"] = prior["_hold_reason"]
+            stats["needs_review"] = len(_reviewable_cards(review_rows))
+            stats["review_queue_verified"] = True
+        except Exception as exc:                  # noqa: BLE001
+            arun.warn("review_queue_refresh_failed",
+                      f"could not verify current War Room queue after auto-publish: {exc}")
+
         arun.stat("published", stats["published"])
         arun.stat("merged", stats["merged"])
         arun.stat("needs_review", stats["needs_review"])
+        arun.stat("review_queue_verified", stats["review_queue_verified"])
         arun.stat("skip_reasons", stats["reasons"])
         merge_note = f", auto-merged {stats['merged']}" if AUTO_MERGE_ENABLED else ""
+        review_note = (f"{stats['needs_review']} left for review"
+                       if stats["review_queue_verified"] else "review queue unverified")
         arun.set_summary(
-            f"auto-published {stats['published']}{merge_note}, {stats['needs_review']} left for review "
+            f"auto-published {stats['published']}{merge_note}, {review_note} "
             f"(threshold {threshold})"
         )
 
         if not dry_run:
-            _notify_review_queue(rows, stats, threshold, published_titles, merged_titles, client)
+            if review_rows is None:
+                _notify_review_queue_unverified(
+                    client, len(published_queue_ids), len(merged_queue_ids),
+                )
+            else:
+                _notify_review_queue(
+                    review_rows, merged_titles, client, published_queue_ids, merged_queue_ids,
+                )
 
     return stats
 
@@ -1112,99 +1136,115 @@ def _notify_schema_blocked(why: str, client) -> None:
     )
 
 
-def _notify_review_queue(rows, stats, threshold, published_titles, merged_titles, client) -> None:
-    """
-    Req #4 — one alert when cards below the threshold are waiting, PLUS
-    guaranteed surfacing of auto-merges (they mutate a LIVE incident, so they
-    must never ride only on there also being something pending for review).
+def _fetch_current_review_queue(client) -> list[dict]:
+    """Read the current War Room queue after all auto-publish writes finish."""
+    result = (client.table("war_room_queue")
+              .select("*")
+              .in_("status", ["pending", "update"])
+              .order("created_at", desc=True)
+              .execute())
+    return result.data or []
 
-    Deduped on WHICH cards are waiting / were auto-merged or -published, so an
-    unchanged queue is announced once and a genuinely new card or merge alerts
-    at once. Nothing to report -> no alert at all, so a silent phone reliably
-    means an empty queue with nothing auto-mutated.
+
+def _reviewable_cards(rows) -> list[dict]:
+    """Distinct incident cards awaiting review; ignore notification sentinels."""
+    cards = {}
+    for row in rows:
+        if (row.get("status") not in ("pending", "update")
+                or (row.get("raw_content") or {}).get("notification_type")):
+            continue
+        identity = row.get("id") or row.get("proposed_slug") or row.get("proposed_title")
+        cards[str(identity)] = row
+    return list(cards.values())
+
+
+def _notify_review_queue_unverified(client, published_count: int, merged_count: int) -> None:
+    """Report the refresh failure explicitly instead of sending stale counts."""
+    notify(
+        "anomaly",
+        "Yishun Again — War Room queue could not be verified",
+        (f"Auto-publish finished: {published_count} published, {merged_count} updates merged. "
+         "I could not refresh the current review queue. "
+         "No queue count is reported; open the War Room to check the current state."
+         + footer()),
+        dedup_key="review_queue_refresh_failed:auto_publish",
+        throttle_minutes=1440,
+        client=client,
+    )
+
+
+def _notify_review_queue(rows, merged_titles, client,
+                         published_queue_ids=None, merged_queue_ids=None) -> None:
     """
-    pending_for_review = [
-        r for r in rows
-        if r.get("status") in ("pending", "update")
-        and not (r.get("raw_content") or {}).get("notification_type")
-    ]
-    if not pending_for_review and not merged_titles and not published_titles:
+    Send one concise pass summary from the refreshed War Room queue. Dedup on
+    stable queue ids and current card state so unchanged cards do not re-alert,
+    while new cards and auto-actions still surface immediately.
+    """
+    pending_for_review = _reviewable_cards(rows)
+    published_queue_ids = published_queue_ids or []
+    merged_queue_ids = merged_queue_ids or []
+    if (not pending_for_review and not merged_queue_ids
+            and not merged_titles and not published_queue_ids):
         return
 
-    if pending_for_review:
-        lines = [
-            f"{len(pending_for_review)} card(s) are still waiting for review in the War Room.",
-        ]
-        below_threshold = [
-            r for r in pending_for_review
-            if r.get("agent_confidence") is None
-            or float(r.get("agent_confidence")) < threshold
-        ]
-        if below_threshold:
-            lines.append(
-                f"{len(below_threshold)} are below the {threshold:.0%} auto-publish threshold."
-            )
-        if len(below_threshold) < len(pending_for_review):
-            lines.append("The other cards were held by an eligibility check and need your review.")
-        lines.append("")
-    else:
-        lines = ["No cards remain in the review queue after this pass.", ""]
-    if published_titles:
-        lines += [f"Auto-published without review this pass ({len(published_titles)}):"]
-        lines += [f"  + {t}" for t in published_titles[:10]]
-        lines += [""]
+    lines = [
+        f"Published this pass: {len(published_queue_ids)}.",
+        f"Auto-merged updates: {len(merged_queue_ids)}.",
+        f"Needs review now: {len(pending_for_review)} card(s) in the current War Room queue.",
+    ]
 
     # Merges mutate a LIVE incident, so surface them for a look — each is
     # undoable from the "Recently merged updates" panel in the War Room queue.
     if merged_titles:
-        lines += [f"Auto-merged into existing incidents this pass ({len(merged_titles)}):"]
-        lines += [f"  ~ {t}" for t in merged_titles[:10]]
-        lines += ["  (undo any of these from the War Room queue's Recently-merged panel)", ""]
+        merge_counts = {}
+        for title in merged_titles:
+            merge_counts[title] = merge_counts.get(title, 0) + 1
+        lines += ["", "Merged updates:"]
+        for title, count in list(merge_counts.items())[:5]:
+            suffix = f" ({count} updates)" if count > 1 else ""
+            lines.append(f"  • {title}{suffix}")
+        if len(merge_counts) > 5:
+            lines.append(f"  • and {len(merge_counts) - 5} more title(s)")
+        lines.append("Undo these from the War Room queue's Recently-merged panel.")
 
     if pending_for_review:
-        lines.append("Waiting for you:")
-        for r in sorted(pending_for_review,
-                        key=lambda x: -(float(x.get("agent_confidence") or 0)))[:20]:
-            conf = r.get("agent_confidence")
-            conf_s = f"{float(conf):.0%}" if conf is not None else " ?  "
-            kind = "UPDATE" if r.get("status") == "update" else "NEW   "
-            reason = r.get("_hold_reason") or "not processed this pass"
-            lines.append(
-                f"  [{conf_s:>4}] {kind} {(r.get('proposed_title') or '(untitled)')[:70]} — "
-                f"{_human_hold_reason(reason)}"
-            )
-        if len(pending_for_review) > 20:
-            lines.append(f"  ... and {len(pending_for_review) - 20} more")
-
-    blocked = {k: v for k, v in stats["reasons"].items()
-               if k not in ("eligible", "below_threshold", "not_pending", "notification_row")}
-    if blocked:
-        lines += ["", "Eligibility checks held these cards:"]
-        lines += [f"  {_human_hold_reason(k)}: {v}" for k, v in sorted(blocked.items())]
+        # Group repeated headlines so duplicate queue rows are visible as a
+        # count, not repeated Telegram lines. Queue ids still drive the count
+        # and dedup key, so distinct cards are never silently collapsed.
+        groups = {}
+        for row in sorted(pending_for_review,
+                          key=lambda x: -(float(x.get("agent_confidence") or 0))):
+            kind = "UPDATE" if row.get("status") == "update" else "NEW"
+            title = (row.get("proposed_title") or "(untitled)")[:70]
+            reason = row.get("_hold_reason") or "not_processed_this_pass"
+            key = (kind, title, _human_hold_reason(reason))
+            groups[key] = groups.get(key, 0) + 1
+        lines += ["", "Waiting for review:"]
+        displayed = 0
+        for (kind, title, reason), count in list(groups.items())[:5]:
+            suffix = f" ({count} cards)" if count > 1 else ""
+            lines.append(f"  • {kind}: {title}{suffix} — {reason}")
+            displayed += count
+        if len(pending_for_review) > displayed:
+            lines.append(f"  • and {len(pending_for_review) - displayed} more card(s)")
 
     lines.append(f"\nReview: {war_room_url('/queue')}")
 
-    # Dedup on the SET of waiting cards, not the calendar day. The old
-    # `review_queue:{today}` key rode notify()'s 180-min default throttle, but
-    # the two daily passes run ~12h apart, so the window never reached back to
-    # the earlier send and the SAME lingering card re-alerted every pass — the
-    # operator saw one unreviewed card announced twice and read it as "rejected
-    # cards coming back". Keying on the sorted pending ids (hashed to stay under
-    # notify's 500-char dedup_key cap) keeps an unchanged queue quiet for the
-    # throttle window while a genuinely new card changes the signature and
-    # alerts immediately; 1440m makes that window a full day, so a still-pending
-    # card nudges once daily at most. Same shape as ops/supervisor.py's dedup.
-    sig = hashlib.sha1(
-        "|".join(sorted(str(r.get("id")) for r in pending_for_review)
-                 + sorted(published_titles) + sorted(merged_titles)).encode()
-    ).hexdigest()[:16]
+    # Key the report by current card state and stable queue ids for actions.
+    # An unchanged queue stays quiet for a day; a new card, changed hold reason,
+    # publication, or merge changes the signature and alerts immediately.
+    state = [
+        f"review:{r.get('id')}:{r.get('status')}:{r.get('_hold_reason')}:{r.get('proposed_title')}"
+        for r in pending_for_review
+    ]
+    state += [f"published:{queue_id}" for queue_id in published_queue_ids]
+    state += [f"merged:{queue_id}" for queue_id in merged_queue_ids]
+    sig = hashlib.sha1("|".join(sorted(state)).encode()).hexdigest()[:16]
 
     if pending_for_review:
         title = f"Yishun Again — {len(pending_for_review)} card(s) need review"
-    elif merged_titles:
-        title = f"Yishun Again — auto-merged {len(merged_titles)} update(s), queue clear"
     else:
-        title = "Yishun Again — auto-publish pass, queue clear"
+        title = "Yishun Again — auto-publish pass complete"
 
     notify(
         "review_queue",

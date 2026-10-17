@@ -399,7 +399,9 @@ def run(dry_run: bool = False, trigger: str = "scheduler",
         failed = [k for k, v in steps.items() if isinstance(v, dict) and v.get("error")]
         queued = (steps.get("ingestion") or {}).get("total_queued", 0)
         published = (steps.get("auto_publish") or {}).get("published", 0)
-        review = (steps.get("auto_publish") or {}).get("needs_review", 0)
+        review = (steps.get("auto_publish") or {}).get("needs_review")
+        review_text = (f"{review} for review" if review is not None
+                       else "review queue unverified")
 
         report["finished_at"] = datetime.now(timezone.utc).isoformat()
         report["duration_seconds"] = round(
@@ -415,7 +417,7 @@ def run(dry_run: bool = False, trigger: str = "scheduler",
             ) if part
         )
 
-        summary = (f"queued {queued}, auto-published {published}, {review} for review"
+        summary = (f"queued {queued}, auto-published {published}, {review_text}"
                    f"{'; ' + extra if extra else ''}"
                    f"{'; FAILED: ' + ', '.join(failed) if failed else ''}")
         arun.set_summary(summary)

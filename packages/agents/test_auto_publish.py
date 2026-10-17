@@ -262,6 +262,38 @@ with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlis
     check("dry run inserts no incident", "incidents" not in client.writes)
     check("dry run does not close the queue row", "war_room_queue:updates" not in client.writes)
 
+print("\n=== reports the refreshed War Room queue ===")
+with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlist), \
+     mock.patch("classifiers.geocoding.geocode_incident", lambda *a, **kw: (1.43, 103.83)), \
+     mock.patch("ops.activity._client", lambda *_a, **_kw: None), \
+     mock.patch.object(ap, "_fetch_current_review_queue", return_value=[]), \
+     mock.patch.object(ap, "notify") as telegram:
+    client = FakeClient({"war_room_queue": [_row()]})
+    stats = ap.run(supabase_client=client, dry_run=False, trigger="manual")
+    check("reported review count comes from the refreshed queue", stats["needs_review"] == 0)
+    check("refreshed queue is explicitly marked verified", stats["review_queue_verified"] is True)
+    body = telegram.call_args.args[2]
+    check("Telegram says the current War Room queue is empty", "Needs review now: 0" in body)
+    check("Telegram does not list the pass-start queue row as still waiting",
+          "Cat rescued from Yishun void deck" not in body)
+
+print("\n=== never sends stale counts if the refresh fails ===")
+with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlist), \
+     mock.patch("classifiers.geocoding.geocode_incident", lambda *a, **kw: (1.43, 103.83)), \
+     mock.patch("ops.activity._client", lambda *_a, **_kw: None), \
+     mock.patch.object(ap, "_fetch_current_review_queue", side_effect=RuntimeError("temporary DB error")), \
+     mock.patch.object(ap, "notify") as telegram:
+    client = FakeClient({"war_room_queue": [_row()]})
+    stats = ap.run(supabase_client=client, dry_run=False, trigger="manual")
+    check("unverified queue count is represented as unknown", stats["needs_review"] is None)
+    check("refresh failure is recorded", stats["review_queue_verified"] is False)
+    check("Telegram reports verification failure", "could not be verified" in telegram.call_args.args[1])
+    check("verification failure still reports completed auto-publish actions",
+          "1 published" in telegram.call_args.args[2])
+    check("Telegram does not claim a queue count", "Needs review now:" not in telegram.call_args.args[2])
+    check("repeated verification failure is throttled to one daily alert",
+          telegram.call_args.kwargs["throttle_minutes"] == 1440)
+
 print("\n=== refuses to act when it cannot record the decision ===")
 
 
