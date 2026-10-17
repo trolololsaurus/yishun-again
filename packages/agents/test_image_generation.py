@@ -44,7 +44,10 @@ class _TextPart:
 
 
 class _AnthropicResponse:
-    def __init__(self, text): self.content = [_TextPart(text)]
+    def __init__(self, text, stop_reason=None):
+        self.content = [_TextPart(text)] if text else []
+        self.stop_reason = stop_reason
+        self.usage = type("Usage", (), {"output_tokens": 1024})()
 
 
 class _Messages:
@@ -54,6 +57,8 @@ class _Messages:
         self._owner.calls.append(kwargs)
         if self._owner.boom:
             raise RuntimeError("anthropic exploded")
+        if self._owner.truncate_first and len(self._owner.calls) == 1:
+            return _AnthropicResponse("", stop_reason="max_tokens")
         return _AnthropicResponse(self._owner.scenes[
             min(len(self._owner.calls) - 1, len(self._owner.scenes) - 1)])
 
@@ -79,8 +84,9 @@ def scene(label: str) -> str:
 
 
 class FakeAnthropic:
-    def __init__(self, scenes=(scene("A quiet undercroft"),), boom=False):
-        self.scenes, self.boom, self.calls = list(scenes), boom, []
+    def __init__(self, scenes=(scene("A quiet undercroft"),), boom=False,
+                 truncate_first=False):
+        self.scenes, self.boom, self.truncate_first, self.calls = list(scenes), boom, truncate_first, []
         self.messages = _Messages(self)
 
 
@@ -467,6 +473,8 @@ check("url is the public R2 URL with a content version",
 check("exactly one Haiku call", len(a.calls) == 1)
 check("exactly one image call", len(g.calls) == 1)
 check("the scene model is Haiku", a.calls[0]["model"] == gi.SCENE_MODEL)
+check("scene call omits deprecated temperature parameter", "temperature" not in a.calls[0])
+check("scene call has a higher initial output budget", a.calls[0]["max_tokens"] == 1024)
 check("16:9 was requested", "16:9" in str(g.calls[0].get("config")))
 check("one attempt recorded, outcome ok", len(res.attempts) == 1
       and res.attempts[0]["outcome"] == "ok")
@@ -475,6 +483,18 @@ check("R2 object is verified with a HEAD after the PUT", len(r2.heads) == 1)
 check("uploaded as image/png", r2.puts[0]["ContentType"] == "image/png")
 check("key is pixel-art/{slug}.png",
       r2.puts[0]["Key"] == "pixel-art/yishun-cat-rescued-2026-07.png")
+
+# The current Haiku model can spend its whole output budget before returning
+# the scene. Retry once at double the cap rather than dropping the image.
+print("\nscene writer truncation recovery:\n")
+a = FakeAnthropic(truncate_first=True)
+written = gi.write_scene(INCIDENT, a)
+check("scene recovered after one max_tokens truncation",
+      written.startswith("A quiet undercroft") and len(a.calls) == 2)
+check("truncation retry doubles the output cap",
+      [call["max_tokens"] for call in a.calls] == [1024, 2048])
+check("truncation retry also omits deprecated temperature",
+      all("temperature" not in call for call in a.calls))
 
 # ── Cache busting ────────────────────────────────────────────────────────────
 #

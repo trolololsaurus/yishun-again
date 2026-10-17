@@ -308,19 +308,20 @@ still recognises instantly:
 ### 3.7 Scene length and drift control
 
 Consistency across cards is a *sampling* problem as much as a prompt problem.
-Sampled three times at temperature 0.7 on one incident, the scene writer
-produced 831 / 567 / 825 characters across three different times of day, and the
-short one rendered visibly sparse.
+Earlier sampling tests at temperature 0.7 produced 831 / 567 / 825 characters
+across three different times of day; after lowering it to 0.25, the same
+incident produced 1157 / 1080 / 1193 characters, all late afternoon or evening.
+The currently configured Haiku model rejects an explicit `temperature`
+parameter, so the scene writer now uses the model's default sampling settings.
 
 | Control | Value | Why |
 |---|---|---|
-| `SCENE_TEMPERATURE` | `0.25` | Low, not zero. At 0.7 the same incident wandered between mid-morning and late afternoon. At 0.0 every card would read stamped from one template. |
 | `SCENE_MIN_CHARS` | `560` | Under it the scene is rewritten **once** and then accepted regardless — a thin picture beats a missing one. |
 | `SCENE_MAX_CHARS` | `1500` | Injection bound. Truncation cuts at the last **sentence** end; a word-boundary cut left prompts dangling mid-clause. |
 | Target in prompt | 600–1000 chars, 4–6 sentences | Stated explicitly; the model overshoots slightly, which is why the cap is 1500. |
 
-After these, the same incident sampled 1157 / 1080 / 1193 characters, all late
-afternoon or evening.
+The historical sampling results above were measured before the model stopped
+accepting an explicit temperature value.
 
 ### 3.8 Prompt assembly order
 

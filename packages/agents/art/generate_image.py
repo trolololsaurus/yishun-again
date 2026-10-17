@@ -59,7 +59,7 @@ from dataclasses import dataclass, field
 from art.prompt_template import assemble_prompt
 from art.sensitive_scene import block_label, scene_is_clean, sensitive_art_mode, sensitive_scene
 from art.suppression import suppress_image
-from filters.model_call import create_checked
+from filters.model_call import create_with_headroom
 
 logger = logging.getLogger(__name__)
 
@@ -99,13 +99,6 @@ SCENE_MAX_CHARS = int(os.getenv("SCENE_MAX_CHARS", "1500"))
 # picture beats a missing one.
 SCENE_MIN_CHARS = int(os.getenv("SCENE_MIN_CHARS", "560"))
 SCENE_MIN_RETRIES = 1
-
-# Low, not zero. The scene is a description of a fixed place and event, so
-# run-to-run variation is drift rather than creativity — at 0.7 the same
-# incident wandered between mid-morning and late afternoon and between an open
-# streetfront and an enclosed room. Not 0.0: identical phrasing across every
-# card would make the whole feed look stamped from one template.
-SCENE_TEMPERATURE = float(os.getenv("SCENE_TEMPERATURE", "0.25"))
 
 _DIRECTIVE_MARKERS = (
     "ignore previous", "ignore the previous", "ignore all previous",
@@ -408,12 +401,11 @@ def _trim_to_sentence(text: str, limit: int) -> str:
 
 def _one_scene(incident: dict, client, softening: str,
                refusal_reason: str | None, nudge: str) -> str:
-    response = create_checked(
+    response, _ = create_with_headroom(
         client,
         call="art.write_scene",
         model=SCENE_MODEL,
-        max_tokens=768,
-        temperature=SCENE_TEMPERATURE,
+        max_tokens=1024,
         system=_SCENE_SYSTEM_PROMPT,
         messages=[{"role": "user",
                    "content": _scene_user_message(incident, softening, refusal_reason) + nudge}],
