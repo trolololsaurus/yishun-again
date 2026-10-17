@@ -50,6 +50,7 @@ from datetime import datetime, timedelta, timezone
 
 import anthropic
 from dotenv import load_dotenv
+from filters.model_call import extract_text
 
 load_dotenv(override=False)
 
@@ -135,14 +136,13 @@ def _extract_entities(
         response = client.messages.create(
             model="claude-haiku-5-5",
             max_tokens=256,
-            temperature=0.0,
             system=_ENTITY_SYSTEM,
             messages=[{
                 "role": "user",
                 "content": f"Title: {title}\n\nSummary: {summary[:600]}",
             }],
         )
-        raw = response.content[0].text.strip()
+        raw = extract_text(response).strip()
         raw = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`")
         data = json.loads(raw)
         entities: list[str] = [

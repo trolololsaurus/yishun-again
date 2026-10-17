@@ -26,6 +26,7 @@ from pathlib import Path
 
 import anthropic
 from dotenv import load_dotenv
+from filters.model_call import extract_text
 
 load_dotenv(override=False)
 
@@ -126,7 +127,6 @@ def _generate_mistakes(
     response = client.messages.create(
         model=MODEL,
         max_tokens=300,
-        temperature=0.0,
         system=(
             "You write concise quality guidelines for an AI editorial agent. "
             "Given correction statistics, produce 3 plain-English rules to reduce mistakes. "
@@ -144,7 +144,7 @@ def _generate_mistakes(
         }],
     )
 
-    raw = response.content[0].text.strip()
+    raw = extract_text(response).strip()
     import re
     raw = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`")
     data = json.loads(raw)

@@ -12,7 +12,7 @@ pydantic==2.13.4
 # scheduler — off in prod, redundant with POST /orchestrator/daily, now deleted.
 
 # ── AI APIs ─────────────────────────────────────────────────────────────────
-# Stage 2 writer — claude-haiku-5-5 (classify) / claude-sonnet-4-6 (write)
+# Stage 2 writer — claude-haiku-5-5 (classify and write)
 anthropic==0.40.0
 # Stage 1 filter — gemini-3.1-flash-lite via the Gemini API.
 # Replaced groq==0.9.0 in 2026-07: Groq suspended Developer-tier signups

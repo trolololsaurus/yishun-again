@@ -747,12 +747,11 @@ the only real cost.
 
 **Every figure `ops/backend_health.py` produces is an estimate, not billing
 data.** It prices a queued draft as one classify call plus one write call
-(`STAGE2_USD_PER_DRAFT`, ~$0.031 at the list prices in `_USD_PER_MTOK`) against
-deliberately generous assumed token shapes — a cost guard that under-estimates is
-a cost guard that never fires. In the same spirit the write call is still priced
-at **Sonnet** rates while `STAGE2_WRITE_MODEL` defaults to Haiku, so the estimate
-runs high on purpose. Dry runs are counted, because `dry_run` suppresses database
-writes, not model calls: a dry run costs exactly as much as a real one.
+(`STAGE2_USD_PER_DRAFT`) against deliberately generous assumed token shapes — a
+cost guard that under-estimates is a cost guard that never fires. Both calls are
+priced at the fixed Stage 2 Haiku 5.5 model. Dry runs are counted, because
+`dry_run` suppresses database writes, not model calls: a dry run costs exactly
+as much as a real one.
 
 **The 2026-08-02 fleet expansion (15 → 25 sources) does not move spend the way it
 looks like it should.** Neither term in the estimate is per-source: Stage 1 calls

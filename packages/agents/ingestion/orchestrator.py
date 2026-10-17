@@ -164,18 +164,17 @@ def _make_grouper():
             f"{len(cands)} articles follow. Group the ones that report the SAME "
             f"real-world event.\n\n" + "\n\n".join(lines)
         )
-        from filters.model_call import create_with_headroom
+        from filters.model_call import create_with_headroom, extract_text
         response, _retried = create_with_headroom(
             client,
             call="clustering._make_grouper",
             env_var="CLUSTER_GROUPER_MAX_TOKENS",
             model=MODEL,
             max_tokens=CLUSTER_GROUPER_MAX_TOKENS,
-            temperature=0.0,
             system=_GROUPER_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_msg}],
         )
-        data = _parse_json(response.content[0].text)
+        data = _parse_json(extract_text(response))
         raw = data.get("groups")
         if not isinstance(raw, list):
             raise ValueError(f"grouper response has no 'groups' list: {str(data)[:200]!r}")

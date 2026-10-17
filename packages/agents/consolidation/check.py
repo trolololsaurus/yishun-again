@@ -25,7 +25,7 @@ from dataclasses import dataclass
 import anthropic
 from dotenv import load_dotenv
 
-from filters.model_call import create_with_headroom
+from filters.model_call import create_with_headroom, extract_text
 
 from consolidation.rules import (
     CANDIDATE_FETCH_LIMIT,
@@ -157,12 +157,11 @@ def _judge_batch(
         env_var="CONSOLIDATION_BATCH_MAX_TOKENS",
         model=MODEL,
         max_tokens=BATCH_MAX_TOKENS,
-        temperature=0.0,
         system=_BATCH_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_msg}],
     )
 
-    return _parse_json(response.content[0].text)
+    return _parse_json(extract_text(response))
 
 
 def _coerce_index(value, n: int):

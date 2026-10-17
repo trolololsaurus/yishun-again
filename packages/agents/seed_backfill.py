@@ -33,6 +33,7 @@ import re
 import sys
 import time
 from datetime import datetime, timezone
+from filters.model_call import extract_text
 from urllib.parse import urlparse
 
 import httpx
@@ -136,11 +137,11 @@ def _date_from_text(title: str, body: str) -> str | None:
         # ANTHROPIC_API_KEY is in the environment.
         client = anthropic.Anthropic()
         r = client.messages.create(
-            model="claude-haiku-5-5", max_tokens=60, temperature=0,
+            model="claude-haiku-5-5", max_tokens=60,
             system=_DATE_SYS,
             messages=[{"role": "user", "content": f"TITLE: {title}\nCONTENT: {body[:1800]}"}],
         )
-        m = re.search(r'"date"\s*:\s*"?(\d{4}-\d{2}-\d{2})"?', r.content[0].text)
+        m = re.search(r'"date"\s*:\s*"?(\d{4}-\d{2}-\d{2})"?', extract_text(r))
         if m and 1980 <= int(m.group(1)[:4]) <= 2026:
             return m.group(1)
     except Exception as exc:

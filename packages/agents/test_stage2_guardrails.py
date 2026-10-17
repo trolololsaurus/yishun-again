@@ -297,8 +297,8 @@ check("event date survives when there is no publication date",
 # ── Model selection ─────────────────────────────────────────────────────────
 print("\nwrite model:")
 check("MODEL_WRITE is Haiku", sw.MODEL_WRITE == "claude-haiku-5-5")
-check("MODEL_WRITE is env-overridable (rollback is config, not redeploy)",
-      "STAGE2_WRITE_MODEL" in open(sw.__file__, encoding="utf-8").read())
+check("MODEL_WRITE cannot be overridden through STAGE2_WRITE_MODEL",
+      "STAGE2_WRITE_MODEL" not in open(sw.__file__, encoding="utf-8").read())
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

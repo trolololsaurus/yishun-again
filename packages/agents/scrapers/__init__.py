@@ -22,6 +22,7 @@ import urllib.request
 from datetime import date
 
 from bs4 import BeautifulSoup
+from filters.model_call import extract_text
 
 logger = logging.getLogger(__name__)
 
@@ -473,7 +474,6 @@ def translate_article(title: str, content: str, source_lang: str) -> tuple[str, 
     response = client.messages.create(
         model="claude-haiku-5-5",
         max_tokens=1024,
-        temperature=0.1,
         system=(
             "You translate news article titles and content to English. "
             'Return JSON only with exactly two keys: {"title": "...", "content": "..."}. '
@@ -489,7 +489,7 @@ def translate_article(title: str, content: str, source_lang: str) -> tuple[str, 
         }],
     )
 
-    raw = response.content[0].text.strip()
+    raw = extract_text(response).strip()
     raw = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
     result = json.loads(raw)
     return str(result.get("title", title)), str(result.get("content", content))

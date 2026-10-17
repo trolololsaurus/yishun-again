@@ -42,6 +42,7 @@ import feedparser
 import httpx
 from pathlib import Path
 from dotenv import load_dotenv
+from filters.model_call import extract_text
 
 from filters.stage1_quota import Stage1DailyQuota, Stage1HaltError
 from scrapers._gnews_helpers import _gnews_source_name, _resolve_redirect
@@ -1160,12 +1161,11 @@ def _judge_batch_group(client, group: list) -> dict:
     response = client.messages.create(
         model       = "claude-haiku-5-5",
         max_tokens  = 300,
-        temperature = 0.0,
         system      = _BATCH_GROUP_JUDGE_PROMPT,
         messages    = [{"role": "user", "content": user_msg}],
     )
 
-    raw = response.content[0].text.strip()
+    raw = extract_text(response).strip()
     raw = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
 
     try:

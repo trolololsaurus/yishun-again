@@ -42,6 +42,18 @@ logger = logging.getLogger(__name__)
 MAX_TOKENS_CEILING = 8192
 
 
+def extract_text(response) -> str:
+    """Join textual response blocks, ignoring empty or non-text blocks."""
+    parts = []
+    for block in getattr(response, "content", ()) or ():
+        value = getattr(block, "text", None)
+        if isinstance(value, str) and value:
+            parts.append(value)
+    if not parts:
+        raise ValueError("Model response contained no text blocks")
+    return "".join(parts)
+
+
 class TruncatedResponse(RuntimeError):
     """
     A model reply stopped at max_tokens, so the JSON is incomplete.

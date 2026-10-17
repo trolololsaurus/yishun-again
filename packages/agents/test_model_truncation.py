@@ -85,6 +85,21 @@ r = mc.create_checked(_NoStopReason(), call="t", model="m", max_tokens=10,
                       messages=[], system="s")
 check("a response with no stop_reason is treated as complete (back-compat)", r is not None)
 
+response_with_empty_prefix = type("R", (), {
+    "content": [
+        type("EmptyText", (), {"text": None})(),
+        type("AnswerText", (), {"text": '{"ok": true}'})(),
+    ]
+})()
+check("text extraction skips an empty first block", mc.extract_text(response_with_empty_prefix) == '{"ok": true}')
+
+try:
+    mc.extract_text(type("R", (), {"content": []})())
+    no_text_raised = False
+except ValueError:
+    no_text_raised = True
+check("text extraction rejects responses with no text", no_text_raised)
+
 print("\ncreate_with_headroom — recovery is one retry at double:\n")
 
 c = _Client(succeeds_at=200)

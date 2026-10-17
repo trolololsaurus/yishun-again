@@ -62,6 +62,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from filters.model_call import extract_text          # noqa: E402
 from classifiers.corroboration import get_supabase_client          # noqa: E402
 from filters.stage2_writer import _sanitise_event_date, MODEL_CLASSIFY  # noqa: E402
 from scrapers import BROWSER_HEADERS, strip_html                   # noqa: E402
@@ -98,12 +99,12 @@ def _fetch_text(url: str) -> str:
 def _ask(client, text: str, published: str) -> str | None:
     try:
         resp = client.messages.create(
-            model=MODEL_CLASSIFY, max_tokens=128, temperature=0.0,
+            model=MODEL_CLASSIFY, max_tokens=128,
             system=_SYSTEM,
             messages=[{"role": "user",
                        "content": f"Publication date: {published}\n\nArticle:\n{text}"}],
         )
-        raw = resp.content[0].text.strip()
+        raw = extract_text(resp).strip()
         raw = raw[raw.find("{"): raw.rfind("}") + 1] if "{" in raw else raw
         return json.loads(raw).get("event_date")
     except Exception as exc:

@@ -92,7 +92,7 @@ yishun-again/
 | Backend | FastAPI | **0.115.14** | Python 3.11+. Pinned at 0.115 for the starlette 0.40 fix (CVE-2024-47874), not 0.110. |
 | Agent hosting | Google Cloud Run | — | `asia-southeast1`, `--min-instances=0` |
 | Stage 1 filter | Gemini API | — | `gemini-3.1-flash-lite` (migrated from Groq, July 2026 — see §4.2) |
-| Stage 2 writer | Anthropic API | — | `claude-haiku-4-5-20251001` for **both** calls (classify and write). `STAGE2_WRITE_MODEL` rolls the write call back to Sonnet — see §4.3. |
+| Stage 2 writer | Anthropic API | — | `claude-haiku-5-5` fixed for **both** calls (classify and write). No Sonnet runtime override. |
 | Orchestrator | *(none — hand-rolled)* | — | `langgraph` removed from `requirements.txt` 2026-08-24 (never imported). Daily chain: `ops/daily.py`. Pass: `ingestion/orchestrator.py`. Both plain Python. |
 | Image gen | Gemini API | `gemini-3.1-flash-lite-image` | Nano Banana 2 Lite, $0.0336/img. No GPU, no weights. Model id is read from `IMAGE_MODEL`, never hardcoded. See `docs/ART_PIPELINE.md` |
 | Scheduling | Cloud Scheduler → HTTP | — | One job POSTs `/orchestrator/daily` at 14:58 SGT. APScheduler 3.x is still a dependency and `main.py` still builds a single-job scheduler, but it is **off in production** (`ENABLE_INPROCESS_SCHEDULER=false`) because Cloud Run scales to zero and in-process timers never fire — see §11.2. |
@@ -678,11 +678,11 @@ REJECT if content is:
 > **Three deltas since this prompt was first written. All three are in the code
 > now; the block below has been corrected to match.**
 >
-> 1. **Both calls are Haiku.** `MODEL_WRITE` defaults to
->    `claude-haiku-4-5-20251001`, not Sonnet. Justified by an eval over 30 real
+> 1. **Both calls are Haiku 5.5.** `MODEL_WRITE` is fixed to
+>    `claude-haiku-5-5`, not Sonnet. Justified by an eval over 30 real
 >    inputs: Haiku matched Sonnet on ungrounded specifics on the multi-source
 >    half and on format compliance, and ran ~24% shorter.
->    `STAGE2_WRITE_MODEL` rolls it back to Sonnet if that ever regresses.
+>    The production code does not support a Sonnet environment override.
 > 2. **`pixel_art_prompt` is no longer requested.** It was written on every
 >    draft and read by nothing — the War Room approve route hardcoded
 >    `pixel_art_url: null` at the time. Art prompts are now written by a
@@ -699,9 +699,8 @@ REJECT if content is:
 >    of being padded with invented specifics.
 
 ```python
-# Model: claude-haiku-4-5-20251001 for classification (MODEL_CLASSIFY)
-#        claude-haiku-4-5-20251001 for draft writing   (MODEL_WRITE,
-#          env-overridable via STAGE2_WRITE_MODEL)
+# Model: claude-haiku-5-5 for classification (MODEL_CLASSIFY)
+#        claude-haiku-5-5 for draft writing   (MODEL_WRITE, fixed)
 # Only Stage 1 approved content reaches here
 # Two calls, not one: _classify() extracts structured metadata, write_stage2()
 # writes the prose. Both go through filters/model_call.py, which owns the

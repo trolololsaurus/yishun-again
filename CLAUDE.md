@@ -364,7 +364,8 @@ JSON — see spec §4.3 for the schema, with three deltas since:
   `422 No prompt to render`. That route now runs the full `/art/generate` path
   when no prompt is stored, so the composed prompt is persisted and the next
   retry is editable.
-- **The write model is Haiku**, not Sonnet (`STAGE2_WRITE_MODEL` to roll back).
+- **Stage 2 classify and write are fixed to Claude Haiku 5.5.** No Sonnet
+  environment override is supported.
   Justified by an eval over 30 real inputs; Haiku matched Sonnet on ungrounded
   specifics on the multi-source half and on format compliance.
 - **`incident_date` is the EVENT date, and since 2026-08-04 something actually

@@ -41,6 +41,7 @@ import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from filters.model_call import extract_text
 
 from ops.activity import _client
 
@@ -100,11 +101,10 @@ def _match_confidence(client, pattern: dict, examples: list[str],
         resp = client.messages.create(
             model=MATCH_MODEL,
             max_tokens=200,
-            temperature=0.0,
             system=_MATCH_SYSTEM,
             messages=[{"role": "user", "content": user}],
         )
-        raw = resp.content[0].text.strip()
+        raw = extract_text(resp).strip()
         raw = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`")
         data = json.loads(raw)
         conf = float(data.get("confidence", 0.0))

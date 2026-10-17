@@ -5,7 +5,7 @@ Two-call pipeline (both Haiku since the 2026-07 eval — see MODEL_WRITE):
   1. MODEL_CLASSIFY — classify the incident and extract structured
                       metadata (fast, cheap, deterministic fields)
   2. MODEL_WRITE    — write title, summary, SEO copy and slug
-                      (env-overridable; STAGE2_WRITE_MODEL rolls back to Sonnet)
+                      (fixed to Haiku 5.5)
 
 hype_meter and chaos_contribution are computed deterministically in Python
 from the spec §7 formulas rather than relying on the model to calculate them.
@@ -25,20 +25,20 @@ import anthropic
 from dotenv import load_dotenv
 
 try:
-    from filters.model_call import create_with_headroom
+    from filters.model_call import create_with_headroom, extract_text
 except ImportError:  # pragma: no cover
     # This module documents itself as runnable directly
     # (python packages/agents/filters/stage2_writer.py), which puts filters/ on
     # sys.path instead of packages/agents/, so the package-qualified import
     # cannot resolve. Both spellings must work.
-    from model_call import create_with_headroom
+    from model_call import create_with_headroom, extract_text
 
 load_dotenv(override=False)
 
 logger = logging.getLogger(__name__)
 
 MODEL_CLASSIFY = "claude-haiku-5-5"
-# Env-overridable so a rollback is a config change, not a redeploy.
+# Stage 2 is intentionally locked to Haiku 5.5 for both calls.
 #
 # Moved from claude-sonnet-4-6 after the 3.1 eval (tools/eval_l2_write.py) over 30
 # real inputs — 15 single-source, 15 clustered with 3-9 sources. On the gate
@@ -47,7 +47,7 @@ MODEL_CLASSIFY = "claude-haiku-5-5"
 # across 3/15, and matched it on format compliance (100% on slug, title, and both
 # SEO limits for both models). It also ran ~24% shorter and breached the 1600-char
 # ceiling far less often (4/30 vs 10/29).
-MODEL_WRITE    = os.getenv("STAGE2_WRITE_MODEL", "claude-haiku-5-5")
+MODEL_WRITE    = "claude-haiku-5-5"
 
 # ── Summary length: arithmetic, not an instruction the model self-polices ────
 #
@@ -92,7 +92,7 @@ _MSM_DOMAINS = [
 
 # ── Haiku system prompt ─────────────────────────────────────────────────────
 # Focused on structured metadata extraction only. Creative writing
-# is handled separately by Sonnet using STAGE2_SYSTEM_PROMPT.
+# is handled separately by Haiku using STAGE2_SYSTEM_PROMPT.
 
 def _sanitise_event_date(raw, published: str | None) -> str | None:
     """
@@ -224,7 +224,7 @@ deaths / injuries extraction rules (STRICT — legal record):
   Vague references like "several people" → null, not a number.
 """
 
-# ── Sonnet system prompt ─────────────────────────────────────────────────────
+# ── Haiku write system prompt ────────────────────────────────────────────────
 # Exact wording from tech spec §4.3 — do not alter.
 
 STAGE2_SYSTEM_PROMPT = """\
@@ -369,7 +369,7 @@ def _compute_chaos_contribution(classification: str, severity: int) -> float:
     return round(severity * multipliers.get(classification, 1.0), 2)
 
 
-# Caps on the extra source text handed to Sonnet. A 5-source story adds roughly
+# Caps on the extra source text handed to Haiku. A 5-source story adds roughly
 # 3k input tokens at these limits — enough for the delta between reports without
 # unbounded cost on heavily-covered incidents.
 MAX_EXTRA_SOURCES  = 5
@@ -600,12 +600,11 @@ def _classify(client: anthropic.Anthropic, content: dict) -> dict:
         env_var="STAGE2_CLASSIFY_MAX_TOKENS",
         model=MODEL_CLASSIFY,
         max_tokens=CLASSIFY_MAX_TOKENS,
-        temperature=0.1,
         system=_CLASSIFY_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": _build_user_message(content)}],
     )
 
-    raw = response.content[0].text
+    raw = extract_text(response)
     logger.debug("Haiku classify raw: %s", raw)
 
     result = _parse_json(raw)
@@ -737,9 +736,9 @@ def _stamp_slug_date(slug: str, date_str: str | None, max_len: int = 70) -> str:
 
 def _write_draft(client: anthropic.Anthropic, content: dict, classification: dict) -> dict:
     """
-    Sonnet call: write title, summary, SEO copy and slug.
+    Haiku call: write title, summary, SEO copy and slug.
     Classification context from Haiku is passed in the user message so
-    Sonnet writes content consistent with the determined incident type.
+    Haiku writes content consistent with the determined incident type.
     """
     # Provide classification as context so the tone matches, plus the computed
     # summary budget for THIS draft. The number is arithmetic (see
@@ -764,12 +763,11 @@ def _write_draft(client: anthropic.Anthropic, content: dict, classification: dic
         env_var="STAGE2_WRITE_MAX_TOKENS",
         model=MODEL_WRITE,
         max_tokens=WRITE_MAX_TOKENS,
-        temperature=0.4,
         system=STAGE2_SYSTEM_PROMPT + calibration_hints,
         messages=[{"role": "user", "content": user_msg}],
     )
 
-    raw = response.content[0].text
+    raw = extract_text(response)
     logger.debug("write raw: %s", raw[:500])
 
     result = _parse_json(raw)
@@ -826,8 +824,8 @@ def write_stage2(content: dict) -> dict:
     Returns:
         Complete war_room_queue draft dict — all fields from spec §4.3.
         Classification metadata fields (classification, severity, lat/lon, etc.)
-        come from Haiku. Creative fields (title, summary, SEO, slug) come from
-        Sonnet. hype_meter and chaos_contribution are computed in Python.
+        come from Haiku. Creative fields (title, summary, SEO, slug) also come
+        from Haiku. hype_meter and chaos_contribution are computed in Python.
     """
     client = _get_client()
 
@@ -919,7 +917,7 @@ def write_stage2(content: dict) -> dict:
         except Exception as exc:
             logger.debug("Geocoding in stage2 (non-fatal): %s", exc)
 
-    # ── Step 4: Merge — Haiku metadata wins over whatever Sonnet returned ────
+    # ── Step 4: Merge — Haiku metadata wins over the generated draft ─────────
     result = {
         **draft,
         # Structured fields — authoritative from Haiku

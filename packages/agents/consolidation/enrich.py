@@ -27,12 +27,12 @@ input: the caller passes only non-signal source text (guardrail #2).
 import logging
 import os
 
-from filters.model_call import create_with_headroom
+from filters.model_call import create_with_headroom, extract_text
 from filters.stage2_writer import _get_client, _parse_json, find_ungrounded
 
 logger = logging.getLogger(__name__)
 
-MODEL = os.getenv("STAGE2_WRITE_MODEL", "claude-haiku-5-5")
+MODEL = "claude-haiku-5-5"
 ENRICH_MAX_TOKENS = int(os.getenv("ENRICH_MAX_TOKENS", "1200"))
 
 _SYSTEM = """\
@@ -82,11 +82,11 @@ def enrich_summary(existing_summary: str, new_source_text: str,
     try:
         response, _ = create_with_headroom(
             c, call="consolidation.enrich_summary", env_var="ENRICH_MAX_TOKENS",
-            model=MODEL, max_tokens=ENRICH_MAX_TOKENS, temperature=0.2,
+            model=MODEL, max_tokens=ENRICH_MAX_TOKENS,
             system=_SYSTEM.format(budget=char_budget),
             messages=[{"role": "user", "content": user}],
         )
-        enriched = (_parse_json(response.content[0].text).get("summary") or "").strip()
+        enriched = (_parse_json(extract_text(response)).get("summary") or "").strip()
     except Exception as exc:                      # noqa: BLE001
         logger.warning("enrich: model call failed — keeping existing (%s)", exc)
         return empty

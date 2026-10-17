@@ -53,7 +53,6 @@ R2_ENDPOINT_TEMPLATE = "https://{account}.r2.cloudflarestorage.com"
 # auditable when prices move.
 _USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-haiku-5-5":  (0.10, 0.50),    # Stage 2 classify (prompts up to 100K tokens)
-    "claude-sonnet-4-6": (3.00, 15.00),   # Stage 2 write
 }
 
 # Assumed token shape of one Stage 2 call, (input, output). Input is system
@@ -63,7 +62,7 @@ _USD_PER_MTOK: dict[str, tuple[float, float]] = {
 # guard that never fires.
 _STAGE2_SHAPE: dict[str, tuple[str, int, int]] = {
     "classify": ("claude-haiku-5-5",  2_500,   300),
-    "write":    ("claude-sonnet-4-6", 3_000, 1_200),
+    "write":    ("claude-haiku-5-5", 3_000, 1_200),
 }
 
 
@@ -72,7 +71,8 @@ def _call_usd(model: str, tokens_in: int, tokens_out: int) -> float:
     return (tokens_in * price_in + tokens_out * price_out) / 1_000_000
 
 
-# One queued draft = one classify call + one write call. ~= $0.0274 today.
+# One queued draft = one classify call + one write call. At current Haiku 5.5
+# rates and the generous token shapes above, this is approximately $0.0013.
 STAGE2_USD_PER_DRAFT = round(sum(_call_usd(*shape) for shape in _STAGE2_SHAPE.values()), 5)
 
 # Stage 1 runs on the Gemini free tier, which is capped by requests-per-day
@@ -81,8 +81,8 @@ STAGE2_USD_PER_DRAFT = round(sum(_call_usd(*shape) for shape in _STAGE2_SHAPE.va
 # billing key can be priced in without a code change.
 STAGE1_USD_PER_CALL = float(os.getenv("STAGE1_USD_PER_CALL", "0.0"))
 
-# Daily spend that warrants waking the operator. At ~$0.0274/draft this is ~73
-# drafts a day — far above the 1-pass-a-day design, so tripping it means
+# Daily spend that warrants waking the operator. At ~$0.0013/draft this is over
+# 1,500 drafts a day — far above the 1-pass-a-day design, so tripping it means
 # something ran that should not have.
 COST_ALERT_USD_PER_DAY = float(os.getenv("COST_ALERT_USD_PER_DAY", "2.00"))
 

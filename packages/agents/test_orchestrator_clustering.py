@@ -233,7 +233,7 @@ check("_make_grouper makes exactly ONE call with all candidates numbered",
       "[0]" in seen["messages"][0]["content"] and "[2]" in seen["messages"][0]["content"])
 check("_make_grouper sends every candidate's title", all(
     c.title in seen["messages"][0]["content"] for c in (xa, xb, y)))
-check("_make_grouper uses temperature 0", seen.get("temperature") == 0.0)
+check("_make_grouper omits deprecated Haiku temperature", "temperature" not in seen)
 
 stub, _ = _client_returning('{"groups": [["0", "1"], ["2"]]}')
 with mock.patch.object(_cc, "_get_anthropic_client", return_value=stub):
