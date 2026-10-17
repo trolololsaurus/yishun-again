@@ -115,26 +115,6 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     return NextResponse.json({ error: 'Incident update failed' }, { status: 500 })
   }
 
-  // Create incident_links for any confirmed related incidents
-  const agentRelated = (rc.agent_related_incidents as Array<{
-    incident_id: string; confidence: number; reason: string; link_type: string; dismissed?: boolean
-  }>) ?? []
-
-  for (const link of agentRelated) {
-    if (link.dismissed) continue
-    // QA M9: the operator just confirmed this update, so mark the link
-    // operator-confirmed (it was looking agent-suggested); capture the error.
-    const { error: linkErr } = await supabase.from('incident_links').insert({
-      incident_a:           targetId,
-      incident_b:           link.incident_id,
-      link_type:            link.link_type ?? 'related',
-      confidence:           link.confidence,
-      agent_reason:         link.reason ?? '',
-      confirmed_by_operator: true,
-    })
-    if (linkErr && linkErr.code !== '23505') console.error('confirm-update — incident_link insert:', linkErr)
-  }
-
   // Update queue status
   await supabase.from('war_room_queue').update({
     status:       'update_approved',

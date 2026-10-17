@@ -7,6 +7,13 @@
 `packages/agents/ingestion/`; where the built code diverged from the design, this
 document now describes the code, and says why it diverged.
 
+**Deprecation notice (2026-10-17):** AI-generated related-incident suggestions
+were removed from the live pipeline and War Room. Historical sections below
+that describe `agent_related_incidents`, `RelatedLink`, or automatic link writes
+describe the retired implementation and are not current behavior. Same-event
+consolidation (new/update/skip), confirmed historical links, and operator-led
+pattern alerts remain.
+
 ---
 
 ## 0. Purpose & scope

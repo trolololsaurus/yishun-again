@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import type { QueueItem, IncidentPreview, AgentRelatedIncident, RejectReason } from '@/lib/types'
+import type { QueueItem, IncidentPreview, RejectReason } from '@/lib/types'
+import { DuplicateReports } from '@/components/DuplicateReports'
 import { CLASS_ICON, CLASS_COLOR, CLASS_LABEL, severityDiamonds, confidenceColor, confidenceLabel, safeHref } from '@/lib/utils'
 
 // Reasons that actually apply to an UPDATE proposal — "this source does not
@@ -17,13 +18,11 @@ const UPDATE_REJECT_REASONS: { value: RejectReason; label: string }[] = [
 interface Props {
   item:             QueueItem
   targetIncident:   IncidentPreview
-  relatedPreviews:  Record<string, { title: string; slug: string }>
   onProcessed:      (id: string) => void
 }
 
-export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed }: Props) {
+export function UpdateCard({ item, targetIncident, onProcessed }: Props) {
   const rc = item.raw_content as Record<string, unknown>
-  const agentRelated: AgentRelatedIncident[] = (rc.agent_related_incidents as AgentRelatedIncident[]) ?? []
 
   // Pre-fill with the ingestion-time ENRICHED summary: the existing incident
   // summary refreshed with this new development (consolidation/enrich.py). This
@@ -35,7 +34,6 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
   const enriched         = (rc._enriched_summary as string) ?? ''
   const enrichedGrounded = rc._enriched_grounded !== false   // undefined => not flagged
   const [summary,       setSummary]       = useState(enriched)
-  const [relatedState,  setRelatedState]  = useState<AgentRelatedIncident[]>(agentRelated)
   const [loading,        setLoading]        = useState(false)
   const [error,          setError]          = useState<string | null>(null)
   const [showRejectMenu, setShowRejectMenu] = useState(false)
@@ -92,33 +90,6 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
       onProcessed(item.id)
     } catch (e) { setError(e instanceof Error ? e.message : 'Unknown error'); setLoading(false) }
   }
-
-  async function handleConfirmLink(link: AgentRelatedIncident) {
-    setLoading(true); setError(null)
-    try {
-      await post('confirm-link', {
-        related_incident_id: link.incident_id,
-        link_type:           link.link_type,
-        confidence:          link.confidence,
-        agent_reason:        link.reason,
-      })
-      setRelatedState(prev => prev.filter(r => r.incident_id !== link.incident_id))
-    } catch (e) { setError(e instanceof Error ? e.message : 'Unknown error') }
-    finally { setLoading(false) }
-  }
-
-  async function handleDismissLink(link: AgentRelatedIncident) {
-    setLoading(true); setError(null)
-    try {
-      await post('dismiss-link', { related_incident_id: link.incident_id })
-      setRelatedState(prev => prev.map(r =>
-        r.incident_id === link.incident_id ? { ...r, dismissed: true } : r
-      ))
-    } catch (e) { setError(e instanceof Error ? e.message : 'Unknown error') }
-    finally { setLoading(false) }
-  }
-
-  const visibleRelated = relatedState.filter(r => !r.dismissed)
 
   return (
     <article className="bg-surface border border-cyan-500/40 rounded">
@@ -188,6 +159,8 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
           </div>
         </div>
 
+        <DuplicateReports reports={rc._duplicate_reports} />
+
         {/* Updated summary — editable, pre-filled with the AI-refreshed merge */}
         <div>
           <label className="text-text-secondary text-sm uppercase tracking-widest flex items-center gap-2 flex-wrap mb-1">
@@ -228,52 +201,6 @@ export function UpdateCard({ item, targetIncident, relatedPreviews, onProcessed 
           />
         </div>
 
-        {/* Possible related banners */}
-        {visibleRelated.length > 0 && (
-          <div className="space-y-2">
-            <div className="text-text-secondary uppercase tracking-widest text-xs">
-              Agent-suggested links
-            </div>
-            {visibleRelated.map(link => {
-              const preview = relatedPreviews[link.incident_id]
-              return (
-                <div key={link.incident_id}
-                     className="border border-yellow/30 bg-yellow/5 p-3 space-y-2">
-                  <div className="flex items-start gap-2">
-                    <span className="text-yellow font-bold uppercase text-xs">
-                      POSSIBLE {link.link_type.replace('_', ' ').toUpperCase()}
-                    </span>
-                    <span className="text-text-secondary text-xs">
-                      conf: {(link.confidence * 100).toFixed(0)}%
-                    </span>
-                  </div>
-                  <div className="text-text-primary text-sm">
-                    {preview?.title ?? link.incident_id}
-                  </div>
-                  <div className="text-text-secondary leading-snug text-xs">
-                    {link.reason}
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleConfirmLink(link)}
-                      disabled={loading}
-                      className="px-2 py-1 border border-yellow text-yellow text-xs hover:bg-yellow hover:text-bg transition-colors disabled:opacity-50"
-                    >
-                      CONFIRM LINK
-                    </button>
-                    <button
-                      onClick={() => handleDismissLink(link)}
-                      disabled={loading}
-                      className="px-2 py-1 border border-border text-text-secondary text-xs hover:border-red hover:text-red transition-colors disabled:opacity-50"
-                    >
-                      DISMISS
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
       </div>
 
       {/* Action bar */}

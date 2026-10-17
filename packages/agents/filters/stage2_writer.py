@@ -451,6 +451,14 @@ def summary_char_budget(content: dict) -> int:
 # ── Groundedness post-check ─────────────────────────────────────────────────
 
 _NUM_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
+# Match clocks with an AM/PM marker in either common form. A source may write
+# `9.25am` while the summary writes `9:25am`; these are the same time, not two
+# invented numbers (`9` and `25`).
+_CLOCK_RE = re.compile(
+    r"\b(?P<hour>\d{1,2})[.:](?P<minute>\d{2})\s*"
+    r"(?P<meridiem>a\.?m\.?|p\.?m\.?)(?![a-z])",
+    re.IGNORECASE,
+)
 # Two or more consecutive capitalised words: "Khoo Teck Puat", "Tower Transit".
 _PROPER_RE = re.compile(r"\b[A-Z][a-z]+(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,}))+\b")
 
@@ -474,7 +482,22 @@ def find_ungrounded(summary: str, source_text: str, date_str: str = "") -> dict:
     real name. That is the right direction: the flag blocks auto-publish, so a
     miss degrades to today's behaviour while a false positive burns a model call.
     """
-    src_nums = {m.group().replace(",", "") for m in _NUM_RE.finditer(source_text or "")}
+    def _number_evidence(text: str) -> set[str]:
+        clocks = set()
+
+        def _clock_token(match):
+            meridiem = match.group("meridiem").lower().replace(".", "")
+            clocks.add(
+                f"time:{int(match.group('hour'))}:{match.group('minute')}:{meridiem}"
+            )
+            return " "
+
+        without_clocks = _CLOCK_RE.sub(_clock_token, text or "")
+        return clocks | {
+            m.group().replace(",", "") for m in _NUM_RE.finditer(without_clocks)
+        }
+
+    src_nums = _number_evidence(source_text)
     src_nums |= set(re.findall(r"\d+", date_str or ""))
     src_low = (source_text or "").lower()
 
@@ -488,8 +511,8 @@ def find_ungrounded(summary: str, source_text: str, date_str: str = "") -> dict:
         src_low = f"{src_low}\n{full} {full[:3]}"
 
     numbers = []
-    for m in _NUM_RE.finditer(summary or ""):
-        v = m.group().replace(",", "").rstrip(".")
+    for v in _number_evidence(summary):
+        v = v.rstrip(".")
         if not v or v in src_nums:
             continue
         if len(v) == 4 and v.isdigit() and 1980 <= int(v) <= 2100:
@@ -919,7 +942,7 @@ def write_stage2(content: dict) -> dict:
         "source_urls":        source_urls,
         # Carry the candidate date through to consolidation. consolidation.check
         # runs on this draft alone (not the orchestrator's `item`), and its
-        # _judge_pair uses date proximity to decide same-incident — but the date
+        # batch judge uses dates to distinguish separate events — but the date
         # was never in the draft, so the judge always saw 'unknown' and lost that
         # signal for every source. It bit reddit hardest: reddit titles are
         # casual and overlap MSM headlines weakly, so the date was the

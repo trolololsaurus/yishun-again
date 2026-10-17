@@ -30,7 +30,6 @@ export interface QueueItem {
   incident_id:                   string | null
   update_target_incident_id:     string | null
 }
-
 // Notification type embedded in raw_content for lifecycle/pattern queue items
 export type NotificationType = 'lifecycle_concluded' | 'pattern_alert'
 
@@ -66,16 +65,7 @@ export interface PatternAlert {
   resolved_at:     string | null
 }
 
-// Embedded in raw_content.agent_related_incidents by the pipeline
-export interface AgentRelatedIncident {
-  incident_id: string
-  confidence:  number
-  reason:      string
-  link_type:   'related' | 'follow_up' | 'same_location'
-  dismissed?:  boolean
-}
-
-// Lightweight incident snapshot passed to UpdateCard / related-incident banners
+// Lightweight incident snapshot passed to UpdateCard
 export interface IncidentPreview {
   id:                string
   title:             string
@@ -442,38 +432,3 @@ export interface RejectBody {
   // free text must never reach reject_reason.
   note?: string
 }
-
-export const DISMISS_CATEGORIES = {
-  SAME_ENTITY_DIFFERENT_ACT: {
-    label: 'Same person, different act',
-    description: 'Same named individual but incidents are unrelated',
-    autonomy_signal: 'entity_dedup',
-  },
-  LOCATION_COINCIDENCE: {
-    label: 'Coincidental location overlap',
-    description: 'Same area but incidents have no connection',
-    autonomy_signal: 'location_dedup',
-  },
-  TEMPORAL_COINCIDENCE: {
-    label: 'Timeframe overlap only',
-    description: 'Happened around the same time but unrelated',
-    autonomy_signal: 'temporal_dedup',
-  },
-  WRONG_ENTITY_MATCH: {
-    label: 'Wrong entity match',
-    description: 'Agent matched the wrong person or place',
-    autonomy_signal: 'entity_extraction',
-  },
-  INSUFFICIENT_EVIDENCE: {
-    label: 'Insufficient evidence of connection',
-    description: 'Link is speculative, not enough to confirm',
-    autonomy_signal: 'confidence_threshold',
-  },
-  OTHER: {
-    label: 'Other',
-    description: 'None of the above',
-    autonomy_signal: 'other',
-  },
-} as const
-
-export type DismissCategory = keyof typeof DISMISS_CATEGORIES

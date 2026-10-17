@@ -166,7 +166,7 @@ export default async function HealthPage() {
           <p>
             <span className="text-yellow font-bold">WARNING</span> — the source
             returned 0 Yishun-matching items for 30+ consecutive runs. Usually
-            normal (most outlets don't cover Yishun daily), not a fault.
+            normal (most outlets don&apos;t cover Yishun daily), not a fault.
           </p>
           <p>
             <span className="text-red font-bold">ERROR</span> — the scraper
@@ -175,9 +175,9 @@ export default async function HealthPage() {
           </p>
           <p>
             <span className="text-text-primary font-bold">🔵 DISCOVERY ONLY</span> — a
-            secondary discovery adapter (a publisher's own sitemap or WP search,
+            secondary discovery adapter (a publisher&apos;s own sitemap or WP search,
             id ending <code>_sitemap</code>/<code>_search</code>) failed while
-            the outlet's primary feed is HEALTHY. The outlet is still covered;
+            the outlet&apos;s primary feed is HEALTHY. The outlet is still covered;
             only its deeper archive window is degraded — not an outage.
           </p>
           <p>

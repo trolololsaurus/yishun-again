@@ -95,6 +95,13 @@ already enforces with a 422. A row failing any of these is **not rejected**; it
 stays `pending` for the operator. The failure mode is always "a human looks at
 it", never "it disappears".
 
+When consolidation matches a new report to an unprocessed queue row, the
+pipeline keeps the matched row and attaches additional non-signal, non-redirect source URLs,
+source dates, and a separate report summary in `raw_content._duplicate_reports`.
+The War Room displays these reports alongside the unchanged original proposal so
+the operator can compare conflicting details before approval. Supplemental
+reports do not overwrite the queued title or summary.
+
 The full set, in the order `check_eligibility` applies them:
 
 | Gate | Skip reason logged | Why |
@@ -109,9 +116,18 @@ The full set, in the order `check_eligibility` applies them:
 | Operator-approved domain | `unapproved_source_domain` | A URL from an unknown domain is not a *verifiable* source, which is guardrail #1's actual point |
 | The allowlist was readable at all | `allowlist_check_failed` | Cannot verify ⇒ cannot claim verifiable |
 | Real `incident_date` | `no_real_date`, `date_fallback` | QA H3 — never stamp "today" |
+| No strong same-date lexical match to a published incident | `possible_published_duplicate` | Independent second net after consolidation; possible duplicates remain pending for an operator |
+| Published archive is readable | `duplicate_check_unavailable` | The publisher cannot establish that the story is new, so it fails closed to review |
 | No ungrounded specifics | `ungrounded_specifics` | Stage 2's deterministic groundedness post-check found a number or proper noun that appears in no source, and one regeneration did not clear it. A factual defect in *this* row, so there is no trust curve — it never clears automatically |
 | Casualty figures match the source | `casualty_mismatch` | `filters/casualty_check` — a wrong death count is the most damaging factual error this archive can publish |
 | Cluster not oversized, or the grouper has earned it | `oversized_cluster_unproven` | §5b — the one hold that lifts itself |
+
+The duplicate hold compares a pending draft's title and summary with published
+incident titles and summaries dated within two days. Three or more shared
+keywords hold the draft for review. It never merges or rejects; the consolidation
+agent remains responsible for deciding whether an update is the same event. The
+check loads up to 2,000 published incidents once per auto-publish pass. If that
+read fails, otherwise eligible pending rows remain in the War Room.
 
 > **Guardrail #5 is deliberately not in that table.** Image suppression is not an
 > eligibility gate: it happens inside `_generate_art`, which returns
@@ -265,12 +281,15 @@ key** is what the window is measured against. A calendar-date key only makes an
 alert once-a-day if the window is *at least* a day: `review_queue` used a
 `<date>` key on the 180-min default window and re-alerted the same waiting card
 on the second daily pass (~12h later, outside the window), so it now keys on a
-hash of the waiting card ids with an explicit 1440-min window — an unchanged
-queue stays quiet, a genuinely new card changes the key and alerts at once.
+hash of the waiting card ids plus the successful publishes/merges with an
+explicit 1440-min window — an unchanged state stays quiet, while a changed
+queue or new autonomous action changes the key and alerts at once. The report
+counts every queue row still held for review, including high-confidence rows
+blocked by a guardrail.
 
 | Kind | Sent when | Window | Dedup key |
 |---|---|---|---|
-| `review_queue` | Cards below the threshold are waiting (req #4) | 1440 min | `review_queue:<hash of the waiting card ids>` — one alert per distinct set of waiting cards; a new card re-alerts, an unchanged queue stays quiet (see below) |
+| `review_queue` | Queue rows remain held for review, or the pass published/merged cards (req #4) | 1440 min | `review_queue:<hash of waiting ids and successful publish/merge titles>` — one alert per distinct outcome; unchanged state stays quiet (see below) |
 | `anomaly` | Supervisor finds a *serious* fleet problem (req #9); integrity finds something needing a human (req #10); guardrail #4 flags political content | 60 min default — supervisor overrides to 1440 | `supervisor:<broken sources signature>` — sent only when that signature differs from the last one actually alerted (see below), `integrity:<date>`, `political:<url>` |
 | `maintenance` | Something broke, with a plain-English suggested fix (req #11) | 1440 min | `maintenance:<date>` |
 | `health` | A backend component is down, or the cost guard tripped (req #12) | 60 min | `health:<components down>` |
@@ -641,11 +660,10 @@ close to its cap today; the guard is for when the inputs grow:
 | `stage2._classify` | 512 | 167 | 67% | `STAGE2_CLASSIFY_MAX_TOKENS` |
 | `consolidation._judge_batch` | 1024 | 128 | 88% | `CONSOLIDATION_BATCH_MAX_TOKENS` |
 | `clustering._make_grouper` | 1024 | 132 | 87% | `CLUSTER_GROUPER_MAX_TOKENS` |
-| `consolidation._judge_pair` | 400 | — | — | `CONSOLIDATION_PAIR_MAX_TOKENS` |
 
-`_judge_pair` is no longer on the ingestion path — consolidation batches (§6) —
-but it is not dead: `ops/integrity.py` still calls it one pair at a time for the
-duplicate re-scan, so its cap and its guard both still matter.
+The integrity scan uses the same batch judge with one existing record at a
+time, bounded by `INTEGRITY_MAX_JUDGEMENTS` (default 12). Pairwise-only judge
+code and its output-cap setting have been removed.
 
 **Recovery, in order:**
 
@@ -767,11 +785,10 @@ Two consequences worth holding onto:
   still sorted by overlap so the likeliest match sits first in the prompt; the
   long tail that the old per-candidate cap discarded is now judged too rather
   than silently dropped.
-- **`MAX_JUDGEMENTS_PER_CANDIDATE` and `EARLY_EXIT_CONFIDENCE` are dead.**
-  `check.py` deliberately no longer imports them — both existed only to bound a
-  call count that no longer exists. They stay *defined* in
-  `consolidation/rules.py` so an existing env override does not become an error
-  mid-rollback. Do not reintroduce them as if they were live knobs.
+- **Pairwise-only call controls were removed.** The obsolete
+  `MAX_JUDGEMENTS_PER_CANDIDATE` and `EARLY_EXIT_CONFIDENCE` settings no longer
+  exist in active code; the batch judge compares all eligible records in one
+  call. The independent integrity scan retains its own per-run cap.
 
 The failure mode changed shape with the cost: a failed batch loses the whole
 comparison for that candidate where a failed pair used to lose one. It fails in

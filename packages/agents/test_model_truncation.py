@@ -129,8 +129,9 @@ for mod, name, const, env in (
 
 cc = importlib.import_module("consolidation.check")
 orch = importlib.import_module("ingestion.orchestrator")
-check("consolidation caps are env-overridable",
-      isinstance(cc.PAIR_MAX_TOKENS, int) and isinstance(cc.BATCH_MAX_TOKENS, int))
+check("active consolidation cap is env-overridable",
+      isinstance(cc.BATCH_MAX_TOKENS, int)
+      and "CONSOLIDATION_BATCH_MAX_TOKENS" in open(cc.__file__, encoding="utf-8").read())
 check("grouper cap is env-overridable", isinstance(orch.CLUSTER_GROUPER_MAX_TOKENS, int))
 
 src = (open(sw.__file__, encoding="utf-8").read()

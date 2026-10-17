@@ -409,8 +409,8 @@ check("...and the body carries the fix, not just the error",
 
 print("\nbackend_health — cost estimate:")
 
-check("Stage 2 draft costs the published haiku+sonnet list price (~$0.031)",
-      abs(bh.STAGE2_USD_PER_DRAFT - 0.031) < 1e-9)
+check("Stage 2 draft estimate matches the configured call shapes ($0.0274)",
+      abs(bh.STAGE2_USD_PER_DRAFT - 0.0274) < 1e-9)
 check("Stage 1 is free-tier -> $0 by default", bh.STAGE1_USD_PER_CALL == 0.0)
 check("default daily budget is $2.00", bh.COST_ALERT_USD_PER_DAY == 2.00)
 

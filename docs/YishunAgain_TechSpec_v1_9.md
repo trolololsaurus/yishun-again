@@ -1,7 +1,7 @@
 # YISHUN AGAIN — TECHNICAL SPECIFICATION
 ## For Coding Agents / Developers
 **Version:** 1.9 | **Phase:** 1 — Foundation Build
-**Last Updated:** August 2026
+**Last Updated:** October 2026
 
 ### Changelog
 | Version | Date | Changes |
@@ -16,6 +16,7 @@
 | 1.9 | June 2026 | **Forward-looking ingestion architecture (Option B):** new §4.9 ingestion layer (trigger-agnostic `run_ingestion_pass()` entrypoint, pluggable Source interface, **SG MSM primary + Google News corroboration**, RecencyFilter, FallbackLadder, IngestionReport) — detailed design in `docs/INGESTION_DESIGN.md`. **Learning Loop** (`docs/LEARNING_LOOP.md`): Phase-1 contextual learning in scope (Futurist agent reads `source_reputation`+`training_signals`, steers frozen models; agent accumulates DATA never weights); Phase-2 graduated autonomy + Phase-3 LoRA roadmapped not built; permanent human-in-the-loop, crime/named-individual content never auto-publishes. Three-phase scope: Cold Start (1980–2023, Historical agent enriches the hand-built archive), Warm Start (2024–Jun 2026 litmus test), Forward (daily live). New §3.7 `pipeline_state`+`pipeline_run_history` tables (watermark store). Corrected §11.2 trigger model (Cloud Scheduler→HTTP replaces broken in-process APScheduler under min-instances 0). §4.0b reconciliation note (spec-vs-filesystem drift documented). Manual historical backfill 2008–2025 completed; `docs/CONSOLIDATION_RULES.md` governs it. Data-quality audit pass; 3 wrong dates corrected. CULTURE content type (`custom`/`CULTURE`/🌐) added. |
 | 1.10 | July 2026 | **Art pipeline rebuilt.** SDXL/Modal/LoRA removed entirely — the custom `yishunagain_v1` LoRA was never loaded by the deployed code, and the CivitAI SD1.5 replacement was never wired (base model stayed SDXL). Replaced with `gemini-3.1-flash-lite-image` at $0.0336/image, no GPU, no weights, no Modal. Prompt now written by Haiku from the **finished incident** after clustering and consolidation, not from raw sources and not per-candidate. Operator-editable in War Room. Output 1200×630 to match hardcoded OG dimensions; generated before insert to avoid ISR staleness. Guardrail #5 added (suicide/self-harm suppression). §9 superseded by `docs/ART_PIPELINE.md`. |
 | 1.11 | Aug 2026 | **Google News RSS removed** (`ingestion/sources/google_news_rss.py` deleted): its `news.google.com/rss/articles/<blob>` wrappers do not HTTP-redirect, and when resolution failed the WRAPPER was stored as the candidate URL — breaking dedupe, putting a redirect where a citation belongs, and tripping `unapproved_source_domain`. Replaced by two adapter families that emit **publishers' own canonical URLs**: `news_sitemap.py` (9 outlets' Google-News sitemaps) and `wp_search.py` (2 WordPress `?s=yishun&feed=rss2` feeds). `get_enabled_sources()` → **25**. **Allowlist gained a third rule:** `REDIRECT_DOMAINS` / `is_redirect_domain()`, checked before the `sources` table so it cannot be defeated by adding the host. **`YISHUN_KEYWORDS` corrected** — `sembawang` actually removed (every spec since v1.5 claimed it already was), `khatib` + `chong pang` added, `nee soon` deliberately dropped from the English list. **Guardrail #4 moved ahead of field validation** in `_classify` — `"classification": null` used to raise before the political check ran. `ZERO_STREAK_WARNING` 3 → 30. This pass also corrected long-standing drift in §2 (framework versions), §7 (`chaos_index_snapshots` is never written), §9/§6.4/§10 (Modal is gone) and §14/§14d (stale build status). |
+| 1.12 | Oct 2026 | AI-generated related-incident suggestions were deprecated. Removed the related/same-location classifier output, War Room suggestion panels, and `confirm-link` / `dismiss-link` routes. Same-event consolidation (update/duplicate detection) and operator-created pattern links remain separate features. |
 
 ---
 
@@ -905,6 +906,9 @@ Examples:
 # - Separate incidents of same type (two different stabbings, different people) NOT consolidated
 
 # Related incident flagging:
+# DEPRECATED 2026-10-17: do not implement AI-generated related/same-location
+# suggestions or the corresponding War Room actions. Same-event deduplication
+# and operator-created pattern links are separate and remain in scope.
 # - Different entity + shared victim, location unit, or event → flag as possible related
 # - Confidence score attached to flag (0.0–1.0)
 # - Confidence >= 0.75 → War Room shows prominent "possible related" banner

@@ -4,7 +4,7 @@ The candidate date must reach the consolidation judge (regression).
 Run: .venv/Scripts/python.exe test_consolidation_date.py
 
 Bug: write_stage2()'s result dict carried no date, and consolidation.check runs
-on that draft alone — so _judge_pair always saw the candidate date as 'unknown'
+on that draft alone — so the judge always saw the candidate date as 'unknown'
 and lost the date-proximity signal on every source. It bit reddit hardest
 (casual titles overlap MSM headlines weakly, so the date was the disambiguator),
 surfacing as duplicate cards that failed to link to the existing incident.
@@ -28,53 +28,46 @@ def check(name, cond, detail=""):
         print(f"  FAIL  {name} {detail}")
 
 
-# ── 1. _judge_pair puts the real date in the prompt (not 'unknown') ─────────
+# ── 1. _judge_batch puts the real date in the prompt (not 'unknown') ────────
 print("consolidation date-threading:\n")
-
-captured = {}
 
 
 class _Resp:
     def __init__(self, text): self.content = [type("C", (), {"text": text})()]
 
 
-def _capture_client(msg_sink):
-    client = mock.MagicMock()
+def _judge_batch(candidate):
+    captured = {}
 
-    def _create(**kwargs):
-        msg_sink["user"] = kwargs["messages"][0]["content"]
-        return _Resp('{"same_incident": false, "same_incident_confidence": 0.0, '
-                     '"same_incident_reason": "x", "related": false, '
-                     '"related_confidence": 0.0, "related_reason": "x", "link_type": null}')
-    client.messages.create.side_effect = _create
-    return client
+    def _create(_client, **kwargs):
+        captured["user"] = kwargs["messages"][0]["content"]
+        return _Resp('{"match_index": null, "match_confidence": 0, "match_reason": "x"}'), False
+
+    with mock.patch.object(cc, "create_with_headroom", side_effect=_create):
+        cc._judge_batch(mock.MagicMock(), candidate, [existing])
+    return captured["user"]
 
 
 existing = {"id": "p-1", "title": "T", "summary": "S", "incident_date": "2026-06-01"}
 
-cap = {}
-cc._judge_pair(_capture_client(cap),
-               {"title": "Reddit post", "content": "body", "date": "2026-07-16"},
-               existing)
+cap = _judge_batch({"title": "Reddit post", "content": "body", "date": "2026-07-16"})
 check("candidate date appears in the judge prompt",
-      "2026-07-16" in cap["user"], f"-> {cap['user'][:120]!r}")
+      "2026-07-16" in cap, f"-> {cap[:120]!r}")
 check("date is not silently 'unknown' when present",
-      "Date: 2026-07-16" in cap["user"])
+      "Date: 2026-07-16" in cap)
+check("existing record date is included in the comparison prompt",
+      "date=2026-06-01" in cap)
 
 # incident_date key (published incidents / queue rows use this) also works
-cap = {}
-cc._judge_pair(_capture_client(cap),
-               {"title": "x", "content": "y", "incident_date": "2025-01-02"}, existing)
-check("incident_date key is read too", "2025-01-02" in cap["user"])
+cap = _judge_batch({"title": "x", "content": "y", "incident_date": "2025-01-02"})
+check("incident_date key is read too", "Date: 2025-01-02" in cap)
 
 # ── 2. a genuinely dateless candidate still reads 'unknown' ─────────────────
-cap = {}
-cc._judge_pair(_capture_client(cap), {"title": "x", "content": "y", "date": ""}, existing)
-check("empty date reads 'unknown', not blank", "Date: unknown" in cap["user"])
+cap = _judge_batch({"title": "x", "content": "y", "date": ""})
+check("empty date reads 'unknown', not blank", "Date: unknown" in cap)
 
-cap = {}
-cc._judge_pair(_capture_client(cap), {"title": "x", "content": "y"}, existing)
-check("missing date reads 'unknown'", "Date: unknown" in cap["user"])
+cap = _judge_batch({"title": "x", "content": "y"})
+check("missing date reads 'unknown'", "Date: unknown" in cap)
 
 # ── 3. write_stage2 threads the date into its result (the source of the bug) ─
 print("\nwrite_stage2 date pass-through:\n")

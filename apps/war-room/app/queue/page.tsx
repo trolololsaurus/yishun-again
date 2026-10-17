@@ -3,7 +3,7 @@ import { QueueList } from '@/components/QueueList'
 import { BackfillBanner } from '@/components/BackfillBanner'
 import { RecentMerges, type MergedRow } from '@/components/RecentMerges'
 import { isoDaysAgo, isDiscoverySource, primaryIdOf } from '@/lib/utils'
-import type { QueueItem, IncidentPreview, AgentRelatedIncident } from '@/lib/types'
+import type { QueueItem, IncidentPreview } from '@/lib/types'
 
 export const revalidate = 0
 
@@ -93,17 +93,15 @@ export default async function QueuePage() {
     }
   }
 
-  // ── Batch-fetch related incident previews ──────────────────────────────────
-  // Collect IDs from: agent_related_incidents banners AND pattern_alert incident lists
+  // ── Batch-fetch incident previews for pattern alerts ───────────────────────
   const relatedIds = [
     ...new Set(
       queueItems.flatMap(i => {
         const rc = i.raw_content as Record<string, unknown>
-        const fromRelated = ((rc?.agent_related_incidents as AgentRelatedIncident[]) ?? []).map(r => r.incident_id)
         const fromPattern = rc?.notification_type === 'pattern_alert'
           ? ((rc?.incident_ids as string[]) ?? [])
           : []
-        return [...fromRelated, ...fromPattern]
+        return fromPattern
       })
     ),
   ]

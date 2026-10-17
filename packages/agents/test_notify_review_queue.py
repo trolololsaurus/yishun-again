@@ -63,13 +63,19 @@ check("different merges this pass get different dedup keys", key1 != key2)
 
 # 4. Pending-for-review behaviour is unchanged (regression guard).
 pending_row = {"id": "q1", "status": "pending", "raw_content": {},
-               "agent_confidence": 0.5, "proposed_title": "Low confidence draft"}
-m = run(rows=[pending_row], stats=empty_stats, threshold=0.95,
+               "agent_confidence": 0.97, "proposed_title": "High confidence draft",
+               "_hold_reason": "possible_published_duplicate"}
+m = run(rows=[pending_row],
+        stats={"reasons": {"eligible": 1, "possible_published_duplicate": 1}},
+        threshold=0.95,
         published_titles=[], merged_titles=[])
 check("still-pending card triggers the review-queue notification", m.called)
 if m.called:
     subject = m.call_args.args[1]
+    body = m.call_args.args[2]
     check("subject still counts the pending card", "1 card" in subject)
+    check("successful eligibility count is not reported as held", "eligible: 1" not in body)
+    check("duplicate hold reason is written for a human", "possible duplicate of a published incident" in body)
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

@@ -1,5 +1,10 @@
 # Post-Launch Hardening — Design Document
 
+**Historical status snapshot:** This document records an earlier hardening
+pass. AI-generated related-link suggestions and their `confirm-link` /
+`dismiss-link` routes were deprecated and removed on 2026-10-17; references
+below describe historical work, not the current War Room.
+
 **Status:** Partly landed — item-by-item status verified against the working tree
 2026-08-02 · **Targets:** TechSpec v1.9+ · **Companion to:** INGESTION_DESIGN.md,
 LEARNING_LOOP.md, QA_BACKLOG.md

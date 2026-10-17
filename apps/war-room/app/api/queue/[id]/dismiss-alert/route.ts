@@ -1,91 +1,13 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { validateUUID } from '@/lib/utils'
-import { DISMISS_CATEGORIES, type DismissCategory } from '@/lib/types'
-
-const VALID_CATEGORIES = Object.keys(DISMISS_CATEGORIES) as DismissCategory[]
 
 export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params
   const id = validateUUID(params.id)
   if (!id) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 
-  let body: Record<string, unknown> = {}
-  try { body = await request.json() } catch { /* no body — pattern alert dismiss */ }
-
-  // ── Incident link dismissal (reason_category present) ────────────────────
-  if (body.reason_category !== undefined) {
-    const category = body.reason_category as DismissCategory
-    if (!VALID_CATEGORIES.includes(category)) {
-      return NextResponse.json({ error: 'Invalid reason_category' }, { status: 400 })
-    }
-
-    const relatedId = validateUUID(body.related_incident_id as string)
-    if (!relatedId) {
-      return NextResponse.json({ error: 'Invalid or missing related_incident_id' }, { status: 400 })
-    }
-
-    const { data: item, error: fetchErr } = await supabase
-      .from('war_room_queue')
-      .select('id,raw_content')
-      .eq('id', id)
-      .in('status', ['pending', 'update'])
-      .single()
-
-    if (fetchErr || !item) {
-      return NextResponse.json({ error: 'Queue item not found' }, { status: 404 })
-    }
-
-    const rc      = (item.raw_content ?? {}) as Record<string, unknown>
-    const related = (rc.agent_related_incidents as Array<Record<string, unknown>>) ?? []
-
-    const matchedLink    = related.find(r => r.incident_id === relatedId)
-    const linkConfidence = matchedLink?.confidence ?? null
-    // The link objects carry `reason` (see lib/types.ts AgentRelatedIncident);
-    // reading `agent_reason` here logged null on every dismissal.
-    const agentReason    = matchedLink?.reason ?? null
-
-    const updated = related.map(r =>
-      r.incident_id === relatedId ? { ...r, dismissed: true } : r
-    )
-
-    const { error: updateErr } = await supabase
-      .from('war_room_queue')
-      .update({ raw_content: { ...rc, agent_related_incidents: updated } })
-      .eq('id', id)
-
-    if (updateErr) {
-      console.error('dismiss-alert — link update:', updateErr)
-      return NextResponse.json({ error: 'Queue update failed' }, { status: 500 })
-    }
-
-    const { error: signalErr } = await supabase.from('training_signals').insert({
-      incident_id:      null,
-      action:           'pattern_dismissed',
-      decision:         'reject',
-      operator_changes: {
-        dismiss_reason_category: category,
-        dismiss_reason_detail:   (body.reason_detail as string) || null,
-        // The GRADUATION metric, and it must be the same signal confirm-link
-        // writes or the error rate has no denominator. This used to be the
-        // per-category signal below, which meant only failures were ever
-        // counted and error_rate was pinned at 1.00 — see confirm-link.
-        autonomy_signal:         'confidence_threshold',
-        // The per-category signal is preserved as a DIAGNOSTIC breakdown of
-        // why the link was wrong. It is not a graduation metric: states like
-        // "coincidental location overlap" are only observable on a failure, so
-        // they can never have a success denominator.
-        diagnostic_signal:       DISMISS_CATEGORIES[category].autonomy_signal,
-        link_confidence:         linkConfidence,
-        agent_reason:            agentReason,
-      },
-    })
-    if (signalErr) console.error('dismiss-alert — training_signal insert failed (non-fatal):', signalErr)
-
-    return NextResponse.json({ ok: true })
-  }
-
-  // ── Pattern alert dismissal (no reason_category — existing behaviour) ────
+  // ── Pattern alert dismissal ──────────────────────────────────────────────
   const { data: item, error: fetchErr } = await supabase
     .from('war_room_queue')
     .select('id,raw_content')

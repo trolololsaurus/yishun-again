@@ -9,8 +9,11 @@ operator. The forward pipeline's own consolidation code sits in
 `packages/agents/consolidation/`: `rules.py` (thresholds, keyword and locality
 extraction) and `check.py` (ONE batched Haiku judgement per candidate against
 the recent published + unprocessed-queue pool, returning new / update / skip).
-That code decides WHETHER a candidate is a fresh story; the rules below
-constrain what the resulting row may claim. Most are operator-enforced — where
+That code decides WHETHER a candidate is a fresh story. AI-generated related-
+incident suggestions were deprecated on 2026-10-17 and are no longer generated,
+shown, or written as links. Confirmed historical links and the separate
+operator-led LINK PATTERN flow remain. The rules below constrain what a
+resulting row may claim. Most are operator-enforced — where
 a rule has a machine check, it is named.
 
 ## DATE RULES

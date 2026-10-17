@@ -3,11 +3,11 @@ Autonomous publishing (req #3) + review-queue notification (req #4).
 
 Runs immediately after the ingestion pass. Two jobs:
 
-  1. Every `pending` queue row at confidence >= AUTO_PUBLISH_CONFIDENCE (0.95)
-     is approved and published without a human — and the decision is recorded as
-     a training signal so the learning loop can grade it later.
-  2. Everything left below the threshold triggers ONE alert telling the operator
-     how many cards are waiting in the War Room.
+  1. Every `pending` queue row that clears the confidence threshold and the
+     source, date, factual-integrity and duplicate checks can publish without a
+     human — with the decision recorded as a training signal.
+  2. Held rows stay in the War Room and trigger ONE alert with plain-language
+     reasons, while successful publications are listed separately.
 
 ## Why this is a faithful port and not a second implementation
 
@@ -60,7 +60,7 @@ check_update_eligibility / _apply_merge and docs/AUTONOMY.md.
 import hashlib
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from classifiers.source_allowlist import is_signal_source
 from ops.activity import AgentRun, _client, agent_enabled
@@ -83,6 +83,13 @@ def _threshold() -> float:
 # high-confidence rows, cap the blast radius at one pass's worth. The excess
 # stays pending and a human sees it.
 MAX_AUTO_PUBLISH_PER_RUN = int(os.getenv("AUTO_PUBLISH_MAX_PER_RUN", "25"))
+
+# The same-pass duplicate guard is deliberately conservative and only holds a
+# possible match for review. Name its policy values so they are visible during
+# code review rather than buried as unexplained literals.
+DUPLICATE_GUARD_ARCHIVE_LIMIT = 2000
+DUPLICATE_GUARD_DATE_WINDOW_DAYS = 2
+DUPLICATE_GUARD_MIN_KEYWORD_OVERLAP = 3
 
 # ── Autonomous merge (auto-apply an UPDATE row) ──────────────────────────────
 # Applying a merge mutates an ALREADY-PUBLISHED incident, and a wrong merge is
@@ -144,6 +151,92 @@ AUTO_ENRICH_SUMMARY = os.getenv("AUTO_ENRICH_SUMMARY", "false").strip().lower() 
 ART_ENABLED = os.getenv("ART_GENERATION_ENABLED", "false").strip().lower() in ("1", "true", "on", "yes")
 
 _POLITICAL_MARKER = "[POLITICAL CONTENT DETECTED"
+
+_HOLD_REASON_LABELS = {
+    "allowlist_check_failed": "source verification unavailable",
+    "below_threshold": "below auto-publish confidence threshold",
+    "casualty_mismatch": "casualty details need review",
+    "date_fallback": "date was inferred and needs review",
+    "duplicate_check_unavailable": "duplicate check unavailable",
+    "match_below_threshold": "same-event confidence below threshold",
+    "manual_review": "manual review required",
+    "merge_failed": "automatic merge failed",
+    "missing_summary": "summary is empty",
+    "missing_title": "title is empty",
+    "no_confidence": "confidence is missing",
+    "no_match_confidence": "same-event confidence is missing",
+    "no_real_date": "article date is missing or invalid",
+    "no_source_url": "source URL is missing",
+    "no_approved_source_after_filter": "no quotable source remains",
+    "no_update_target": "update target is missing",
+    "not_processed_this_pass": "not processed this pass",
+    "not_update": "not an update row",
+    "oversized_cluster_unproven": "large merge needs a human track record",
+    "per_run_cap_hit": "per-pass auto-publish limit reached",
+    "political_marker": "political-content safeguard",
+    "possible_published_duplicate": "possible duplicate of a published incident",
+    "publish_failed": "automatic publish failed",
+    "source_not_verifiable": "source cannot be verified",
+    "unapproved_source_domain": "source domain is not approved",
+    "ungrounded_specifics": "specific details could not be verified",
+}
+
+
+def _human_hold_reason(reason: str) -> str:
+    """Translate a stable internal gate code for Telegram and operators."""
+    return _HOLD_REASON_LABELS.get(reason, str(reason).replace("_", " "))
+
+
+def _possible_published_duplicate(item: dict, incidents: list[dict]) -> dict | None:
+    """High-recall, independent hold check for same-date published duplicates.
+
+    This deliberately only holds a row for a person to review. It never merges
+    or rejects. The lexical check is separate from consolidation's model call,
+    so an earlier missed match cannot be repeated as an unattended publish.
+    """
+    from consolidation.rules import extract_keywords, keyword_overlap
+
+    rc = item.get("raw_content") or {}
+    raw_date = rc.get("date") or rc.get("incident_date") or ""
+    try:
+        event_date = date.fromisoformat(str(raw_date)[:10])
+    except (TypeError, ValueError):
+        return None
+
+    candidate_text = f"{item.get('proposed_title') or ''} {item.get('proposed_summary') or ''}"
+    candidate_keywords = extract_keywords(candidate_text)
+    if len(candidate_keywords) < 3:
+        return None
+
+    matches = []
+    for incident in incidents:
+        try:
+            existing_date = date.fromisoformat(str(incident.get("incident_date") or "")[:10])
+        except (TypeError, ValueError):
+            continue
+        if abs((event_date - existing_date).days) > DUPLICATE_GUARD_DATE_WINDOW_DAYS:
+            continue
+        overlap = keyword_overlap(
+            candidate_keywords,
+            extract_keywords(f"{incident.get('title') or ''} {incident.get('summary') or ''}"),
+        )
+        if overlap >= DUPLICATE_GUARD_MIN_KEYWORD_OVERLAP:
+            matches.append((overlap, incident))
+
+    if not matches:
+        return None
+    matches.sort(key=lambda pair: pair[0], reverse=True)
+    return matches[0][1]
+
+
+def _fetch_duplicate_guard_incidents(client) -> list[dict]:
+    """Read the published archive once per pass; caller holds if unavailable."""
+    result = (client.table("incidents")
+              .select("id,title,summary,incident_date")
+              .eq("is_published", True)
+              .order("published_at", desc=True)
+              .limit(DUPLICATE_GUARD_ARCHIVE_LIMIT).execute())
+    return result.data or []
 
 
 def can_record_decisions(client) -> tuple[bool, str]:
@@ -251,7 +344,9 @@ def oversized_merges_trusted(trust: float, approvals: int, rejections: int) -> b
 # ── Eligibility ─────────────────────────────────────────────────────────────
 
 def check_eligibility(item: dict, threshold: float,
-                      *, oversized_merges_trusted: bool = False) -> tuple[bool, str]:
+                      *, oversized_merges_trusted: bool = False,
+                      duplicate_guard_incidents: list[dict] | None = None,
+                      duplicate_guard_available: bool | None = None) -> tuple[bool, str]:
     """
     Pure function: may this queue row publish itself?
 
@@ -318,6 +413,18 @@ def check_eligibility(item: dict, threshold: float,
     if rc.get("_date_fallback"):
         return False, "date_fallback"
 
+    # Unlike the other optional arguments, the runtime passes both guard
+    # parameters explicitly. None from legacy/offline callers preserves the
+    # pure function's historical behavior; a runtime fetch failure is fail-safe.
+    if duplicate_guard_available is False:
+        return False, "duplicate_check_unavailable"
+    if duplicate_guard_incidents is not None:
+        match = _possible_published_duplicate(item, duplicate_guard_incidents)
+        if match:
+            logger.info("auto_publish: possible published duplicate for queue %s -> %s",
+                        item.get("id"), match.get("id"))
+            return False, "possible_published_duplicate"
+
     # Stage 2's deterministic groundedness check found a number or a proper noun
     # in the summary that appears in no source, and a regeneration did not clear
     # it. Publishing that is publishing an invented specific. There is no trust
@@ -325,14 +432,47 @@ def check_eligibility(item: dict, threshold: float,
     # an ungrounded specific is a factual defect in THIS row.
     grounding = rc.get("_groundedness")
     if isinstance(grounding, dict) and grounding.get("flagged"):
-        return False, "ungrounded_specifics"
+        # Re-check legacy flags with the current normalizer. In particular,
+        # older rows can contain the same clock as `9.25am` in the source and
+        # `9:25am` in the draft, which the original literal-number check held.
+        # A failed/incomplete original check remains fail-closed.
+        if grounding.get("checked") is False:
+            return False, "ungrounded_specifics"
+        try:
+            from filters.stage2_writer import find_ungrounded, non_signal_source_text
+            findings = find_ungrounded(
+                item.get("proposed_summary") or "",
+                non_signal_source_text(rc),
+                rc.get("date") or rc.get("incident_date") or "",
+            )
+        except Exception as exc:                  # noqa: BLE001
+            logger.warning("auto_publish: groundedness re-check failed: %s", exc)
+            return False, "ungrounded_specifics"
+        if findings["numbers"] or findings["proper_nouns"]:
+            return False, "ungrounded_specifics"
 
     # Stage 2's deterministic casualty check found the source language and the
     # model's deaths/injuries disagreeing. A wrong death count is the most
     # damaging factual error this archive can publish, so it goes to a human.
     casualty = rc.get("_casualty_check")
     if isinstance(casualty, dict) and casualty.get("flagged"):
-        return False, "casualty_mismatch"
+        # Re-evaluate stored flags with the current count parser. Older rows can
+        # mistake an identifier such as bus service 852 for a casualty count.
+        try:
+            from filters.casualty_check import validate
+            from filters.stage2_writer import non_signal_source_text
+            source_text = non_signal_source_text(rc)
+            if not source_text.strip():
+                # A legacy flag cannot be cleared without evidence to re-check.
+                return False, "casualty_mismatch"
+            verdict = validate(
+                source_text, rc.get("deaths"), rc.get("injuries")
+            )
+        except Exception as exc:                  # noqa: BLE001
+            logger.warning("auto_publish: casualty re-check failed: %s", exc)
+            return False, "casualty_mismatch"
+        if not verdict.get("ok"):
+            return False, "casualty_mismatch"
 
     # An unusually large merge: one grouping call decided that N articles are all
     # the same event. That is a bigger single bet than a normal row, so it waits
@@ -543,7 +683,6 @@ def _publish(item: dict, client, run: AgentRun, budget=None) -> str | None:
                         f"incident {incident_id} is LIVE with an open queue row — reconcile by hand: {rollback_exc}")
         return None
 
-    _link_related(item, incident_id, client, run)
     _log_training_signal(item, incident_id, client, run)
     return incident_id
 
@@ -705,26 +844,6 @@ def _log_merge_signal(item: dict, incident_id: str, client, run: AgentRun) -> No
         run.error_("merge_signal_failed", f"incident {incident_id}: {exc}")
 
 
-def _link_related(item: dict, incident_id: str, client, run: AgentRun) -> None:
-    rc = item.get("raw_content") or {}
-    for link in (rc.get("agent_related_incidents") or []):
-        if link.get("dismissed"):
-            continue
-        try:
-            client.table("incident_links").insert({
-                "incident_a": incident_id,
-                "incident_b": link.get("incident_id"),
-                "link_type": link.get("link_type") or "related",
-                "confidence": link.get("confidence"),
-                "agent_reason": link.get("reason") or "",
-                # NOT confirmed_by_operator: no operator saw this. It stays an
-                # agent proposal so the public page does not show it as verified.
-            }).execute()
-        except Exception as exc:                  # noqa: BLE001
-            if "23505" not in str(exc):
-                run.warn("link_insert_failed", f"{incident_id} -> {link.get('incident_id')}: {exc}")
-
-
 def _log_training_signal(item: dict, incident_id: str, client, run: AgentRun) -> None:
     """
     The autonomous decision IS training data (req #3). `decided_by='agent'`
@@ -809,6 +928,19 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
         stats["considered"] = len(rows)
         arun.stat("queue_size", len(rows))
 
+        # Independent second net against published incidents. A read failure
+        # holds otherwise eligible rows; the archive is not assumed unique.
+        duplicate_guard_incidents = None
+        duplicate_guard_available = True
+        if any(r.get("status") == "pending" for r in rows):
+            try:
+                duplicate_guard_incidents = _fetch_duplicate_guard_incidents(client)
+            except Exception as exc:                  # noqa: BLE001
+                duplicate_guard_available = False
+                logger.warning("auto_publish: duplicate guard unavailable; holding pending rows: %s", exc)
+                arun.warn("duplicate_guard_unavailable",
+                          "published incident list unavailable; eligible pending rows held for review")
+
         # Computed once per run, not per row: has the batched grouper earned the
         # right to auto-publish an unusually large merge yet?
         trust, ovr_ok, ovr_no = oversized_merge_trust(client)
@@ -834,7 +966,7 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
 
         published_titles: list[str] = []
         merged_titles: list[str] = []
-        for item in rows:
+        for row_index, item in enumerate(rows):
             # ── Auto-merge branch (update rows) ──────────────────────────────
             # Only when AUTO_MERGE_ENABLED; otherwise update rows fall through to
             # the publish path below and are skipped there as 'not_pending',
@@ -848,6 +980,7 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
                 stats["reasons"][mreason] = stats["reasons"].get(mreason, 0) + 1
                 if not mok:
                     stats["skipped"] += 1
+                    item["_hold_reason"] = mreason
                     # A high-confidence merge a guardrail stopped is worth a look;
                     # a routine below-threshold one is not.
                     if mreason not in ("below_threshold", "match_below_threshold",
@@ -863,6 +996,7 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
                     continue
                 merged_id = _apply_merge(item, client, arun)
                 if merged_id:
+                    item["status"] = "update_approved"
                     stats["merged"] += 1
                     merged_titles.append((item.get("proposed_title") or "")[:80])
                     arun.success("auto_merged",
@@ -871,20 +1005,38 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
                                  incident_id=merged_id, queue_id=item.get("id"))
                 else:
                     stats["failed"] += 1
+                    item["_hold_reason"] = "merge_failed"
                 continue
 
             if stats["published"] >= MAX_AUTO_PUBLISH_PER_RUN:
+                remaining = [
+                    row for row in rows[row_index:]
+                    if row.get("status") == "pending"
+                    and not (row.get("raw_content") or {}).get("notification_type")
+                ]
+                for row in remaining:
+                    row["_hold_reason"] = "per_run_cap_hit"
+                if remaining:
+                    stats["reasons"]["per_run_cap_hit"] = (
+                        stats["reasons"].get("per_run_cap_hit", 0) + len(remaining)
+                    )
                 arun.anomaly("per_run_cap_hit",
                              f"stopped at {MAX_AUTO_PUBLISH_PER_RUN} auto-publishes; "
-                             f"{len(rows) - stats['published']} row(s) left for review")
+                             f"{len(remaining)} pending card(s) left for review")
                 break
 
             ok, reason = check_eligibility(item, threshold,
-                                           oversized_merges_trusted=oversized_trusted)
+                                           oversized_merges_trusted=oversized_trusted,
+                                           duplicate_guard_incidents=duplicate_guard_incidents,
+                                           duplicate_guard_available=duplicate_guard_available)
             stats["reasons"][reason] = stats["reasons"].get(reason, 0) + 1
 
             if not ok:
                 stats["skipped"] += 1
+                item["_hold_reason"] = (
+                    "manual_review" if reason == "not_pending" and item.get("status") == "update"
+                    else reason
+                )
                 if reason not in ("below_threshold", "not_pending", "notification_row"):
                     # These are the interesting skips: a high-confidence row that
                     # a guardrail stopped. Worth a human's attention.
@@ -900,15 +1052,32 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
 
             incident_id = _publish(item, client, arun, budget=art_budget)
             if incident_id:
+                item["status"] = "approved"
                 stats["published"] += 1
                 published_titles.append((item.get("proposed_title") or "")[:80])
+                # Include successes from this pass in the duplicate guard so
+                # duplicate queue rows cannot all publish against the same
+                # start-of-pass archive snapshot.
+                if duplicate_guard_incidents is not None:
+                    rc = item.get("raw_content") or {}
+                    duplicate_guard_incidents.append({
+                        "id": incident_id,
+                        "title": item.get("proposed_title") or "",
+                        "summary": item.get("proposed_summary") or "",
+                        "incident_date": rc.get("date") or rc.get("incident_date"),
+                    })
                 arun.success("auto_published",
                              f"{(item.get('proposed_title') or '')[:70]} (conf={item.get('agent_confidence')})",
                              incident_id=incident_id, queue_id=item.get("id"))
             else:
                 stats["failed"] += 1
+                item["_hold_reason"] = "publish_failed"
 
-        stats["needs_review"] = stats["skipped"] - stats["reasons"].get("notification_row", 0)
+        stats["needs_review"] = sum(
+            1 for row in rows
+            if row.get("status") in ("pending", "update")
+            and not (row.get("raw_content") or {}).get("notification_type")
+        )
         arun.stat("published", stats["published"])
         arun.stat("merged", stats["merged"])
         arun.stat("needs_review", stats["needs_review"])
@@ -958,19 +1127,28 @@ def _notify_review_queue(rows, stats, threshold, published_titles, merged_titles
         r for r in rows
         if r.get("status") in ("pending", "update")
         and not (r.get("raw_content") or {}).get("notification_type")
-        and (r.get("agent_confidence") is None or float(r.get("agent_confidence")) < threshold)
     ]
     if not pending_for_review and not merged_titles and not published_titles:
         return
 
     if pending_for_review:
         lines = [
-            f"{len(pending_for_review)} card(s) are waiting for review in the War Room.",
-            f"They scored below the {threshold:.0%} auto-publish threshold.",
-            "",
+            f"{len(pending_for_review)} card(s) are still waiting for review in the War Room.",
         ]
+        below_threshold = [
+            r for r in pending_for_review
+            if r.get("agent_confidence") is None
+            or float(r.get("agent_confidence")) < threshold
+        ]
+        if below_threshold:
+            lines.append(
+                f"{len(below_threshold)} are below the {threshold:.0%} auto-publish threshold."
+            )
+        if len(below_threshold) < len(pending_for_review):
+            lines.append("The other cards were held by an eligibility check and need your review.")
+        lines.append("")
     else:
-        lines = ["Nothing waiting for review this pass — everything cleared automatically.", ""]
+        lines = ["No cards remain in the review queue after this pass.", ""]
     if published_titles:
         lines += [f"Auto-published without review this pass ({len(published_titles)}):"]
         lines += [f"  + {t}" for t in published_titles[:10]]
@@ -990,15 +1168,19 @@ def _notify_review_queue(rows, stats, threshold, published_titles, merged_titles
             conf = r.get("agent_confidence")
             conf_s = f"{float(conf):.0%}" if conf is not None else " ?  "
             kind = "UPDATE" if r.get("status") == "update" else "NEW   "
-            lines.append(f"  [{conf_s:>4}] {kind} {(r.get('proposed_title') or '(untitled)')[:70]}")
+            reason = r.get("_hold_reason") or "not processed this pass"
+            lines.append(
+                f"  [{conf_s:>4}] {kind} {(r.get('proposed_title') or '(untitled)')[:70]} — "
+                f"{_human_hold_reason(reason)}"
+            )
         if len(pending_for_review) > 20:
             lines.append(f"  ... and {len(pending_for_review) - 20} more")
 
     blocked = {k: v for k, v in stats["reasons"].items()
-               if k not in ("below_threshold", "not_pending", "notification_row")}
+               if k not in ("eligible", "below_threshold", "not_pending", "notification_row")}
     if blocked:
-        lines += ["", "High-confidence cards a guardrail held back:"]
-        lines += [f"  {k}: {v}" for k, v in sorted(blocked.items())]
+        lines += ["", "Eligibility checks held these cards:"]
+        lines += [f"  {_human_hold_reason(k)}: {v}" for k, v in sorted(blocked.items())]
 
     lines.append(f"\nReview: {war_room_url('/queue')}")
 

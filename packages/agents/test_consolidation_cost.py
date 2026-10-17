@@ -61,13 +61,13 @@ def _noise(n):
 
 
 def _no_match():
-    return {"match_index": None, "match_confidence": 0.0, "match_reason": "", "related": []}
+    return {"match_index": None, "match_confidence": 0.0, "match_reason": ""}
 
 
-def _match_id(records, target_id, conf=0.95, related=None):
+def _match_id(records, target_id, conf=0.95):
     idx = next((i for i, r in enumerate(records) if r["id"] == target_id), None)
     return {"match_index": idx, "match_confidence": conf,
-            "match_reason": "same event", "related": related or []}
+            "match_reason": "same event"}
 
 
 def _run(published, queued, verdict_fn):
@@ -121,35 +121,23 @@ check("confident queue match -> SKIP (no second pending row)",
       f"-> action={res.action}")
 
 res, c = _run([TRUE_MATCH], [], lambda recs: _match_id(recs, "p-true", conf=0.5))
-check("weak published match -> new, surfaced as a related link",
-      res.action == "new" and len(res.related_incidents) == 1,
-      f"-> action={res.action} links={len(res.related_incidents)}")
+check("weak published match -> new with no related-link suggestion",
+      res.action == "new" and not hasattr(res, "related_incidents")
+      and res.agent_role_proposed == "initial")
 
 res, c = _run([], [QUEUED_MATCH], lambda recs: _match_id(recs, "q-true", conf=0.5))
-check("weak QUEUE match -> new, and no link (incident_links needs two published rows)",
-      res.action == "new" and res.related_incidents == [])
+check("weak QUEUE match -> new with no related-link suggestion",
+      res.action == "new" and not hasattr(res, "related_incidents"))
 
-# ── 5. Related links ───────────────────────────────────────────────────────
-_REL = [{"index": 0, "confidence": 0.8, "reason": "same block", "link_type": "same_location"}]
-
-res, c = _run([TRUE_MATCH], [], lambda recs: {**_no_match(), "related": _REL})
-check("related link recorded for a published record",
-      len(res.related_incidents) == 1 and res.related_incidents[0].link_type == "same_location",
-      f"-> {res.related_incidents}")
-
-res, c = _run([], [QUEUED_MATCH], lambda recs: {**_no_match(), "related": _REL})
-check("related link against a QUEUE record is ignored", res.related_incidents == [])
-
-res, c = _run([TRUE_MATCH], [], lambda recs: _match_id(recs, "p-true", related=_REL))
-check("the matched record is not ALSO emitted as a related link",
-      res.action == "update" and res.related_incidents == [],
-      f"-> {res.related_incidents}")
-
+# ── 5. Retired related suggestions ─────────────────────────────────────────
 res, c = _run([TRUE_MATCH], [],
-              lambda recs: {**_no_match(),
-                            "related": [{"index": 0, "confidence": 0.1, "reason": "x",
-                                         "link_type": "related"}]})
-check("a below-threshold related confidence is dropped", res.related_incidents == [])
+              lambda recs: {**_no_match(), "related": [
+                  {"index": 0, "confidence": 0.99, "reason": "same block",
+                   "link_type": "same_location"}]})
+check("legacy related output is ignored and no relationship field is returned",
+      res.action == "new" and not hasattr(res, "related_incidents"))
+check("batch prompt asks only for same-event consolidation",
+      '"related"' not in cc._BATCH_SYSTEM_PROMPT and "same event" in cc._BATCH_SYSTEM_PROMPT)
 
 # ── 6. Malformed verdicts never become a silent merge ──────────────────────
 def _boom(recs):
@@ -177,25 +165,20 @@ check("unparseable confidence coerces to 0.0 -> new, never a silent UPDATE",
 
 res, c = _run([TRUE_MATCH], [],
               lambda recs: {"match_index": 0, "match_confidence": 0.95,
-                            "match_reason": "m", "related": "not-a-list"})
-check("a non-list 'related' is ignored, match still honoured",
-      res.action == "update" and res.related_incidents == [])
+                            "match_reason": "m", "related": "legacy output"})
+check("legacy related output is ignored while same-event match still works",
+      res.action == "update" and not hasattr(res, "related_incidents"))
 
 res, c = _run([TRUE_MATCH], [], lambda recs: {})
 check("an empty verdict object -> new", res.action == "new")
 
-# ── 7. The retired cost knobs are still defined, just unread ───────────────
-check("MAX_JUDGEMENTS_PER_CANDIDATE still exists for config compatibility",
-      isinstance(rules.MAX_JUDGEMENTS_PER_CANDIDATE, int))
-check("EARLY_EXIT_CONFIDENCE still exists for config compatibility",
-      isinstance(rules.EARLY_EXIT_CONFIDENCE, float))
-check("check.py no longer reads either of them",
-      not hasattr(cc, "MAX_JUDGEMENTS_PER_CANDIDATE") and not hasattr(cc, "EARLY_EXIT_CONFIDENCE"))
-
-# Lowering the old cap must NOT change the call count any more.
-with mock.patch.object(rules, "MAX_JUDGEMENTS_PER_CANDIDATE", 3):
-    res, c = _run(_noise(50), [], lambda recs: _no_match())
-check("lowering the retired cap no longer bounds anything (still 1 call, 50 records)",
+# ── 7. Pairwise-only controls are removed with the pairwise implementation ──
+check("pairwise-only cap is removed from active rules",
+      not hasattr(rules, "MAX_JUDGEMENTS_PER_CANDIDATE"))
+check("pairwise-only early-exit threshold is removed from active rules",
+      not hasattr(rules, "EARLY_EXIT_CONFIDENCE"))
+res, c = _run(_noise(50), [], lambda recs: _no_match())
+check("the batch still judges all 50 records in one call",
       c["n"] == 1 and len(c["records"]) == 50, f"-> {c['n']} call(s), {len(c['records'])} record(s)")
 
 print(f"\n{passed} passed, {failed} failed")

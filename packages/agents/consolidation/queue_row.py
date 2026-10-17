@@ -30,7 +30,6 @@ def build_queue_row(
     is_update: bool = False,
     date_missing: bool = False,
     edmw_signal_count: int = 0,
-    include_related_incidents: bool = False,
     is_backfill: bool = True,
 ) -> dict:
     """
@@ -43,12 +42,6 @@ def build_queue_row(
     edmw_signal_count: forum-signal corroboration count (spec §13 "Forum buzz").
     Defaults to 0 — backfill items never carry EDMW signal counts; the forward
     ingestion pipeline passes the actual count for source_type='signal' items.
-
-    include_related_incidents: if True and consolidation.related_incidents is
-    non-empty, write raw_content.agent_related_incidents for War Room rendering.
-    Defaults to False so backfill output is unchanged (consolidation_check()
-    can return related_incidents for backfill candidates too, but backfill
-    currently has no UI to surface them).
 
     is_backfill: QA H4 — whether this row came from the historical backfill agent
     (True) or the live forward-ingestion pipeline (False). The War Room buckets
@@ -251,17 +244,6 @@ def build_queue_row(
     if consolidation is not None and consolidation.action == "update":
         row["raw_content"]["_match_confidence"] = consolidation.match_confidence
         row["raw_content"]["_match_reason"] = consolidation.match_reason
-
-    if include_related_incidents and consolidation is not None and consolidation.related_incidents:
-        row["raw_content"]["agent_related_incidents"] = [
-            {
-                "incident_id": lnk.incident_id,
-                "confidence":  lnk.confidence,
-                "reason":      lnk.reason,
-                "link_type":   lnk.link_type,
-            }
-            for lnk in consolidation.related_incidents
-        ]
 
     if update_target_id:
         row["update_target_incident_id"] = update_target_id

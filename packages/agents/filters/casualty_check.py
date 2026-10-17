@@ -59,15 +59,20 @@ _NUMBER_WORDS = {
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
 }
 
-# "three people were taken to hospital", "2 men were injured"
+# "three people were taken to hospital", "2 men were injured". The casualty
+# noun is required for number+verb forms so an identifier like "service 852
+# were injured" cannot be read as 852 injuries. A short location qualifier
+# allows source phrasing such as "five passengers on Service 852 were injured".
 _INJURY_COUNT = re.compile(
     r"\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
     r"(?:other\s+|more\s+)?"
-    r"(?:people|persons|person|men|man|women|woman|residents|workers|victims|others|"
-    r"passengers|pedestrians|firefighters|officers)?\s*"
-    r"(?:were|was|had been)?\s*"
-    r"(?:been\s+)?"
-    r"(?:injured|hurt|wounded|taken to hospital|sent to hospital|conveyed to hospital)\b",
+    r"(?:(?:people|persons|person|men|man|women|woman|residents|workers|victims|others|"
+    r"passengers|pedestrians|firefighters|officers)\b"
+    r"(?:\s+(?:on|aboard|from|at|in)\b[^,.;]{0,60})?\s+"
+    r"(?:(?:were|was|had been|have been|had|have)\s+)?(?:been\s+)?"
+    r"(?:injured|hurt|wounded|taken to hospital|sent to hospital|conveyed to hospital|"
+    r"(?:reported\s+)?injuries?)\b"
+    r"|(?:injured|hurt|wounded|taken to hospital|sent to hospital|conveyed to hospital)\b)",
     re.IGNORECASE,
 )
 

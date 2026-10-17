@@ -13,8 +13,10 @@ an `autonomy_signal`, and toward `corrections` if it ALSO carries a
 `dismiss_reason_category`.
 
 Until 2026-08-03 both fields were written by exactly one code path — the War
-Room's dismiss-alert route. A confirmed link (confirm-link) recorded no signal
-at all. So every counted decision was a rejection, `corrections == total`, and
+Room's dismissal route for agent-suggested links. Confirmations recorded no
+signal at all. These fixtures represent historical training rows; the related-
+suggestion routes were removed on 2026-10-17. Every counted decision had been a
+rejection, `corrections == total`, and
 error_rate was pinned at exactly 1.00. Measured live that day:
 
     entity_extraction        2 decisions, 2 corrections, error_rate 1.00
@@ -58,7 +60,7 @@ class _Client:
 
 
 def _dismissed(signal="confidence_threshold", category="LOCATION_COINCIDENCE"):
-    """A row shaped like the dismiss-alert route writes."""
+    """A historical row shape written when an operator dismissed a suggestion."""
     return {"operator_changes": {
         "autonomy_signal": signal,
         "dismiss_reason_category": category,
@@ -67,8 +69,8 @@ def _dismissed(signal="confidence_threshold", category="LOCATION_COINCIDENCE"):
 
 
 def _confirmed(signal="confidence_threshold"):
-    """A row shaped like the confirm-link route writes. The ABSENCE of
-    dismiss_reason_category is the whole signal — do not add one."""
+    """Historical confirmation row. The ABSENCE of dismiss_reason_category is
+    the whole signal — do not add one."""
     return {"operator_changes": {
         "autonomy_signal": signal,
         "link_confirmed": True,

@@ -7,9 +7,6 @@ Decides whether the candidate is:
   - An update to an existing   → action='update', queue status='update'
   - A skip (exact duplicate)   → action='skip'
 
-Also identifies related-but-distinct incidents and writes incident_links rows
-for the operator to confirm or dismiss.
-
 Public API
 ----------
 check(candidate, client=None) -> ConsolidationResult
@@ -23,7 +20,7 @@ import json
 import logging
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import anthropic
 from dotenv import load_dotenv
@@ -34,18 +31,13 @@ from consolidation.rules import (
     CANDIDATE_FETCH_LIMIT,
     MIN_KEYWORD_OVERLAP,
     QUEUE_FETCH_LIMIT,
-    RELATED_LINK_THRESHOLD,
     UPDATE_MATCH_THRESHOLD,
-    WEAK_MATCH_THRESHOLD,
     extract_keywords,
     keyword_overlap,
 )
 
-# MAX_JUDGEMENTS_PER_CANDIDATE and EARLY_EXIT_CONFIDENCE are deliberately no
-# longer imported. Both existed to bound a per-candidate fan-out of pairwise
-# Haiku calls; the comparison now costs exactly ONE call regardless of pool size,
-# so there is no call count to cap and nothing to exit early from. They stay
-# defined in consolidation/rules.py so an existing env override is not an error.
+# Pairwise-only judgment limits were removed with the batch judge. The separate
+# integrity scan still has its own per-run call budget in ops/integrity.py.
 
 load_dotenv(override=False)
 
@@ -53,33 +45,22 @@ logger = logging.getLogger(__name__)
 
 MODEL = "claude-haiku-5-5"
 
-# Output caps, env-overridable — raising one is the whole fix for a truncation,
-# and it should not need a redeploy. Measured against the full live pool (53
-# records) the batch judge used 128/1024 tokens, so both carry large headroom;
-# filters/model_call guards them regardless.
-PAIR_MAX_TOKENS = int(os.getenv("CONSOLIDATION_PAIR_MAX_TOKENS", "400"))
+# Output cap, env-overridable. The batch judge uses one response for the whole
+# eligible comparison pool; filters/model_call guards the configured limit.
 BATCH_MAX_TOKENS = int(os.getenv("CONSOLIDATION_BATCH_MAX_TOKENS", "1024"))
 
 
 # ── Result type ──────────────────────────────────────────────────────────────
 
 @dataclass
-class RelatedLink:
-    incident_id: str
-    confidence: float
-    reason: str
-    link_type: str = "related"   # 'related' | 'follow_up' | 'same_location'
-
-
-@dataclass
 class ConsolidationResult:
     action: str                          # 'new' | 'update' | 'skip'
     matched_incident_id: str | None      # set when action='update'
-    related_incidents: list[RelatedLink] = field(default_factory=list)
     queue_status: str = "pending"        # 'pending' | 'update'
     match_confidence: float = 0.0        # confidence of the update match, if any
     match_reason: str = ""
     agent_role_proposed: str = "initial" # 'initial' | 'update' | 'follow_up' | 'skip'
+    matched_queue_id: str | None = None   # set when action='skip' for queued duplicate
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -104,76 +85,6 @@ def _parse_json(text: str) -> dict:
 
 # ── Claude call ──────────────────────────────────────────────────────────────
 
-_SYSTEM_PROMPT = """\
-You are a deduplication and incident-linking agent for Yishun Again, \
-a satirical Yishun incident archive.
-
-Given a NEW candidate incident and an EXISTING published incident, determine:
-
-1. same_incident: Are they about the same entity performing the same core act?
-   - Entity = specific person / animal / object involved
-   - Act = the specific thing that happened (stabbing, theft, fire, etc.)
-   - Date proximity matters: if the new report is clearly a follow-up story
-     about the SAME act (update, trial, sentencing) → still same_incident=true
-   - Different acts by the same entity on different days → same_incident=false
-
-2. If same_incident=false, check related:
-   - related: Different entities/acts but clearly connected (e.g., same block,
-     same day, related chain of events)
-   - follow_up: Later development of a broader situation
-   - same_location: Same block or street, different incident — only flag if
-     it would genuinely be editorially useful to a reader browsing the archive
-
-Return JSON only (no markdown fences):
-{
-  "same_incident": boolean,
-  "same_incident_confidence": float (0.0–1.0),
-  "same_incident_reason": string (1-2 sentences),
-  "related": boolean,
-  "related_confidence": float (0.0–1.0),
-  "related_reason": string (1-2 sentences),
-  "link_type": "related" | "follow_up" | "same_location" | null
-}
-"""
-
-
-def _judge_pair(
-    client: anthropic.Anthropic,
-    candidate: dict,
-    existing: dict,
-) -> dict:
-    """Ask Claude Haiku whether candidate and existing are the same incident."""
-    # `or`-chained rather than dict.get defaults: a key present but empty/None
-    # (a dateless candidate) must read 'unknown', not "" — otherwise the judge
-    # sees a blank date and can't tell it apart from a real one.
-    cand_date = candidate.get("incident_date") or candidate.get("date") or "unknown"
-    user_msg = (
-        f"NEW CANDIDATE:\n"
-        f"Title: {candidate.get('title', '')}\n"
-        f"Summary: {candidate.get('summary', candidate.get('content', ''))[:600]}\n"
-        f"Date: {cand_date}\n"
-        f"URL: {candidate.get('url', '')}\n\n"
-        f"EXISTING PUBLISHED INCIDENT:\n"
-        f"ID: {existing['id']}\n"
-        f"Title: {existing['title']}\n"
-        f"Summary: {existing['summary'][:600]}\n"
-        f"Date: {existing['incident_date']}\n"
-    )
-
-    response, _retried = create_with_headroom(
-        client,
-        call="consolidation._judge_pair",
-        env_var="CONSOLIDATION_PAIR_MAX_TOKENS",
-        model=MODEL,
-        max_tokens=PAIR_MAX_TOKENS,
-        temperature=0.0,
-        system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_msg}],
-    )
-
-    return _parse_json(response.content[0].text)
-
-
 # ── Batched judgement (one call per candidate, not one per pair) ─────────────
 
 # Per-record summary budget inside the batch prompt. Shorter than the pairwise
@@ -182,12 +93,12 @@ def _judge_pair(
 BATCH_RECORD_CHARS = 400
 
 _BATCH_SYSTEM_PROMPT = """\
-You are a deduplication and incident-linking agent for Yishun Again, \
+You are a deduplication agent for Yishun Again, \
 a satirical Yishun incident archive.
 
 You are given ONE new candidate incident and a numbered list of EXISTING archive
 records. Decide which existing record, if any, describes the SAME event as the
-candidate, and which others are related but distinct.
+candidate.
 
 1. same event: the same entity performing the same core act.
    - Entity = the specific person / animal / object involved
@@ -198,21 +109,11 @@ candidate, and which others are related but distinct.
    - The same kind of act at a different block or street, or on a different day,
      is NOT the same event.
 
-2. related (only for records that are NOT the same event):
-   - related: different entities/acts but clearly connected
-   - follow_up: a later development of a broader situation
-   - same_location: same block or street, different incident — only when it
-     would genuinely be useful to a reader browsing the archive
-
 Return JSON only (no markdown fences):
 {
   "match_index": integer index of the same-event record, or null,
   "match_confidence": float 0.0-1.0,
-  "match_reason": string (1-2 sentences),
-  "related": [
-    {"index": integer, "confidence": float 0.0-1.0, "reason": string,
-     "link_type": "related" | "follow_up" | "same_location"}
-  ]
+  "match_reason": string (1-2 sentences)
 }
 
 At most ONE match_index. If no record is the same event, set it to null.
@@ -296,9 +197,9 @@ def _fetch_recent_published(supabase_client) -> list[dict]:
 def _fetch_recent_queue(supabase_client) -> list[dict]:
     """
     Fetch recent UNPROCESSED war_room_queue items, normalised to the same shape
-    `_judge_pair` expects for an existing record (id, title, summary,
+    `_judge_batch` expects for an existing record (id, title, summary,
     incident_date). These are siblings still awaiting operator review — a
-    same_incident match against one of them means the candidate is a duplicate
+    same-event match against one of them means the candidate is a duplicate
     that should be SKIPPED, not added as a second pending row.
 
     Only items not yet acted on are considered (processed_at IS NULL). Already
@@ -406,9 +307,8 @@ def check(candidate: dict, supabase_client=None) -> ConsolidationResult:
 
     best_kind: str | None         = None
     best_match: dict | None       = None
-    best_match_result: dict | None = None
+    best_match_reason = ""
     best_match_confidence: float   = 0.0
-    related_links: list[RelatedLink] = []
 
     records = [rec for _, rec in candidates_to_judge]
     try:
@@ -433,32 +333,7 @@ def check(candidate: dict, supabase_client=None) -> ConsolidationResult:
     if match_index is not None:
         best_kind, best_match = candidates_to_judge[match_index]
         best_match_confidence = _coerce_conf(verdict.get("match_confidence"))
-        best_match_result     = {"same_incident_reason": verdict.get("match_reason", "")}
-
-    # Related-but-distinct links only make sense against published incidents
-    # (incident_links joins two published rows). Skip queue comparisons, and skip
-    # the matched record itself — it is an update target, not a sibling link.
-    raw_related = verdict.get("related")
-    for rel in raw_related if isinstance(raw_related, list) else []:
-        if not isinstance(rel, dict):
-            continue
-        idx = _coerce_index(rel.get("index"), len(records))
-        if idx is None or idx == match_index:
-            continue
-        kind, rec = candidates_to_judge[idx]
-        if kind != "published":
-            continue
-        rel_conf  = _coerce_conf(rel.get("confidence"))
-        link_type = rel.get("link_type") or "related"
-        if link_type not in ("related", "follow_up", "same_location"):
-            link_type = "related"
-        if rel_conf >= RELATED_LINK_THRESHOLD:
-            related_links.append(RelatedLink(
-                incident_id = rec["id"],
-                confidence  = rel_conf,
-                reason      = rel.get("reason", "") or "",
-                link_type   = link_type,
-            ))
+        best_match_reason = verdict.get("match_reason", "") or ""
 
     logger.debug(
         "Consolidation: 1 batched Haiku judgement over %d record(s) for '%s'",
@@ -478,8 +353,9 @@ def check(candidate: dict, supabase_client=None) -> ConsolidationResult:
                 action               = "skip",
                 matched_incident_id  = None,
                 match_confidence     = best_match_confidence,
-                match_reason         = (best_match_result or {}).get("same_incident_reason", ""),
+                match_reason         = best_match_reason,
                 agent_role_proposed  = "skip",
+                matched_queue_id     = best_match["id"],
             )
 
         logger.info(
@@ -489,68 +365,24 @@ def check(candidate: dict, supabase_client=None) -> ConsolidationResult:
         return ConsolidationResult(
             action               = "update",
             matched_incident_id  = best_match["id"],
-            related_incidents    = related_links,
             queue_status         = "update",
             match_confidence     = best_match_confidence,
-            match_reason         = (best_match_result or {}).get("same_incident_reason", ""),
+            match_reason         = best_match_reason,
             agent_role_proposed  = "update",
         )
 
-    if best_match and best_kind == "published" and best_match_confidence >= WEAK_MATCH_THRESHOLD:
-        # Possible match but below update threshold — queue as normal pending
-        # but still surface the possible link as a related row (low confidence).
-        # Only for published matches: incident_links joins two published rows,
-        # so a weak queue match can't be expressed as a link and is left as new.
+    if best_match and best_match_confidence > 0:
+        # A below-threshold match remains a normal pending candidate. It is not
+        # surfaced as a proposed relationship or written to incident_links.
         logger.info(
             "Consolidation: weak match (conf=%.2f) with %s — queuing as pending",
             best_match_confidence, best_match["id"],
         )
-        related_links.append(RelatedLink(
-            incident_id = best_match["id"],
-            confidence  = best_match_confidence,
-            reason      = (best_match_result or {}).get("same_incident_reason", "Possible duplicate — below update threshold"),
-            link_type   = "related",
-        ))
 
-    logger.debug(
-        "Consolidation: NEW incident — %d related link(s) found",
-        len(related_links),
-    )
-    # 'follow_up' when there are related published incidents; 'initial' otherwise
-    role = "follow_up" if related_links else "initial"
+    logger.debug("Consolidation: NEW incident — no related-link suggestions generated")
     return ConsolidationResult(
         action               = "new",
         matched_incident_id  = None,
-        related_incidents    = related_links,
         queue_status         = "pending",
-        agent_role_proposed  = role,
+        agent_role_proposed  = "initial",
     )
-
-
-def write_incident_links(
-    queue_id: str,
-    published_incident_id: str,
-    links: list[RelatedLink],
-    supabase_client,
-) -> None:
-    """
-    Insert incident_links rows for confirmed published incident ↔ related links.
-    queue_id is unused here (links join two published incidents); it is passed
-    for logging. Silently skips rows that violate the UNIQUE constraint.
-    """
-    for link in links:
-        try:
-            supabase_client.table("incident_links").insert({
-                "incident_a":   published_incident_id,
-                "incident_b":   link.incident_id,
-                "link_type":    link.link_type,
-                "confidence":   link.confidence,
-                "agent_reason": link.reason,
-            }).execute()
-            logger.debug(
-                "incident_links: %s ↔ %s (%s conf=%.2f)",
-                published_incident_id, link.incident_id, link.link_type, link.confidence,
-            )
-        except Exception as exc:
-            # UNIQUE violation is expected if the pipeline runs twice; log and continue.
-            logger.debug("incident_links insert skipped for %s: %s", link.incident_id, exc)

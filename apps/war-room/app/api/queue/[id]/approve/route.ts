@@ -183,24 +183,6 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   if (severity    !== item.proposed_severity)        changes.severity       = { from: item.proposed_severity,       to: severity }
   const action = Object.keys(changes).length > 0 ? 'edit_approve' : 'approve'
 
-  // Create incident_links for any undismissed related incidents now that we
-  // have a published incident ID for the "A" side of the link.
-  const agentRelated = (rc.agent_related_incidents as Array<{
-    incident_id: string; confidence: number; reason: string; link_type: string; dismissed?: boolean
-  }>) ?? []
-  for (const link of agentRelated) {
-    if (link.dismissed) continue
-    const { error: linkErr } = await supabase.from('incident_links').insert({
-      incident_a:   newIncident.id,
-      incident_b:   link.incident_id,
-      link_type:    link.link_type ?? 'related',
-      confidence:   link.confidence,
-      agent_reason: link.reason ?? '',
-    })
-    // Unique-constraint (23505) is expected if already confirmed; log anything else.
-    if (linkErr && linkErr.code !== '23505') console.error('approve — incident_link insert:', linkErr)
-  }
-
   // QA H2: the queue-status update governs idempotency — if it fails, the
   // incident is published but the item stays 'pending' and can be re-approved
   // (slug conflict). Treat its failure as a hard error.

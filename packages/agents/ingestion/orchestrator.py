@@ -50,8 +50,10 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 
 from classifiers.corroboration import get_supabase_client
-from classifiers.source_allowlist import canonical_url, is_signal_source
-from consolidation.check import check as consolidation_check, write_incident_links
+from classifiers.source_allowlist import (
+    canonical_url, check_source_urls, dedupe_urls, is_signal_source,
+)
+from consolidation.check import check as consolidation_check
 from consolidation.queue_row import build_queue_row
 from filters.stage1_filter import filter_content
 from filters.stage1_quota import RPM_LIMIT, RpdExhaustedError, Stage1HaltError
@@ -253,6 +255,10 @@ def _emit(stage2_input, item, is_dateless, edmw_signal_count, primary_candidate,
 
     consolidation_result = consolidation_check(draft, supabase_client=client)
     if consolidation_result.action == "skip":
+        if consolidation_result.matched_queue_id and not dry_run:
+            _attach_duplicate_report(
+                consolidation_result.matched_queue_id, stage2_input, item, draft, client,
+            )
         return (False, False)
 
     confidence_adjustment, learning_flag = learning.apply_source_reputation(primary_candidate, reputation)
@@ -275,7 +281,7 @@ def _emit(stage2_input, item, is_dateless, edmw_signal_count, primary_candidate,
         item, draft, consolidation_result,
         is_update=is_update, date_missing=is_dateless,
         edmw_signal_count=edmw_signal_count,
-        include_related_incidents=True, is_backfill=False,
+        is_backfill=False,
     )
 
     # An unusually large merge is written INTACT (all its sources kept) but
@@ -296,11 +302,6 @@ def _emit(stage2_input, item, is_dateless, edmw_signal_count, primary_candidate,
     if not dry_run:
         inserted = client.table("war_room_queue").insert(row).execute()
         queue_id = inserted.data[0]["id"]
-        if is_update and consolidation_result.related_incidents:
-            write_incident_links(
-                queue_id, consolidation_result.matched_incident_id,
-                consolidation_result.related_incidents, client,
-            )
         try:
             check_milestones(
                 draft=draft, queue_id=queue_id, source_url=primary_candidate.url,
@@ -312,6 +313,94 @@ def _emit(stage2_input, item, is_dateless, edmw_signal_count, primary_candidate,
                 queue_id, exc,
             )
     return (True, is_update)
+
+
+def _attach_duplicate_report(queue_id, stage2_input, item, draft, client) -> None:
+    """Keep a matched report's sources and comparison details on its queue row.
+
+    The existing proposal stays authoritative; supplemental summaries are
+    presented separately in the War Room for the operator to compare.
+    """
+    result = (client.table("war_room_queue")
+              .select("id,status,processed_at,raw_content,source_url,corroboration_count")
+              .eq("id", queue_id).single().execute())
+    queued = result.data or {}
+    if queued.get("status") not in ("pending", "update") or queued.get("processed_at") is not None:
+        raise RuntimeError(f"queued duplicate {queue_id} was processed before report attachment")
+
+    articles = list(stage2_input.get("source_articles") or draft.get("source_articles") or [])
+    if not articles and item.get("url"):
+        articles = [item]
+    urls = draft.get("source_urls") or stage2_input.get("source_urls") or [a.get("url") for a in articles]
+    urls = list(dict.fromkeys(canonical_url(u) for u in urls if u))
+    allow = check_source_urls(urls)
+    kept_urls = dedupe_urls(allow.get("kept") or [])
+    kept_url_set = set(kept_urls)
+
+    rc = dict(queued.get("raw_content") or {})
+    supplemental_allowlist = {
+        key: allow.get(key) or []
+        for key in ("dropped_signal", "dropped_redirect", "unapproved")
+        if allow.get(key)
+    }
+    if supplemental_allowlist:
+        prior_allowlist = dict(rc.get("_source_allowlist") or {})
+        prior_allowlist["duplicate_report_sources"] = supplemental_allowlist
+        rc["_source_allowlist"] = prior_allowlist
+    existing_urls = dedupe_urls(rc.get("source_urls") or [queued.get("source_url")])
+    existing_url_set = {canonical_url(url) for url in existing_urls if url}
+    merged_urls = dedupe_urls(existing_urls + kept_urls)
+    rc["source_urls"] = merged_urls
+
+    timeline = list(rc.get("source_timeline") or [])
+    known_by_url = {
+        canonical_url(a.get("url")): a for a in articles if a.get("url")
+    }
+    for url in kept_urls:
+        article = known_by_url.get(url) or {}
+        article_date = article.get("date") or article.get("published_at")
+        if article_date:
+            entry = {
+                "date": str(article_date)[:10], "source_url": url,
+                "source_name": article.get("source_name", ""),
+                "headline": article.get("title") or draft.get("title", ""),
+            }
+            if not any(canonical_url(e.get("source_url", "")) == url for e in timeline if isinstance(e, dict)):
+                timeline.append(entry)
+    if timeline:
+        rc["source_timeline"] = sorted(timeline, key=lambda e: str(e.get("date") or "9999-99-99"))
+
+    reports = list(rc.get("_duplicate_reports") or [])
+    known_report_urls = {
+        canonical_url(r.get("source_url", ""))
+        for r in reports if isinstance(r, dict) and r.get("source_url")
+    }
+    for article in articles:
+        url = canonical_url(article.get("url", ""))
+        if (not url or url not in kept_url_set or url in existing_url_set
+                or is_signal_source(article.get("source_type"), url)
+                or url in known_report_urls):
+            continue
+        reports.append({
+            "source_url": url,
+            "source_name": article.get("source_name", ""),
+            "headline": article.get("title") or draft.get("title", ""),
+            "date": str(article.get("date") or article.get("published_at") or "")[:10],
+            "summary": (draft.get("summary") or "")[:1200],
+            "match_reason": "Automated consolidation matched this report to the queued incident.",
+        })
+        known_report_urls.add(url)
+    rc["_duplicate_reports"] = reports
+
+    patch = {
+        "raw_content": rc,
+        "corroboration_count": len(merged_urls),
+    }
+    update = (client.table("war_room_queue").update(patch)
+              .eq("id", queue_id).in_("status", ["pending", "update"])
+              .is_("processed_at", "null").select("id").execute())
+    if not update.data:
+        raise RuntimeError(f"queued duplicate {queue_id} changed before report attachment")
 
 
 def _attach_enriched_summary(row, stage2_input, draft, incident_id, client) -> None:

@@ -13,6 +13,7 @@ lies about its interface is worse than no mock.
 """
 
 import importlib
+from datetime import date, timedelta
 from unittest import mock
 
 passed = failed = 0
@@ -293,11 +294,33 @@ with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlis
      mock.patch("classifiers.geocoding.geocode_incident", lambda *a, **kw: None), \
      mock.patch("ops.activity._client", lambda *_a, **_kw: None), \
      mock.patch("ops.notify.notify", lambda *a, **kw: {"status": "disabled"}):
-    many = [_row(id=f"q-{i}", proposed_slug=f"s-{i}") for i in range(60)]
+    many = [
+        _row(
+            id=f"q-{i}", proposed_slug=f"s-{i}",
+            raw_content={**_row()["raw_content"],
+                         "date": (date(2025, 1, 1) + timedelta(days=3 * i)).isoformat()},
+        )
+        for i in range(60)
+    ]
     client = FakeClient({"war_room_queue": many})
     stats = ap.run(supabase_client=client, dry_run=False, trigger="manual")
     check(f"per-run cap holds at {ap.MAX_AUTO_PUBLISH_PER_RUN}",
           stats["published"] == ap.MAX_AUTO_PUBLISH_PER_RUN)
+    check("rows left after the cap are counted for review",
+          stats["reasons"].get("per_run_cap_hit") == 60 - ap.MAX_AUTO_PUBLISH_PER_RUN)
+
+print("\n=== same-pass duplicate guard ===")
+with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlist), \
+     mock.patch("classifiers.geocoding.geocode_incident", lambda *a, **kw: None), \
+     mock.patch("ops.activity._client", lambda *_a, **_kw: None), \
+     mock.patch("ops.notify.notify", lambda *a, **kw: {"status": "disabled"}):
+    duplicates = [_row(id="q-1"), _row(id="q-2", proposed_slug="cat-rescued-jul-2026-copy")]
+    client = FakeClient({"war_room_queue": duplicates})
+    stats = ap.run(supabase_client=client, dry_run=False, trigger="manual")
+    check("duplicate queue rows cannot both auto-publish in one pass",
+          stats["published"] == 1 and stats["skipped"] == 1)
+    check("the second duplicate is held with a stable reason",
+          stats["reasons"].get("possible_published_duplicate") == 1)
 
 print("\n=== oversized-merge trust (the exit condition) ===")
 

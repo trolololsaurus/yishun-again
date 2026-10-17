@@ -81,7 +81,7 @@ STAGE2_USD_PER_DRAFT = round(sum(_call_usd(*shape) for shape in _STAGE2_SHAPE.va
 # billing key can be priced in without a code change.
 STAGE1_USD_PER_CALL = float(os.getenv("STAGE1_USD_PER_CALL", "0.0"))
 
-# Daily spend that warrants waking the operator. At ~$0.031/draft this is ~64
+# Daily spend that warrants waking the operator. At ~$0.0274/draft this is ~73
 # drafts a day — far above the 1-pass-a-day design, so tripping it means
 # something ran that should not have.
 COST_ALERT_USD_PER_DAY = float(os.getenv("COST_ALERT_USD_PER_DAY", "2.00"))

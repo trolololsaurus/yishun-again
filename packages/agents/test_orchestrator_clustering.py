@@ -262,5 +262,70 @@ check("_make_grouper raises when 'groups' key is missing", raised)
 with mock.patch.object(_cc, "_get_anthropic_client", side_effect=EnvironmentError("no key")):
     check("_make_grouper returns None when Anthropic is unconfigured", orch._make_grouper() is None)
 
+print("\nmatched-report source filtering:\n")
+
+existing_url = "https://mothership.sg/existing-cat-report"
+kept_url = "https://channelnewsasia.com/news/singapore/new-cat-report"
+signal_url = "https://forums.hardwarezone.com.sg/topic/1"
+redirect_url = "https://news.google.com/articles/1"
+queue_row = {
+    "id": "q-existing", "status": "pending", "processed_at": None,
+    "source_url": existing_url, "corroboration_count": 1,
+    "raw_content": {"source_urls": [existing_url]},
+}
+
+
+class _DuplicateReportClient:
+    def __init__(self):
+        self.patch = None
+
+    def table(self, _name):
+        client = self
+
+        class _Query:
+            def select(self, *_a, **_kw): return self
+            def eq(self, *_a, **_kw): return self
+            def single(self): return self
+            def in_(self, *_a, **_kw): return self
+            def is_(self, *_a, **_kw): return self
+            def update(self, payload):
+                client.patch = payload
+                return self
+            def execute(self):
+                data = [{"id": "q-existing"}] if client.patch else queue_row
+                return type("R", (), {"data": data})()
+
+        return _Query()
+
+
+matched_articles = [
+    {"url": existing_url, "source_name": "Mothership", "source_type": "msm"},
+    {"url": kept_url, "source_name": "CNA", "source_type": "msm",
+     "title": "Cat rescued from tree", "date": "2026-07-01"},
+    {"url": signal_url, "source_name": "Forum", "source_type": "signal"},
+    {"url": redirect_url, "source_name": "Google News", "source_type": "msm"},
+]
+matched_draft = {
+    "title": "Cat rescued from tree", "summary": "A cat was rescued.",
+    "source_urls": [existing_url, kept_url, signal_url, redirect_url],
+}
+allowlist = {
+    "kept": [orch.canonical_url(existing_url), orch.canonical_url(kept_url)],
+    "dropped_signal": [orch.canonical_url(signal_url)],
+    "dropped_redirect": [orch.canonical_url(redirect_url)],
+}
+client = _DuplicateReportClient()
+with mock.patch.object(orch, "check_source_urls", return_value=allowlist), \
+     mock.patch.object(orch, "is_signal_source", side_effect=lambda kind, _url: kind == "signal"):
+    orch._attach_duplicate_report(
+        "q-existing", {"source_articles": matched_articles}, {"url": kept_url},
+        matched_draft, client,
+    )
+attached = client.patch["raw_content"]
+check("only an allowed, new publisher report is attached as a comparison",
+      [r["source_url"] for r in attached["_duplicate_reports"]] == [orch.canonical_url(kept_url)])
+check("signal and redirect URLs do not enter queued source_urls",
+      client.patch["raw_content"]["source_urls"] == [orch.canonical_url(existing_url), orch.canonical_url(kept_url)])
+
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

@@ -74,7 +74,6 @@ export function QueueList({ initialItems, targetIncidents, relatedPreviews, site
               key={item.id}
               item={item}
               targetIncident={target}
-              relatedPreviews={relatedPreviews}
               onProcessed={handleProcessed}
             />
           )
@@ -84,7 +83,6 @@ export function QueueList({ initialItems, targetIncidents, relatedPreviews, site
           <QueueCard
             key={item.id}
             item={item}
-            relatedPreviews={relatedPreviews}
             onProcessed={handleProcessed}
           />
         )

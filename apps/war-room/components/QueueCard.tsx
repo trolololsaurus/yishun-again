@@ -1,8 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import type { QueueItem, Classification, RejectReason, AgentRelatedIncident, DismissCategory } from '@/lib/types'
-import { DISMISS_CATEGORIES } from '@/lib/types'
+import type { QueueItem, Classification, RejectReason } from '@/lib/types'
+import { DuplicateReports } from '@/components/DuplicateReports'
 import {
   CLASS_ICON, CLASS_COLOR, CLASS_LABEL,
   confidenceColor, confidenceLabel,
@@ -27,11 +27,10 @@ const REJECT_REASONS: { value: RejectReason; label: string }[] = [
 
 interface Props {
   item:            QueueItem
-  relatedPreviews: Record<string, { title: string; slug: string }>
   onProcessed:     (id: string) => void
 }
 
-export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
+export function QueueCard({ item, onProcessed }: Props) {
   const rc = item.raw_content as Record<string, unknown>
 
   // Editable draft state — pre-filled with agent output
@@ -67,24 +66,6 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
   const triggeredByTitle = (rc.triggered_by_title as string) ?? null
   const triggeredByUrl   = (rc.triggered_by_url   as string) ?? null
   const triggeredDate    = (rc.triggered_date     as string) ?? null
-
-  const agentRelatedInit = (rc.agent_related_incidents as AgentRelatedIncident[]) ?? []
-  const [relatedState,    setRelatedState]    = useState<AgentRelatedIncident[]>(agentRelatedInit)
-  const [dismissingId,    setDismissingId]    = useState<string | null>(null)
-  const [dismissCategory, setDismissCategory] = useState<DismissCategory | ''>('')
-  const [dismissDetail,   setDismissDetail]   = useState('')
-
-  function openDismissForm(incidentId: string) {
-    setDismissingId(incidentId)
-    setDismissCategory('')
-    setDismissDetail('')
-  }
-
-  function cancelDismiss() {
-    setDismissingId(null)
-    setDismissCategory('')
-    setDismissDetail('')
-  }
 
   async function handleApprove() {
     setLoading(true)
@@ -126,28 +107,6 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
       setLoading(false)
     }
   }
-
-  async function handleDismissLink(incidentId: string, category: DismissCategory, detail: string) {
-    try {
-      const res = await fetch(`/api/queue/${item.id}/dismiss-alert`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          related_incident_id: incidentId,
-          reason_category:     category,
-          reason_detail:       detail || undefined,
-        }),
-      })
-      if (res.ok) {
-        setRelatedState(prev => prev.map(r =>
-          r.incident_id === incidentId ? { ...r, dismissed: true } : r
-        ))
-        setDismissingId(null)
-      }
-    } catch { /* non-fatal */ }
-  }
-
-  const visibleRelated = relatedState.filter(r => !r.dismissed)
 
   return (
     <article className="bg-surface border border-border rounded">
@@ -320,95 +279,6 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
               There is nothing to edit at queue time. Prompt editing lives in
               the rectification flow, where a prompt actually exists. */}
 
-          {/* Possible related banners — pending items only (no confirm-link without a matched incident) */}
-          {visibleRelated.length > 0 && (
-            <div className="space-y-2">
-              {visibleRelated.map(link => {
-                const preview = relatedPreviews[link.incident_id]
-                const isOpen  = dismissingId === link.incident_id
-                return (
-                  <div key={link.incident_id}
-                       className="border border-yellow/30 bg-yellow/5 p-3 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-yellow font-bold uppercase text-xs">
-                        POSSIBLE {link.link_type.replace('_', ' ').toUpperCase()}
-                      </span>
-                      <span className="text-text-secondary text-xs">
-                        conf: {(link.confidence * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                    <div className="text-text-primary text-sm">
-                      {preview?.title ?? link.incident_id}
-                    </div>
-                    <div className="text-text-secondary text-xs">
-                      {link.reason}
-                    </div>
-
-                    {isOpen ? (
-                      <div className="space-y-2 pt-1 border-t border-yellow/20">
-                        <div>
-                          <label className="text-text-secondary uppercase tracking-widest block mb-1 text-xs">
-                            Dismiss reason:
-                          </label>
-                          <select
-                            value={dismissCategory}
-                            onChange={e => setDismissCategory(e.target.value as DismissCategory)}
-                            className="w-full px-2 py-1.5 bg-bg border border-border text-text-primary text-sm rounded focus:border-yellow focus:outline-none"
-                          >
-                            <option value="">— select —</option>
-                            {(Object.entries(DISMISS_CATEGORIES) as [DismissCategory, typeof DISMISS_CATEGORIES[DismissCategory]][]).map(([key, cat]) => (
-                              <option key={key} value={key}>{cat.label}</option>
-                            ))}
-                          </select>
-                          {dismissCategory && (
-                            <div className="text-text-secondary mt-1 text-xs">
-                              {DISMISS_CATEGORIES[dismissCategory].description}
-                            </div>
-                          )}
-                        </div>
-                        <div>
-                          <label className="text-text-secondary uppercase tracking-widest block mb-1 text-xs">
-                            Additional detail (optional):
-                          </label>
-                          <input
-                            type="text"
-                            value={dismissDetail}
-                            maxLength={200}
-                            onChange={e => setDismissDetail(e.target.value)}
-                            placeholder="Free text, max 200 chars"
-                            className="w-full px-2 py-1.5 bg-bg border border-border text-text-primary text-sm rounded focus:border-yellow focus:outline-none"
-                          />
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            disabled={!dismissCategory}
-                            onClick={() => handleDismissLink(link.incident_id, dismissCategory as DismissCategory, dismissDetail)}
-                            className="px-3 py-1 border border-red text-red font-bold text-xs hover:bg-red hover:text-bg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                          >
-                            CONFIRM DISMISS
-                          </button>
-                          <button
-                            onClick={cancelDismiss}
-                            className="px-3 py-1 border border-border text-text-secondary text-xs hover:border-text-secondary transition-colors"
-                          >
-                            CANCEL
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => openDismissForm(link.incident_id)}
-                        className="text-text-secondary text-xs hover:text-red transition-colors"
-                      >
-                        DISMISS
-                      </button>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-
           {/* Corroboration + buzz */}
           <div className="flex gap-6 text-sm">
             <span className="text-text-secondary">
@@ -479,6 +349,7 @@ export function QueueCard({ item, relatedPreviews, onProcessed }: Props) {
               </ul>
             )}
           </div>
+          <DuplicateReports reports={rc._duplicate_reports} />
         </div>
       </div>
 

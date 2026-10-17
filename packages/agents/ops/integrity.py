@@ -536,7 +536,7 @@ def _judge_near_duplicates(pairs: list[tuple[dict, dict, int]],
     if not pairs:
         return []
 
-    from consolidation.check import _get_anthropic_client, _judge_pair
+    from consolidation.check import _coerce_conf, _get_anthropic_client, _judge_batch
     from consolidation.rules import UPDATE_MATCH_THRESHOLD
 
     try:
@@ -554,12 +554,12 @@ def _judge_near_duplicates(pairs: list[tuple[dict, dict, int]],
 
     for a, b, _overlap in ordered[:MAX_LLM_JUDGEMENTS]:
         try:
-            verdict = _judge_pair(
+            verdict = _judge_batch(
                 claude,
                 {"title": a["title"], "summary": a["summary"],
                  "incident_date": str(a["date"] or ""), "url": a["primary_url"]},
-                {"id": b["id"], "title": b["title"], "summary": b["summary"],
-                 "incident_date": str(b["date"] or "")},
+                [{"id": b["id"], "title": b["title"], "summary": b["summary"],
+                  "incident_date": str(b["date"] or "")}],
             )
         except Exception as exc:                  # noqa: BLE001
             run.warn("judge_failed", f"{a['ref']} vs {b['ref']}: {exc}")
@@ -567,10 +567,12 @@ def _judge_near_duplicates(pairs: list[tuple[dict, dict, int]],
             continue
 
         stats["llm_judgements"] += 1
-        confidence = float(verdict.get("same_incident_confidence") or 0.0)
-        if verdict.get("same_incident") and confidence >= UPDATE_MATCH_THRESHOLD:
+        match_index = verdict.get("match_index")
+        confidence = _coerce_conf(verdict.get("match_confidence"))
+        if (isinstance(match_index, int) and not isinstance(match_index, bool)
+                and match_index == 0 and confidence >= UPDATE_MATCH_THRESHOLD):
             findings.append(_confirmed_near_dup_finding(
-                a, b, confidence, verdict.get("same_incident_reason", "")))
+                a, b, confidence, verdict.get("match_reason", "")))
 
     if len(ordered) > MAX_LLM_JUDGEMENTS:
         stats["llm_skipped"] = len(ordered) - MAX_LLM_JUDGEMENTS

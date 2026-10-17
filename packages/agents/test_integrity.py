@@ -191,17 +191,15 @@ check("pair cap stops the quadratic sweep",
 print("\n llm budget:")
 
 def _verdict(same, conf):
-    return {"same_incident": same, "same_incident_confidence": conf,
-            "same_incident_reason": "same cat, same tree",
-            "related": False, "related_confidence": 0.0,
-            "related_reason": "", "link_type": None}
+    return {"match_index": 0 if same else None, "match_confidence": conf,
+            "match_reason": "same cat, same tree"}
 
 pairs = [(QQ("q1", url=CNA_A), QQ("q2", url=CNA_B), 4)]
 
 cc = importlib.import_module("consolidation.check")
 stats = {"llm_judgements": 0, "errors": 0}
 with mock.patch.object(cc, "_get_anthropic_client", return_value=mock.MagicMock()), \
-     mock.patch.object(cc, "_judge_pair", return_value=_verdict(True, 0.9)) as judge:
+     mock.patch.object(cc, "_judge_batch", return_value=_verdict(True, 0.9)) as judge:
     out = ig._judge_near_duplicates(pairs, mock.MagicMock(), stats)
 check("confirmed near-duplicate becomes a finding",
       len(out) == 1 and out[0].code == "dupe_title_confirmed")
@@ -210,15 +208,23 @@ check("one pair -> exactly one model call", judge.call_count == 1 and stats["llm
 
 stats = {"llm_judgements": 0, "errors": 0}
 with mock.patch.object(cc, "_get_anthropic_client", return_value=mock.MagicMock()), \
-     mock.patch.object(cc, "_judge_pair", return_value=_verdict(True, 0.5)) as judge:
+     mock.patch.object(cc, "_judge_batch", return_value=_verdict(True, 0.5)) as judge:
     out = ig._judge_near_duplicates(pairs, mock.MagicMock(), stats)
 check("below the consolidation threshold -> no finding", out == [])
+
+stats = {"llm_judgements": 0, "errors": 0}
+with mock.patch.object(cc, "_get_anthropic_client", return_value=mock.MagicMock()), \
+     mock.patch.object(cc, "_judge_batch", return_value={
+         "match_index": False, "match_confidence": 0.99, "match_reason": "invalid index type",
+     }):
+    out = ig._judge_near_duplicates(pairs, mock.MagicMock(), stats)
+check("boolean index is rejected instead of aliasing record zero", out == [])
 
 stats = {"llm_judgements": 0, "errors": 0}
 big = [(QQ(f"a{i}", url=f"https://cna.sg/a{i}"), QQ(f"b{i}", url=f"https://cna.sg/b{i}"), 3)
        for i in range(ig.MAX_LLM_JUDGEMENTS + 25)]
 with mock.patch.object(cc, "_get_anthropic_client", return_value=mock.MagicMock()), \
-     mock.patch.object(cc, "_judge_pair", return_value=_verdict(False, 0.0)) as judge:
+     mock.patch.object(cc, "_judge_batch", return_value=_verdict(False, 0.0)) as judge:
     ig._judge_near_duplicates(big, mock.MagicMock(), stats)
 check("per-run judgement cap is hard",
       judge.call_count == ig.MAX_LLM_JUDGEMENTS and stats["llm_skipped"] == 25)
