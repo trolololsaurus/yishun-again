@@ -1218,12 +1218,24 @@ def _notify_review_queue(rows, merged_titles, client,
             title = (row.get("proposed_title") or "(untitled)")[:70]
             reason = row.get("_hold_reason") or "not_processed_this_pass"
             key = (kind, title, _human_hold_reason(reason))
-            groups[key] = groups.get(key, 0) + 1
+            group = groups.setdefault(key, {"count": 0, "confidences": []})
+            group["count"] += 1
+            confidence = row.get("agent_confidence")
+            if confidence is not None:
+                group["confidences"].append(float(confidence))
         lines += ["", "Waiting for review:"]
         displayed = 0
-        for (kind, title, reason), count in list(groups.items())[:5]:
+        for (kind, title, reason), group in list(groups.items())[:5]:
+            confidences = group["confidences"]
+            if not confidences:
+                confidence_text = "?"
+            else:
+                low, high = min(confidences), max(confidences)
+                confidence_text = (f"{low:.0%}" if low == high
+                                   else f"{low * 100:.0f}–{high:.0%}")
+            count = group["count"]
             suffix = f" ({count} cards)" if count > 1 else ""
-            lines.append(f"  • {kind}: {title}{suffix} — {reason}")
+            lines.append(f"  • [{confidence_text}] {kind}: {title}{suffix} — {reason}")
             displayed += count
         if len(pending_for_review) > displayed:
             lines.append(f"  • and {len(pending_for_review) - displayed} more card(s)")

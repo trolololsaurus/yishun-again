@@ -67,6 +67,7 @@ if m.called:
     subject, body = m.call_args.args[1:3]
     check("subject counts current queue cards", "1 card" in subject)
     check("specific hold reason is readable", "possible duplicate of a published incident" in body)
+    check("waiting card displays confidence as a percentage", "[97%] NEW: High confidence draft" in body)
     check("summary does not include historical eligibility totals", "eligible:" not in body)
 
 m_same = run(rows=[pending])
@@ -90,6 +91,8 @@ body = m.call_args.args[2]
 check("repeated card titles are grouped into one human-readable line",
       body.count("Cat rescued from Yishun void deck") == 1 and "(2 cards)" in body)
 check("grouped line retains the hold reason", "per-pass auto-publish limit reached" in body)
+check("grouped duplicate line retains its confidence percentage",
+      "[96–97%] NEW: Cat rescued from Yishun void deck (2 cards)" in body)
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
