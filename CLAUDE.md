@@ -251,10 +251,10 @@ threshold. All leave it `pending` for the operator; none reject anything:
 | `oversized_cluster_unproven` | A grouping call merged > `CLUSTER_MAX_SIZE` articles | **Automatically**, once the grouper earns it (`AUTONOMY.md` §5b) |
 | `unapproved_source_domain` | `source_allowlist` | Operator approves the domain |
 
-**Auto-MERGE of `update` rows is a separate, opt-in gate** (`AUTONOMY.md` §2b),
-off by default (`AUTO_MERGE_ENABLED`). An `update` row applies a new source to an
+**Auto-MERGE of `update` rows uses a separate 0.90 confidence threshold**
+(`AUTONOMY.md` §2b), enabled in production through `AUTO_MERGE_ENABLED`. An `update` row applies a new source to an
 already-published incident; when enabled it auto-applies only when BOTH the draft
-confidence AND the consolidation `_match_confidence` clear 0.95 and the appended
+confidence AND the consolidation `_match_confidence` clear 0.90 and the appended
 source survives the allowlist. It snapshots the pre-merge state
 (`raw_content._undo_snapshot`) so the operator can undo it from the War Room
 queue's "Recently merged updates" panel (`/api/queue/[id]/revert-update`).

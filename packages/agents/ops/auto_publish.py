@@ -47,13 +47,11 @@ at it", never "it disappears".
 
 `update` rows (merges into an existing story) take a different write path
 (append to `source_urls`/`source_timeline`, recompute dates) whose failure mode
-is corrupting an already-published incident rather than adding a new one — so
-auto-merge is a SEPARATE decision, gated behind `AUTO_MERGE_ENABLED` (default
-OFF). When off, every update row is left for review exactly as before. When on,
-a merge auto-applies only when BOTH the draft confidence (`agent_confidence`) and
-the consolidation same-event confidence (`_match_confidence`) clear their
-thresholds AND the appended source survives the allowlist — and it snapshots the
-pre-merge state so the operator can undo it (revert-update). See
+is corrupting an already-published incident rather than adding a new one. The
+operator's policy is to auto-apply updates when both the draft confidence
+(`agent_confidence`) and consolidation same-event confidence (`_match_confidence`)
+are at least 0.90 and the appended source survives the allowlist. The pre-merge
+state is snapshotted so the operator can undo it (revert-update). See
 check_update_eligibility / _apply_merge and docs/AUTONOMY.md.
 """
 
@@ -92,31 +90,30 @@ DUPLICATE_GUARD_DATE_WINDOW_DAYS = 2
 DUPLICATE_GUARD_MIN_KEYWORD_OVERLAP = 3
 
 # ── Autonomous merge (auto-apply an UPDATE row) ──────────────────────────────
-# Applying a merge mutates an ALREADY-PUBLISHED incident, and a wrong merge is
-# near-invisible (one extra URL in a source list) and hits the source-integrity
-# constraint, so this ships DARK: default off, flip AUTO_MERGE_ENABLED on when
-# ready. Two thresholds because two different confidences must both be high:
+# Applying a merge mutates an ALREADY-PUBLISHED incident, so the existing undo
+# snapshot and source-integrity checks remain mandatory. Production explicitly
+# enables this after migration 018; unconfigured environments default off.
+# Both independent confidence signals must be >=0.90:
 #   AUTO_MERGE_CONFIDENCE       — the Stage 2 draft confidence (write quality)
 #   AUTO_MERGE_MATCH_CONFIDENCE — the consolidation same-event confidence (the
 #                                 wrong-merge axis; the strict one). Held if the
 #                                 row predates _match_confidence being persisted.
-# The undo net (PR #1: revert-update + _undo_snapshot) is the safety floor that
-# makes this acceptable — do not enable this without migration 018 applied.
+# The undo net (revert-update + _undo_snapshot) requires migration 018.
 AUTO_MERGE_ENABLED = os.getenv("AUTO_MERGE_ENABLED", "false").strip().lower() in ("1", "true", "on", "yes")
 
 
 def _merge_threshold() -> float:
     try:
-        return float(os.getenv("AUTO_MERGE_CONFIDENCE", "0.95"))
+        return float(os.getenv("AUTO_MERGE_CONFIDENCE", "0.90"))
     except ValueError:
-        return 0.95
+        return 0.90
 
 
 def _merge_match_threshold() -> float:
     try:
-        return float(os.getenv("AUTO_MERGE_MATCH_CONFIDENCE", "0.95"))
+        return float(os.getenv("AUTO_MERGE_MATCH_CONFIDENCE", "0.90"))
     except ValueError:
-        return 0.95
+        return 0.90
 
 
 MAX_AUTO_MERGE_PER_RUN = int(os.getenv("AUTO_MERGE_MAX_PER_RUN", "25"))

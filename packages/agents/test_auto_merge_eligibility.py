@@ -8,6 +8,7 @@ apps/war-room/lib/utils.ts — the fixtures here match utils.updateMerge.test.ts
 the two ports stay in step.
 """
 import importlib
+from unittest import mock
 
 sa = importlib.import_module("classifiers.source_allowlist")
 ap = importlib.import_module("ops.auto_publish")
@@ -40,17 +41,29 @@ def item(**over):
     return base
 
 
-DRAFT_T, MATCH_T = 0.95, 0.95
+DRAFT_T, MATCH_T = 0.90, 0.90
 print("auto-merge eligibility tests:")
+
+with mock.patch.dict(ap.os.environ, {}, clear=True):
+    check("new-story auto-publish threshold stays at 95%", ap._threshold() == 0.95)
+    check("both auto-update thresholds default to 90%",
+          ap._merge_threshold() == 0.90 and ap._merge_match_threshold() == 0.90)
 
 ok, r = ap.check_update_eligibility(item(), DRAFT_T, MATCH_T)
 check("both confidences high + approved source -> eligible", ok and r == "eligible")
 
-ok, r = ap.check_update_eligibility(item(agent_confidence=0.90), DRAFT_T, MATCH_T)
+ok, r = ap.check_update_eligibility(item(agent_confidence=0.89), DRAFT_T, MATCH_T)
 check("draft confidence below threshold -> held", not ok and r == "below_threshold")
 
+ok, r = ap.check_update_eligibility(item(agent_confidence=0.90), DRAFT_T, MATCH_T)
+check("90% draft confidence meets the update threshold", ok and r == "eligible")
+
 ok, r = ap.check_update_eligibility(
-    item(raw_content={"_match_confidence": 0.80}), DRAFT_T, MATCH_T)
+    item(raw_content={"_match_confidence": 0.90}), DRAFT_T, MATCH_T)
+check("90% same-event confidence meets the update threshold", ok and r == "eligible")
+
+ok, r = ap.check_update_eligibility(
+    item(raw_content={"_match_confidence": 0.89}), DRAFT_T, MATCH_T)
 check("match confidence below threshold -> held", not ok and r == "match_below_threshold")
 
 ok, r = ap.check_update_eligibility(item(raw_content={}), DRAFT_T, MATCH_T)

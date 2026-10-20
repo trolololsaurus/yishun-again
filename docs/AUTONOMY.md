@@ -106,7 +106,7 @@ The full set, in the order `check_eligibility` applies them:
 
 | Gate | Skip reason logged | Why |
 |---|---|---|
-| `status = 'pending'` | `not_pending` | `update` rows merge into a live incident — a different write path (§2b) whose failure mode is corrupting an existing story. Auto-merge is a separate decision, gated behind `AUTO_MERGE_ENABLED` (default OFF); with it off, update rows are held here exactly as before |
+| `status = 'pending'` | `not_pending` | `update` rows merge into a live incident through the separate update policy in §2b (both confidence values must be at least 0.90) |
 | Not a sentinel row | `notification_row` | Pattern alerts and lifecycle notices are operator prompts, not incidents |
 | A confidence, at or above the bar | `no_confidence`, `below_threshold` | The threshold itself |
 | Title and summary present | `missing_title`, `missing_summary` | The human approve route's own 422 preconditions |
@@ -185,16 +185,18 @@ homework — see §4.
 
 ### 2b. Auto-merge: applying an update unattended (`AUTO_MERGE_ENABLED`)
 
-**Enabled in production 2026-09-21** (operator decision — ≥0.95-confidence
-updates now apply without waiting for a War Room click). Off unset, on with
-`AUTO_MERGE_ENABLED=true`; see the runbook (§7) to flip it either way.
+**Enabled in production since 2026-09-21.** The operator policy is to apply an
+update when both draft confidence and same-event confidence are ≥0.90, without
+waiting for a War Room click. Production sets `AUTO_MERGE_ENABLED=true`;
+unconfigured environments default off. Set the flag to `false` to pause this
+path; see §7.
 
 An `update` row merges a new source into an **already-published** incident
 (appends to `source_urls`/`source_timeline`, bumps `update_count`, recomputes the
 dates). That is a live-incident mutation, and a wrong merge is near-invisible —
 one extra URL in a source list — and hits the source-integrity constraint. So it
-is a **separate, opt-in decision**. With `AUTO_MERGE_ENABLED` unset, every
-update row is held for the operator, unchanged.
+is governed separately from new-story auto-publish. With
+`AUTO_MERGE_ENABLED=true`, eligible updates apply automatically.
 
 When on, a merge auto-applies only when **both** confidences clear **and** the
 appended source is verifiable. `check_update_eligibility` (same fail-open
@@ -203,8 +205,8 @@ direction — a miss is *held*, never rejected):
 | Gate | Skip reason | Why |
 |---|---|---|
 | It is an update row with a target | `not_update`, `no_update_target` | Nothing to merge into otherwise |
-| Draft confidence ≥ `AUTO_MERGE_CONFIDENCE` (0.95) | `below_threshold` | Write quality |
-| Same-event confidence ≥ `AUTO_MERGE_MATCH_CONFIDENCE` (0.95) | `no_match_confidence`, `match_below_threshold` | The wrong-merge axis — the strict one. `_match_confidence` is the consolidation grouper's certainty this candidate updates *that* incident, persisted by `consolidation/queue_row.py`. Missing ⇒ held: a row written before it was persisted is never merged blind |
+| Draft confidence ≥ `AUTO_MERGE_CONFIDENCE` (0.90) | `below_threshold` | Write quality |
+| Same-event confidence ≥ `AUTO_MERGE_MATCH_CONFIDENCE` (0.90) | `no_match_confidence`, `match_below_threshold` | `_match_confidence` is the consolidation grouper's certainty this candidate updates *that* incident, persisted by `consolidation/queue_row.py`. Missing ⇒ held: a row written before it was persisted is never merged blind |
 | Appended source survives the allowlist | `source_not_verifiable`, `unapproved_source_domain`, `allowlist_check_failed` | `confirm-update` trusts the operator here; the autonomous path has no operator, so it **re-runs** the guard. A signal/redirect URL disqualifies the merge; an unapproved domain holds it |
 
 Two confidences, not one, because they answer different questions: `agent_confidence`
@@ -962,9 +964,10 @@ routes to the War Room, and nothing else about the pass changes.
 
 ### Enable / roll back auto-merge (§2b)
 
-Auto-merge (auto-applying an `update` row into a live incident) is **off by
-default** and is the only autonomous path that mutates an already-published
-incident, so enabling it is a deliberate operator action with a clean rollback.
+Auto-merge (auto-applying an `update` row into a live incident) is enabled in
+production at 90% for both confidence checks. The code defaults off in a fresh
+environment; production must set `AUTO_MERGE_ENABLED=true`. Set it to `false`
+to pause auto-merge; the undo snapshot remains available for each applied merge.
 
 **Preconditions — both must be true, or enabling does nothing useful:**
 - **Migration 018 applied.** Without it the `_undo_snapshot` write path is fine
@@ -990,11 +993,8 @@ you is caught here, not on the live incident.
 **Enable:**
 ```bash
 gcloud run services update yishun-agents --region asia-southeast1 \
-  --update-env-vars AUTO_MERGE_ENABLED=true
-# Optional, all have safe defaults:
-#   AUTO_MERGE_CONFIDENCE=0.95        draft-quality bar
-#   AUTO_MERGE_MATCH_CONFIDENCE=0.95  same-event bar (the strict, wrong-merge axis)
-#   AUTO_MERGE_MAX_PER_RUN=25         blast-radius cap per pass
+  --update-env-vars AUTO_MERGE_ENABLED=true,AUTO_MERGE_CONFIDENCE=0.90,AUTO_MERGE_MATCH_CONFIDENCE=0.90
+# AUTO_MERGE_MAX_PER_RUN=25 bounds the blast radius per pass.
 ```
 Takes effect on the next scheduled pass (03:58 / 15:58 SGT) — no redeploy.
 
@@ -1019,7 +1019,7 @@ Takes effect on the next scheduled pass (03:58 / 15:58 SGT) — no redeploy.
      --update-env-vars AUTO_MERGE_MATCH_CONFIDENCE=2.0   # unreachable = all held
    ```
    This is the merge analog of the `AUTO_PUBLISH_CONFIDENCE=2.0` panic switch.
-3. **Stop auto-merge entirely** — `AUTO_MERGE_ENABLED=false` (or unset). Every
+3. **Stop auto-merge entirely** — `AUTO_MERGE_ENABLED=false`. Every
    `update` row goes back to the operator, exactly as before the feature existed.
    ```bash
    gcloud run services update yishun-agents --region asia-southeast1 \

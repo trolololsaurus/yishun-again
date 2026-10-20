@@ -17,8 +17,8 @@ export interface MergedRow {
   draftConfidence: number | null
 }
 
-// The 0.95 bar auto-merge would apply at (AUTO_MERGE_*_CONFIDENCE defaults).
-const AUTO_MERGE_BAR = 0.95
+// The 0.90 bar auto-merge applies at (AUTO_MERGE_*_CONFIDENCE defaults).
+const AUTO_MERGE_BAR = 0.90
 
 // Recently-applied updates (merges), each with an Undo. Once a merge is
 // confirmed the queue row leaves the pending list, so without this the operator
@@ -33,7 +33,7 @@ export function RecentMerges({ initial, siteUrl }: { initial: MergedRow[]; siteU
   if (rows.length === 0) return null
 
   // Readiness one-liner: would auto-merge have applied these? It fires only when
-  // BOTH confidences clear 0.95, so count rows where both do. Rows with no
+  // BOTH confidences clear 0.90, so count rows where both do. Rows with no
   // recorded match confidence (merged before the agents backend persisted it)
   // can't be judged — surfaced separately so the number is honest.
   const known = rows.filter(r => r.matchConfidence != null)
@@ -63,12 +63,11 @@ export function RecentMerges({ initial, siteUrl }: { initial: MergedRow[]; siteU
         Recently merged updates
       </div>
       {/* Readiness one-liner: how many recent merges would auto-merge have caught
-          at the 0.95 bar. When this is consistently "all", flipping
-          AUTO_MERGE_ENABLED on is low-risk. */}
+          at the 0.90 bar. */}
       <div className="text-text-secondary mb-3 text-xs">
         {known.length === 0
           ? <>Source-merge confidence not recorded yet (deploy the agents backend first) — hold off on auto-merge.</>
-          : <><span className="text-green font-bold">{ready.length}</span>/{known.length} cleared both 0.95 gates (auto-merge would apply these){unknown > 0 ? `; ${unknown} unscored` : ''}.</>}
+          : <><span className="text-green font-bold">{ready.length}</span>/{known.length} cleared both 0.90 gates (auto-merge would apply these){unknown > 0 ? `; ${unknown} unscored` : ''}.</>}
       </div>
       {error && <div className="text-red text-sm mb-2">{error}</div>}
       <div className="space-y-2">
