@@ -116,7 +116,7 @@ The full set, in the order `check_eligibility` applies them:
 | Operator-approved domain | `unapproved_source_domain` | A URL from an unknown domain is not a *verifiable* source, which is guardrail #1's actual point |
 | The allowlist was readable at all | `allowlist_check_failed` | Cannot verify ⇒ cannot claim verifiable |
 | Real `incident_date` | `no_real_date`, `date_fallback` | QA H3 — never stamp "today" |
-| No strong same-date lexical match to a published incident | `possible_published_duplicate` | Independent second net after consolidation; possible duplicates remain pending for an operator |
+| No same-date lexical match survives the locality conflict check | `possible_published_duplicate` | Independent second net after consolidation; possible duplicates remain pending for an operator |
 | Published archive is readable | `duplicate_check_unavailable` | The publisher cannot establish that the story is new, so it fails closed to review |
 | No ungrounded specifics | `ungrounded_specifics` | Stage 2's deterministic groundedness post-check found a number or proper noun that appears in no source, and one regeneration did not clear it. A factual defect in *this* row, so there is no trust curve — it never clears automatically |
 | Casualty figures match the source | `casualty_mismatch` | `filters/casualty_check` — a wrong death count is the most damaging factual error this archive can publish |
@@ -124,10 +124,17 @@ The full set, in the order `check_eligibility` applies them:
 
 The duplicate hold compares a pending draft's title and summary with published
 incident titles and summaries dated within two days. Three or more shared
-keywords hold the draft for review. It never merges or rejects; the consolidation
-agent remains responsible for deciding whether an update is the same event. The
-check loads up to 2,000 published incidents once per auto-publish pass. If that
-read fails, otherwise eligible pending rows remain in the War Room.
+keywords are required. Before treating a lexical match as a duplicate, the guard
+compares numeric block/street tokens from each title, falling back to its summary
+only when the title has no numeric locality. When both sides have at most two
+selected locality tokens and have disjoint values in the same namespace (for
+example, different block numbers), that published record is excluded as a match.
+If either selected title or fallback summary has more than two tokens, the
+locality veto is skipped and logged. Missing locality evidence does not veto a
+match. The guard never merges or rejects; the consolidation agent remains
+responsible for deciding whether an update is the same event. It loads up to
+2,000 published incidents once per auto-publish pass. If that read fails,
+otherwise eligible pending rows remain in the War Room.
 
 > **Guardrail #5 is deliberately not in that table.** Image suppression is not an
 > eligibility gate: it happens inside `_generate_art`, which returns

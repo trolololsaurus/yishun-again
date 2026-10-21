@@ -11,9 +11,9 @@ Public API
 ----------
 check(candidate, client=None) -> ConsolidationResult
 
-Moved here unchanged from classifiers/consolidation.py (INGESTION_DESIGN.md
-§10b step 2) — classifiers/consolidation.py now re-exports from this module
-for backward compatibility.
+Moved here from the former classifiers/consolidation.py module (INGESTION_DESIGN.md
+§10b step 2). The unused backward-compatibility shim was removed after checking
+that no in-repository caller imports it.
 """
 
 import json

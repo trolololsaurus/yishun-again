@@ -241,8 +241,9 @@ pairwise judging + union-find**: it merged transitively (A~B and B~C merged A, B
 *and* C with nothing comparing A to C) and that is what produced the blob the
 shadow run caught.
 
-**Four things now hold a row back from auto-publish** beyond the confidence
-threshold. All leave it `pending` for the operator; none reject anything:
+**Additional reasons a row can remain pending beyond the confidence threshold**
+include the following. This is a short summary; see `docs/AUTONOMY.md` §2 for
+the complete gate list. These holds leave the row pending; they do not reject it:
 
 | `check_eligibility` reason | Set by | Clears |
 |---|---|---|

@@ -7,7 +7,7 @@ security) with a tech-lead-approved fix for each, ranked Critical → Low.
 **Status:** 🔴 Open · 🟡 Partly fixed / residual remains · 🟢 Cleanup script pending ·
 ✅ Done · ⛔ Moot (the code it describes no longer exists) · 🔵 Won't fix
 
-> **Implementation status — re-verified against the working tree 2026-08-02.**
+> **Code status last checked 2026-08-02; H7/H8 live-data verification run 2026-10-21.**
 > **Closed in code:** C1, C2, C3, C4 · H1, H2, H3, H4, H5, H6 · M1, M2, M3, M4,
 > M5, M6, M7, M9, M10, M11, M13, M14 · L1, L2, L5, L10, L11 · A1–A5, A10, A11,
 > A13. Plus migrations **010** (C3/C4/M7) and **013** (L10), and the standalone
@@ -17,8 +17,12 @@ security) with a tech-lead-approved fix for each, ranked Critical → Low.
 > **Moot — the code they describe no longer exists:** M12 and A2, both about
 > `ingestion/sources/google_news_rss.py`, which was **deleted on 2026-08-02**.
 > The history is kept below because the lesson outlived the file.
-> **Operator/live-DB, not answerable from the tree:** H7, H8
-> (`cleanup_corrupted.py --apply`).
+> **Live data verified 2026-10-21:** H7/H8 — read-only checks across 236
+> published incidents found 0 rows with `incident_date=2026-06-23`, 0 Google News
+> wrapper URLs in `source_urls` or `source_timeline`, and 0 mismatches between
+> `corroboration_count` and `source_urls` length. The 19 duplicate-draft cleanup
+> targets were all already absent. No database rows were changed during these
+> checks; the local one-off audit/repair scripts were removed after verification.
 > **Still open:** M8 (VariableSizeList), M15 (migration runner), M16 (partial),
 > L3, L4 (won't-fix: "Deaths: 0" conveys confirmed-none), L6, L7, L8, L9 ·
 > A6, A7, A8, A9, and A12's cost-accounting residual.
@@ -136,13 +140,15 @@ item **before** mutating the incident and releases the claim if the mutation fai
 the old order left a raced item re-confirmable, appending duplicate timeline entries
 and double-counting `update_count`.
 
-### H7 — 8 incidents corrupted (`incident_date=2026-06-23`) 🟢
-From the War Room merges. `cleanup_corrupted.py` is present in `packages/agents/`.
-**Status:** whether `--apply` has been run is a live-DB question the working tree
-cannot answer — verify against Supabase before assuming either way.
+### H7 — 8 incidents corrupted (`incident_date=2026-06-23`) ✅ (verified 2026-10-21)
+From the War Room merges. A read-only Supabase check across 236 published
+incidents found no rows with the bad date. The one-off repair scripts were
+removed after the live data was verified clean.
 
-### H8 — `corroboration_count` stale on 13 incidents 🟢
-Merges didn't bump the count → lightning under-counts. Same script, same caveat as H7.
+### H8 — `corroboration_count` stale on 13 incidents ✅ (verified 2026-10-21)
+Merges didn't bump the count → lightning under-counts. A read-only check found
+zero published rows where `corroboration_count` differs from the length of
+`source_urls`.
 
 ---
 
@@ -474,15 +480,11 @@ instead of a CHECK). What remains, in priority order:
 
 1. **A7** — the autonomy proxy is the only remaining item that makes an operator
    surface lie: `/analytics` renders no live data and has never done so.
-2. **H7/H8** — run `cleanup_corrupted.py --apply` (and
-   `cleanup_delete_dupe_drafts.py --apply`) against the live DB, or confirm they
-   already ran. Corrupt `incident_date` and stale `corroboration_count` are
-   reader-visible.
-3. **L7/L8** — pipeline safety: a circuit breaker that resets on the highest-volume
+2. **L7/L8** — pipeline safety: a circuit breaker that resets on the highest-volume
    branch is not a circuit breaker, and `record_run` can still throw out of a pass
    that otherwise succeeded.
-4. **M15** — the migration runner. Now at 015 with no ledger, and a skipped file
+3. **M15** — the migration runner. Now at 015 with no ledger, and a skipped file
    never announces itself: 009/011 surface as silently rejected inserts, 013 as an
    anon write hole quietly left open.
-5. Remaining Medium/Low as a hygiene sweep: M8, M16's `didMount`, L3, L6, L9, plus
+4. Remaining Medium/Low as a hygiene sweep: M8, M16's `didMount`, L3, L6, L9, plus
    A6, A8, A9 and A12's judgement counter.

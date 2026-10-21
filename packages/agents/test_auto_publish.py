@@ -179,6 +179,88 @@ with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlis
     ok, reason = ap.check_eligibility(_row(status="update"), 0.95)
     check("update rows route to review", not ok and reason == "not_pending")
 
+print("\n=== published duplicate locality veto ===")
+fire_candidate = _row(
+    id="queue-fire-472b",
+    agent_confidence=1.0,
+    proposed_title=("Black smoke pours from 11th floor Yishun flat as kitchen fire "
+                    "breaks out at Block 472B"),
+    proposed_summary=("Civil defence firefighters attended a residential fire; "
+                      "investigations are ongoing near Block 438 and Yishun "
+                      "Street 42 at Avenue 11."),
+    raw_content={**_row()["raw_content"], "date": "2026-10-20"},
+)
+published_fire_438 = {
+    "id": "published-fire-438",
+    "title": ("Personal mobility aid sets Block 438 Yishun Ave 11 staircase "
+              "alight, 50-plus evacuated"),
+    "summary": ("Civil defence firefighters attended a residential fire; "
+                "investigations are ongoing."),
+    "incident_date": "2026-10-18",
+}
+
+check("title block conflict vetoes lexical match despite unrelated summary locations",
+      ap._possible_published_duplicate(fire_candidate, [published_fire_438]) is None)
+
+same_block_fire = {
+    **published_fire_438,
+    "title": "Kitchen fire reported at Block 472B Yishun",
+}
+check("same block still counts as a possible duplicate",
+      ap._possible_published_duplicate(fire_candidate, [same_block_fire]) is same_block_fire)
+
+no_location_fire = {**published_fire_438, "title": "Kitchen fire reported in Yishun"}
+check("missing location evidence does not veto the duplicate check",
+      ap._possible_published_duplicate(fire_candidate, [no_location_fire]) is no_location_fire)
+
+summary_location_candidate = {
+    **fire_candidate,
+    "proposed_title": "Black smoke pours from a Yishun flat as kitchen fire breaks out",
+    "proposed_summary": "Civil defence firefighters attended a residential fire at Block 472B.",
+}
+summary_location_incident = {
+    **published_fire_438,
+    "title": "Personal mobility aid sets a Yishun staircase alight",
+    "summary": ("Civil defence firefighters attended a residential fire at "
+                "Block 438; investigations are ongoing."),
+}
+check("summary locality is used when both titles omit a numeric location",
+      ap._possible_published_duplicate(
+          summary_location_candidate, [summary_location_incident]
+      ) is None)
+
+multi_location_candidate = {
+    **fire_candidate,
+    "proposed_title": "Fire across Blocks 472B, 900 and 901 in Yishun",
+}
+check("more than two locality tokens skip the veto and retain the lexical hold",
+      ap._possible_published_duplicate(multi_location_candidate, [published_fire_438])
+      is published_fire_438)
+
+multi_location_summary = {
+    **fire_candidate,
+    "proposed_title": "Fire breaks out in a Yishun flat",
+    "proposed_summary": ("Civil defence firefighters attended a fire at "
+                         "Blocks 472B, 900 and 901; investigations are ongoing."),
+}
+check("more than two fallback-summary locality tokens also skip the veto",
+      ap._possible_published_duplicate(multi_location_summary, [published_fire_438])
+      is published_fire_438)
+
+with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlist):
+    ok, reason = ap.check_eligibility(
+        fire_candidate, 0.95, duplicate_guard_incidents=[published_fire_438],
+        duplicate_guard_available=True,
+    )
+    check("different-block fire clears the duplicate gate without DB writes",
+          ok and reason == "eligible")
+    ok, reason = ap.check_eligibility(
+        fire_candidate, 0.95, duplicate_guard_incidents=[same_block_fire],
+        duplicate_guard_available=True,
+    )
+    check("same-block fire remains held by the duplicate gate",
+          not ok and reason == "possible_published_duplicate")
+
     r = _row(); r["raw_content"] = {**r["raw_content"], "notification_type": "pattern_alert"}
     ok, reason = ap.check_eligibility(r, 0.95)
     check("sentinel/notification rows never publish", not ok and reason == "notification_row")

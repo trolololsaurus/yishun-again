@@ -4,7 +4,8 @@ Yishun - The Hive of Scum and Villiany
 
 Satirical, semi-autonomous incident archive for Yishun, Singapore.
 An agent pipeline scrapes Singapore news, drafts write-ups, and queues them for
-operator review. Operator approves → incident publishes. Confidence ≥ 0.95 → auto-publishes.
+operator review. Operator approves → incident publishes. Confidence ≥ 0.95 and
+all auto-publish checks clear → auto-publishes.
 
 **Core constraint:** every published incident links to a publisher URL — never an
 aggregator or redirect wrapper. No private individuals unless named in MSM. No
@@ -48,7 +49,7 @@ daily chain runs only via `POST /orchestrator/daily` (APScheduler removed 2026-0
 ```
 Scrape (25 sources) → Stage 1 (Gemini) → cluster by story → Stage 2 (Haiku)
 → groundedness + casualty checks → consolidation → war_room_queue
-→ confidence ≥ 0.95 ? auto-publish : operator review in War Room
+→ confidence ≥ 0.95 and all checks clear ? auto-publish : operator review in War Room
 ```
 
 Art is generated at publish time (approve or auto-publish). `suicide`/`self-harm`

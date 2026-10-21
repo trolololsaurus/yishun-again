@@ -111,8 +111,10 @@ a rule has a machine check, it is named.
    already-held story look novel; the citation pointed at an opaque redirect
    instead of the outlet that did the reporting; and the row tripped
    `unapproved_source_domain`. An earlier War Room merge bug had already
-   written wrapper URLs into `source_timeline` (`cleanup_corrupted.py` exists
-   to unpick that). The source that produced them,
+   written wrapper URLs into `source_timeline`. A read-only Supabase audit on
+   2026-10-21 scanned 236 published incidents and found no remaining Google News
+   wrapper URLs in `source_urls` or `source_timeline`; the local one-off audit and
+   repair scripts were removed after that verification. The source that produced them,
    `ingestion/sources/google_news_rss.py`, was deleted on 2026-08-02 and
    replaced by adapters that emit publishers' own URLs (`news_sitemap.py`,
    `wp_search.py`) — this rule is the net under that, because the historical

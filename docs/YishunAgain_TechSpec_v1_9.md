@@ -846,14 +846,19 @@ agent has its own, looser tier ladder (§14c).
 
 **Files:** `packages/agents/consolidation/` — `check.py` (new / update /
 phenomenon routing), `queue_row.py` (the `war_room_queue` row builder),
-`rules.py` (the executable form of `docs/CONSOLIDATION_RULES.md`). The older
-`classifiers/consolidation.py` still exists and holds the related-incident
-matching. Both `backfill_agent.py` and `ingestion/orchestrator.py` route through
-the shared package — one implementation, no duplicated path.
+`rules.py` (the executable form of `docs/CONSOLIDATION_RULES.md`). Both
+`backfill_agent.py` and `ingestion/orchestrator.py` route through this shared
+package — one implementation, no compatibility shim or duplicated path.
+AI-generated related-incident suggestions were deprecated on 2026-10-17;
+same-event routing remains, and operator-confirmed pattern links are separate.
 
 #### Overview
 
-Multiple news articles about the same real-world event must not create multiple separate incident cards. The consolidation agent identifies duplicates and related incidents before any item reaches the War Room queue.
+Multiple news articles about the same real-world event must not create multiple
+separate incident cards. The consolidation agent identifies same-event candidates
+and routes them before any item reaches the War Room queue. AI-generated related-
+incident suggestions are deprecated; operator-confirmed pattern links remain
+separate.
 
 > **Clustering runs BEFORE Stage 2** (`ingestion/clustering.py`,
 > `CLUSTER_BEFORE_WRITE=on`), which is why drafts are written once per **story**
@@ -874,14 +879,11 @@ Examples:
 
 The card date always updates to the latest report. The narrative regenerates chronologically.
 
-**Rule 2 — Separate card, flagged as related:**
-Different entity + overlapping event → separate card, agent flags as "possible related incident".
-
-Example:
-- Kurt Tay intimate video case (main card)
-- Telegram group member who shared same video → separate card, flagged as related to Kurt Tay card
-- Agent flags: "possible related — shares entity [intimate video] + overlapping date window"
-- Operator confirms or rejects the link in War Room
+**Rule 2 — Deprecated 2026-10-17: AI-generated related suggestions.**
+This former design is retained for history only. The agent no longer flags a
+separate card as "possibly related"; the War Room suggestion panel and its
+confirm/dismiss actions were removed. Operator-confirmed pattern links remain a
+separate feature.
 
 **Rule 3 — Separate card, no link:**
 Same entity + different act → separate card, no link.
@@ -1017,7 +1019,10 @@ Operator actions:
   [SPLIT INTO NEW] → creates new separate incident card instead
 ```
 
-When agent flags a related incident (Rule 2):
+#### Legacy AI-generated Related Incident Flow (Deprecated 2026-10-17)
+
+The flow below is historical and is not part of the current product. Operator-
+confirmed pattern links are handled separately.
 
 ```
 New incident created (separate card)
@@ -1028,7 +1033,11 @@ Operator actions:
   [DISMISS]        → creates incident_links row (rejected_by_operator = TRUE)
 ```
 
-#### Public — Related Incidents Display
+#### Public — Operator-confirmed Pattern Links
+
+The current incident page displays confirmed `incident_links` rows created from
+operator-confirmed pattern alerts. This is separate from the deprecated AI-
+generated related-incident suggestion feature.
 
 On incident detail page `/incidents/[slug]`:
 - "Related incidents" section at bottom
@@ -1267,7 +1276,8 @@ Shows all `war_room_queue` entries with `status = 'pending'`, sorted by `created
 - Standard new incident — no badge
 - **MILESTONE** badge (amber) — milestone herald item
 - **NEW UPDATE** badge (cyan) — update to existing developing story
-- **POSSIBLE RELATED** banner — agent flagged link to another incident, pending confirmation
+- ~~**POSSIBLE RELATED** banner~~ — deprecated 2026-10-17; the AI suggestion
+  panel and its confirmation actions were removed.
 
 **Default view (Option B — fast review):**
 - Confidence score badge — green ≥0.85, yellow ≥0.5, red <0.5

@@ -88,6 +88,7 @@ MAX_AUTO_PUBLISH_PER_RUN = int(os.getenv("AUTO_PUBLISH_MAX_PER_RUN", "25"))
 DUPLICATE_GUARD_ARCHIVE_LIMIT = 2000
 DUPLICATE_GUARD_DATE_WINDOW_DAYS = 2
 DUPLICATE_GUARD_MIN_KEYWORD_OVERLAP = 3
+DUPLICATE_GUARD_MAX_LOCALITY_TOKENS = 2
 
 # ── Autonomous merge (auto-apply an UPDATE row) ──────────────────────────────
 # Applying a merge mutates an ALREADY-PUBLISHED incident, so the existing undo
@@ -191,7 +192,12 @@ def _possible_published_duplicate(item: dict, incidents: list[dict]) -> dict | N
     or rejects. The lexical check is separate from consolidation's model call,
     so an earlier missed match cannot be repeated as an unattended publish.
     """
-    from consolidation.rules import extract_keywords, keyword_overlap
+    from consolidation.rules import (
+        extract_keywords,
+        extract_locality_tokens,
+        keyword_overlap,
+        locality_conflict,
+    )
 
     rc = item.get("raw_content") or {}
     raw_date = rc.get("date") or rc.get("incident_date") or ""
@@ -200,8 +206,13 @@ def _possible_published_duplicate(item: dict, incidents: list[dict]) -> dict | N
     except (TypeError, ValueError):
         return None
 
-    candidate_text = f"{item.get('proposed_title') or ''} {item.get('proposed_summary') or ''}"
+    candidate_title = str(item.get("proposed_title") or "")
+    candidate_summary = str(item.get("proposed_summary") or "")
+    candidate_text = f"{candidate_title} {candidate_summary}"
     candidate_keywords = extract_keywords(candidate_text)
+    candidate_locality = extract_locality_tokens(candidate_title)
+    if not candidate_locality:
+        candidate_locality = extract_locality_tokens(candidate_summary)
     if len(candidate_keywords) < 3:
         return None
 
@@ -213,12 +224,33 @@ def _possible_published_duplicate(item: dict, incidents: list[dict]) -> dict | N
             continue
         if abs((event_date - existing_date).days) > DUPLICATE_GUARD_DATE_WINDOW_DAYS:
             continue
-        overlap = keyword_overlap(
-            candidate_keywords,
-            extract_keywords(f"{incident.get('title') or ''} {incident.get('summary') or ''}"),
-        )
-        if overlap >= DUPLICATE_GUARD_MIN_KEYWORD_OVERLAP:
-            matches.append((overlap, incident))
+        existing_title = str(incident.get("title") or "")
+        existing_summary = str(incident.get("summary") or "")
+        existing_text = f"{existing_title} {existing_summary}"
+        overlap = keyword_overlap(candidate_keywords, extract_keywords(existing_text))
+        if overlap < DUPLICATE_GUARD_MIN_KEYWORD_OVERLAP:
+            continue
+
+        existing_locality = extract_locality_tokens(existing_title)
+        if not existing_locality:
+            existing_locality = extract_locality_tokens(existing_summary)
+        if (len(candidate_locality) > DUPLICATE_GUARD_MAX_LOCALITY_TOKENS
+                or len(existing_locality) > DUPLICATE_GUARD_MAX_LOCALITY_TOKENS):
+            logger.info(
+                "auto_publish: skipping locality veto for queue %s and incident %s "
+                "(ambiguous locality: %d/%d tokens)",
+                item.get("id"), incident.get("id"),
+                len(candidate_locality), len(existing_locality),
+            )
+        elif locality_conflict(candidate_locality, existing_locality):
+            logger.info(
+                "auto_publish: lexical duplicate for queue %s and incident %s "
+                "vetoed by conflicting locality",
+                item.get("id"), incident.get("id"),
+            )
+            continue
+
+        matches.append((overlap, incident))
 
     if not matches:
         return None

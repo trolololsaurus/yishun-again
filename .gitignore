@@ -40,7 +40,7 @@ packages/agents/**/stage1_session_usage.json
 packages/agents/**/stage1_daily_usage.json
 packages/agents/**/incidents_export.json
 
-# One-off DB audit and cleanup scripts — kept locally as run-record, not product code
+# Local one-off DB audit/repair scripts — not product code; remove once their job is done
 packages/agents/audit_*.py
 packages/agents/ws0_*.py
 packages/agents/correction_pass_*.py

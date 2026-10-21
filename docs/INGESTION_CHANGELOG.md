@@ -211,9 +211,11 @@ and a full-codebase QA sweep. Honest trail of what changed and what's still open
 - Reconsolidated duplicate 2026 incidents into canonicals (re-queued to War Room as
   `update` candidates); feed 45 → 26 published 2026 rows, Chaos 94 → 51.
 - Sourced 10 unsourced heritage cards (operator-supplied references).
-- **Pending (`cleanup_corrupted.py --apply`):** recompute `corroboration_count =
-  len(source_urls)` (13 stale rows) and repair 8 incidents whose `incident_date` was
-  forced to `2026-06-23` by the merge bug.
+- **Verified 2026-10-21:** a read-only check across 236 published incidents found
+  no `incident_date=2026-06-23` rows, no Google News wrapper URLs in `source_urls`
+  or `source_timeline`, and no `corroboration_count` mismatches. All 19 duplicate-
+  draft cleanup targets were already absent. No rows were changed during
+  verification; the local one-off audit/repair scripts were removed afterward.
 
 ### QA
 - Full-codebase functional QA produced **`docs/QA_BACKLOG.md`** — 39 ranked issues
