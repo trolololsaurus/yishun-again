@@ -305,7 +305,7 @@ print("\n=== publish path (the .single() regression) ===")
 with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlist), \
      mock.patch("classifiers.geocoding.geocode_incident", lambda *a, **kw: (1.43, 103.83)), \
      mock.patch("ops.activity._client", lambda *_a, **_kw: None), \
-     mock.patch("ops.notify.notify", lambda *a, **kw: {"status": "disabled"}):
+     mock.patch.object(ap, "notify", lambda *a, **kw: {"status": "disabled"}):
 
     client = FakeClient({"war_room_queue": [_row()]})
     stats = ap.run(supabase_client=client, dry_run=False, trigger="manual")
@@ -337,7 +337,7 @@ with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlis
 print("\n=== dry run writes nothing ===")
 with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlist), \
      mock.patch("ops.activity._client", lambda *_a, **_kw: None), \
-     mock.patch("ops.notify.notify", lambda *a, **kw: {"status": "disabled"}):
+     mock.patch.object(ap, "notify", lambda *a, **kw: {"status": "disabled"}):
     client = FakeClient({"war_room_queue": [_row()]})
     stats = ap.run(supabase_client=client, dry_run=True, trigger="manual")
     check("dry run reports what it would publish", stats["published"] == 1)
@@ -369,12 +369,17 @@ with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlis
     stats = ap.run(supabase_client=client, dry_run=False, trigger="manual")
     check("unverified queue count is represented as unknown", stats["needs_review"] is None)
     check("refresh failure is recorded", stats["review_queue_verified"] is False)
-    check("Telegram reports verification failure", "could not be verified" in telegram.call_args.args[1])
+    check("Telegram labels this as the auto-publish report",
+          "auto-publish report" in telegram.call_args.args[1])
+    check("Telegram explains the queue refresh failure",
+          "could not refresh the current review queue" in telegram.call_args.args[2])
     check("verification failure still reports completed auto-publish actions",
           "1 published" in telegram.call_args.args[2])
     check("Telegram does not claim a queue count", "Needs review now:" not in telegram.call_args.args[2])
-    check("repeated verification failure is throttled to one daily alert",
-          telegram.call_args.kwargs["throttle_minutes"] == 1440)
+    check("verification failure coalesces into one SGT pass-window report",
+          telegram.call_args.kwargs["throttle_minutes"] == 720
+          and telegram.call_args.kwargs["coalesce_existing"] is True
+          and telegram.call_args.kwargs["dedup_key"].startswith("review_queue:"))
 
 print("\n=== refuses to act when it cannot record the decision ===")
 
@@ -395,7 +400,7 @@ class _BlockedSignalsClient(FakeClient):
 
 with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlist), \
      mock.patch("ops.activity._client", lambda *_a, **_kw: None), \
-     mock.patch("ops.notify.notify", lambda *a, **kw: {"status": "disabled"}):
+     mock.patch.object(ap, "notify", lambda *a, **kw: {"status": "disabled"}):
     client = _BlockedSignalsClient({"war_room_queue": [_row()]})
     stats = ap.run(supabase_client=client, dry_run=False, trigger="manual")
     check("publishes nothing when the decision cannot be logged", stats["published"] == 0)
@@ -407,7 +412,7 @@ print("\n=== blast radius ===")
 with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlist), \
      mock.patch("classifiers.geocoding.geocode_incident", lambda *a, **kw: None), \
      mock.patch("ops.activity._client", lambda *_a, **_kw: None), \
-     mock.patch("ops.notify.notify", lambda *a, **kw: {"status": "disabled"}):
+     mock.patch.object(ap, "notify", lambda *a, **kw: {"status": "disabled"}):
     many = [
         _row(
             id=f"q-{i}", proposed_slug=f"s-{i}",
@@ -427,7 +432,7 @@ print("\n=== same-pass duplicate guard ===")
 with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlist), \
      mock.patch("classifiers.geocoding.geocode_incident", lambda *a, **kw: None), \
      mock.patch("ops.activity._client", lambda *_a, **_kw: None), \
-     mock.patch("ops.notify.notify", lambda *a, **kw: {"status": "disabled"}):
+     mock.patch.object(ap, "notify", lambda *a, **kw: {"status": "disabled"}):
     duplicates = [_row(id="q-1"), _row(id="q-2", proposed_slug="cat-rescued-jul-2026-copy")]
     client = FakeClient({"war_room_queue": duplicates})
     stats = ap.run(supabase_client=client, dry_run=False, trigger="manual")

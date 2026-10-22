@@ -17,6 +17,8 @@ module exists to make unattended alerting survivable:
     rather than re-sent. An agent that discovers the same broken scraper on
     every pass must not message 48 times a day — the operator would mute the
     whole chat, and then the ONE alert that mattered is invisible too.
+    Opt-in report coalescing edits the existing Telegram message for later
+    results in the same window instead of creating another message.
   * DEGRADES, NEVER BLOCKS. No bot token configured -> status 'disabled', still
     recorded, still visible in War Room. notify() never raises.
 
@@ -35,6 +37,7 @@ Env:
 
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 from ops.activity import _client
@@ -48,6 +51,27 @@ TELEGRAM_API = "https://api.telegram.org"
 # full text for anyone reading War Room / `notifications` directly.
 TELEGRAM_MAX_CHARS = 4096
 _TRUNCATION_MARKER = "\n\n… [truncated — full text in the notifications table]"
+
+_TELEGRAM_URL_RE = re.compile(r"(https://api\.telegram\.org/bot)[^/\s\"']+")
+
+
+def _redact_telegram_token(value: str) -> str:
+    """Remove bot credentials from HTTPX log lines and transport exceptions."""
+    return _TELEGRAM_URL_RE.sub(r"\1[redacted]", str(value))
+
+
+class _TelegramUrlRedactionFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if "api.telegram.org/bot" in message:
+            record.msg = _redact_telegram_token(message)
+            record.args = ()
+        return True
+
+
+_httpx_logger = logging.getLogger("httpx")
+if not any(isinstance(f, _TelegramUrlRedactionFilter) for f in _httpx_logger.filters):
+    _httpx_logger.addFilter(_TelegramUrlRedactionFilter())
 
 # Per-kind throttle. Deliberately asymmetric: a maintenance digest once a day is
 # plenty, but a health alarm suppressed for 24h could hide a real outage.
@@ -118,15 +142,108 @@ def _recently_sent(dedup_key: str, minutes: int, client) -> bool:
         return False
 
 
+_LOOKUP_FAILED = object()
+
+
+def _recent_sent_notification(dedup_key: str, minutes: int, recipient: str, client):
+    """Fetch the sent ledger row needed to edit a coalesced Telegram report."""
+    if not client or minutes <= 0:
+        return None
+    since = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+    try:
+        res = (client.table("notifications")
+               .select("id,provider_id,body,subject,recipient,status")
+               .eq("dedup_key", dedup_key)
+               .in_("status", ["pending", "sent"])
+               .eq("recipient", recipient)
+               .gte("created_at", since)
+               .order("created_at", desc=True)
+               .limit(1).execute())
+        return res.data[0] if res.data else None
+    except Exception as exc:                      # noqa: BLE001
+        # Coalescing must not fall through to another send when its prior-message
+        # check failed; that would recreate the duplicate this mode prevents.
+        logger.warning("notify: coalesce lookup failed (%s) — not sending another report", exc)
+        return _LOOKUP_FAILED
+
+
+def _coalesced_event_seen(event_key: str, minutes: int, client):
+    """True if this distinct pass outcome is already included in the report."""
+    if not client or minutes <= 0:
+        return False
+    since = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+    try:
+        res = (client.table("notifications")
+               .select("id")
+               .eq("dedup_key", event_key)
+               .gte("created_at", since)
+               .limit(1).execute())
+        return bool(res.data)
+    except Exception as exc:                      # noqa: BLE001
+        logger.warning("notify: coalesced-event lookup failed (%s) — not sending", exc)
+        return _LOOKUP_FAILED
+
+
+def _split_report_footer(body: str) -> tuple[str, str]:
+    for marker in ("\nReview: ", "\n\n🔗 War Room:"):
+        index = body.find(marker)
+        if index >= 0:
+            return body[:index].rstrip(), body[index:].strip()
+    return body.rstrip(), ""
+
+
+def _coalesce_sent_report(prior: dict, kind: str, subject: str, body: str, client,
+                          *, event_id_present: bool = False) -> dict:
+    """Append this pass's details by editing the existing Telegram message."""
+    if not prior.get("provider_id"):
+        logger.warning("notify: sent report %s has no Telegram id; suppressing another bubble",
+                       prior.get("id"))
+        return {"status": "suppressed", "id": prior.get("id"),
+                "error": "existing Telegram message has no provider id"}
+
+    previous_content, previous_footer = _split_report_footer(prior.get("body") or "")
+    new_content, new_footer = _split_report_footer(body)
+    if new_content and new_content in previous_content and not event_id_present:
+        return {"status": "suppressed", "id": prior.get("id"), "error": None}
+
+    combined = previous_content
+    if new_content:
+        combined += "\n\nAdditional auto-publish results in this SGT window:\n" + new_content
+    footer_text = new_footer or previous_footer
+    if footer_text:
+        combined += "\n\n" + footer_text
+
+    try:
+        _edit_telegram(prior["recipient"], prior["provider_id"], subject, combined)
+    except Exception as exc:                      # noqa: BLE001
+        safe_error = _redact_telegram_token(str(exc))
+        logger.error("notify: could not update coalesced report %s: %s",
+                     prior.get("id"), safe_error)
+        _update(client, prior.get("id"), {"error": safe_error[:1000]})
+        return {"status": "failed", "id": prior.get("id"), "error": safe_error}
+
+    _update(client, prior.get("id"), {
+        "kind": kind,
+        "subject": subject,
+        "body": combined[:50000],
+        "error": None,
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+    })
+    logger.info("notify: updated coalesced report (provider_id=%s)", prior["provider_id"])
+    return {"status": "updated", "id": prior.get("id"), "error": None}
+
+
 def notify(kind: str, subject: str, body: str, *,
            dedup_key: str | None = None,
            throttle_minutes: int | None = None,
+           coalesce_existing: bool = False,
+           coalesce_event_id: str | None = None,
            recipient: str | None = None,
            client=None) -> dict:
     """
     Record and (if configured) send one operator Telegram message.
 
-    Returns {"status": sent|suppressed|disabled|failed|pending, "id": ..., "error": ...}.
+    Returns {"status": sent|updated|suppressed|disabled|failed|pending, "id": ..., "error": ...}.
     Never raises — callers are agents that must finish their pass regardless.
     """
     if kind not in DEFAULT_THROTTLE_MINUTES:
@@ -150,8 +267,40 @@ def notify(kind: str, subject: str, body: str, *,
                          error="muted: routed to War Room only (NOTIFY_MUTED_PREFIXES)")
         return {"status": "muted", "id": row_id, "error": None}
 
-    # 1. Throttle check
-    if _recently_sent(key, window, c):
+    # 1. Throttle / same-message coalescing
+    if coalesce_existing:
+        event_key = (f"{key}:event:{coalesce_event_id[:64]}"
+                     if coalesce_event_id else None)
+        if event_key:
+            seen = _coalesced_event_seen(event_key, window, c)
+            if seen is _LOOKUP_FAILED:
+                return {"status": "failed", "id": None,
+                        "error": "could not verify report event; no message sent"}
+            if seen:
+                return {"status": "suppressed", "id": None, "error": None}
+
+        prior = _recent_sent_notification(key, window, to, c)
+        if prior is _LOOKUP_FAILED:
+            return {"status": "failed", "id": None,
+                    "error": "could not verify existing report; no message sent"}
+        if prior:
+            if prior.get("status") == "pending":
+                _record(c, kind, key, to, subject, body, "suppressed",
+                        error="a report for this SGT window is already being sent")
+                return {"status": "pending", "id": prior.get("id"),
+                        "error": "a report for this SGT window is already being sent"}
+            enabled, why = _sending_enabled()
+            if not enabled:
+                row_id = _record(c, kind, key, to or "(unset)", subject, body,
+                                 "disabled", error=why)
+                return {"status": "disabled", "id": row_id, "error": why}
+            result = _coalesce_sent_report(prior, kind, subject, body, c,
+                                           event_id_present=bool(coalesce_event_id))
+            if result["status"] == "updated" and event_key:
+                _record(c, kind, event_key, to, subject, body, "suppressed",
+                        error="included in the coalesced report")
+            return result
+    elif _recently_sent(key, window, c):
         logger.info("notify: suppressed (dedup=%s, window=%dm)", key, window)
         _record(c, kind, key, to, subject, body, "suppressed")
         return {"status": "suppressed", "id": None, "error": None}
@@ -169,9 +318,10 @@ def notify(kind: str, subject: str, body: str, *,
     try:
         provider_id = _send_telegram(to, subject, body)
     except Exception as exc:                      # noqa: BLE001
-        logger.error("notify: send failed for %r: %s", subject, exc)
-        _update(c, row_id, {"status": "failed", "error": str(exc)[:1000]})
-        return {"status": "failed", "id": row_id, "error": str(exc)}
+        safe_error = _redact_telegram_token(str(exc))
+        logger.error("notify: send failed for %r: %s", subject, safe_error)
+        _update(c, row_id, {"status": "failed", "error": safe_error[:1000]})
+        return {"status": "failed", "id": row_id, "error": safe_error}
 
     logger.info("notify: sent %r to %s (provider_id=%s)", subject, to, provider_id)
     _update(c, row_id, {
@@ -179,6 +329,10 @@ def notify(kind: str, subject: str, body: str, *,
         "provider_id": provider_id,
         "sent_at": datetime.now(timezone.utc).isoformat(),
     })
+    if coalesce_existing and coalesce_event_id and row_id:
+        event_key = f"{key}:event:{coalesce_event_id[:64]}"
+        _record(c, kind, event_key, to, subject, body, "suppressed",
+                error="included in the coalesced report")
     return {"status": "sent", "id": row_id, "error": None}
 
 
@@ -230,6 +384,38 @@ def _send_telegram(to: str, subject: str, body: str) -> str | None:
         return str(resp.json()["result"]["message_id"])
     except Exception:                             # noqa: BLE001
         return None
+
+
+def _edit_telegram(to: str, message_id: str, subject: str, body: str) -> str:
+    """Edit the existing coalesced report so another pass creates no bubble."""
+    import httpx
+    from html import escape
+
+    token = os.environ["TELEGRAM_BOT_TOKEN"].strip()
+    url = f"{TELEGRAM_API}/bot{token}/editMessageText"
+    max_body = TELEGRAM_MAX_CHARS - len(subject) - 60
+    if len(body) > max_body:
+        body = body[:max_body - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER
+
+    payload = {
+        "chat_id": to,
+        "message_id": int(message_id),
+        "text": f"<b>{escape(subject)}</b>\n\n{escape(body)}",
+        "parse_mode": "HTML",
+    }
+    resp = httpx.post(url, json=payload, timeout=20.0)
+    if resp.status_code >= 300:
+        logger.warning("notify: Telegram HTML edit failed (%s) — retrying as plain text: %s",
+                       resp.status_code, resp.text[:200])
+        payload.pop("parse_mode", None)
+        payload["text"] = f"{subject}\n\n{body}"
+        resp = httpx.post(url, json=payload, timeout=20.0)
+    if resp.status_code >= 300:
+        raise RuntimeError(f"Telegram edit HTTP {resp.status_code}: {resp.text[:500]}")
+    try:
+        return str(resp.json()["result"]["message_id"])
+    except Exception:                             # noqa: BLE001
+        return str(message_id)
 
 
 def _record(client, kind, dedup_key, recipient, subject, body, status, error=None) -> str | None:

@@ -1,6 +1,6 @@
 """
 Checks that auto-publish Telegram reports use current review cards, group
-repeated titles, and deduplicate using stable queue ids.
+repeated titles, and share one stable key per SGT scheduler window.
 
 Run: .venv/Scripts/python.exe test_notify_review_queue.py
 """
@@ -37,6 +37,7 @@ check("merge-only pass with empty queue sends a notification", m.called)
 if m.called:
     subject, body = m.call_args.args[1:3]
     check("title does not claim cards need review", "need review" not in subject)
+    check("subject labels one pass-window report", "auto-publish report" in subject)
     check("summary reports current empty War Room queue", "Needs review now: 0" in body)
     check("merged title is included for audit", "Cyclist update merged" in body)
 
@@ -65,7 +66,8 @@ m = run(rows=[pending])
 check("current pending card triggers a review notification", m.called)
 if m.called:
     subject, body = m.call_args.args[1:3]
-    check("subject counts current queue cards", "1 card" in subject)
+    check("subject labels the consolidated report", "auto-publish report" in subject)
+    check("body counts current queue cards", "Needs review now: 1 card" in body)
     check("specific hold reason is readable", "possible duplicate of a published incident" in body)
     check("waiting card displays confidence as a percentage", "[97%] NEW: High confidence draft" in body)
     check("summary does not include historical eligibility totals", "eligible:" not in body)
@@ -73,10 +75,20 @@ if m.called:
 m_same = run(rows=[pending])
 m_new = run(rows=[pending, {**pending, "id": "q2", "proposed_title": "Another draft"}])
 key_same = m_same.call_args.kwargs["dedup_key"]
-key_unchanged = run(rows=[pending]).call_args.kwargs["dedup_key"]
+m_unchanged = run(rows=[pending])
+key_unchanged = m_unchanged.call_args.kwargs["dedup_key"]
 key_new = m_new.call_args.kwargs["dedup_key"]
 check("same pending-card state gets the same dedup key", key_same == key_unchanged)
-check("new queue id changes the dedup key", key_same != key_new)
+check("different outcomes in one SGT window coalesce under the same key", key_same == key_new)
+check("distinct queue outcomes get distinct coalescing event ids",
+      m_same.call_args.kwargs["coalesce_event_id"] != m_new.call_args.kwargs["coalesce_event_id"])
+check("unchanged queue state retains its event id",
+      m_same.call_args.kwargs["coalesce_event_id"]
+      == m_unchanged.call_args.kwargs["coalesce_event_id"])
+check("report edits the existing Telegram message instead of sending another",
+      m_new.call_args.kwargs["coalesce_existing"] is True)
+check("one morning/afternoon window is retained for 12 hours",
+      m_new.call_args.kwargs["throttle_minutes"] == 720)
 
 duplicates = [
     {"id": "q1", "status": "pending", "raw_content": {},

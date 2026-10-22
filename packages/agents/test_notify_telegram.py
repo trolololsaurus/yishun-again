@@ -6,6 +6,7 @@ Offline: mocks httpx.post so no real Telegram call is made, and uses a fake
 Supabase-shaped client so the ledger writes are asserted without a DB.
 """
 import importlib
+import logging
 import os
 from unittest import mock
 
@@ -22,6 +23,7 @@ class _FakeTable:
     def __init__(self, store, name):
         self.store, self.name = store, name
         self._filters = {}
+        self._in_filters = {}
 
     def insert(self, row):
         row = dict(row)
@@ -37,7 +39,14 @@ class _FakeTable:
         self._filters[key] = val
         return self
 
+    def in_(self, key, values):
+        self._in_filters[key] = values
+        return self
+
     def gte(self, *_a, **_kw):
+        return self
+
+    def order(self, *_a, **_kw):
         return self
 
     def limit(self, *_a, **_kw):
@@ -56,7 +65,8 @@ class _FakeTable:
             return mock.MagicMock(data=None)
         if self._filters:
             rows = [r for r in self.store[self.name]
-                    if all(r.get(k) == v for k, v in self._filters.items())]
+                    if all(r.get(k) == v for k, v in self._filters.items())
+                    and all(r.get(k) in values for k, values in self._in_filters.items())]
             return mock.MagicMock(data=rows)
         return mock.MagicMock(data=[self._last] if hasattr(self, "_last") else [])
 
@@ -105,6 +115,113 @@ with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT
     sent = post.call_args.kwargs["json"]
     check("subject sent as a bold HTML headline", sent["text"].startswith("<b>subj</b>"))
     check("parse_mode is HTML", sent.get("parse_mode") == "HTML")
+
+# ── same-window report coalescing edits one Telegram message ────────────────
+with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT_ID": "999"}):
+    client = FakeClient()
+    with mock.patch("httpx.post", side_effect=[
+        _fake_response(200, message_id=556), _fake_response(200, message_id=556),
+    ]) as post:
+        first = notify_mod.notify(
+            "review_queue", "Yishun Again — auto-publish report (morning SGT window)",
+            "First pass merged: Incident A\n\nReview: https://example.test/queue",
+            client=client, dedup_key="review_queue:2026-10-22:morning",
+            throttle_minutes=720, coalesce_existing=True, coalesce_event_id="event-a",
+        )
+        second = notify_mod.notify(
+            "review_queue", "Yishun Again — auto-publish report (morning SGT window)",
+            "Second pass merged: Incident B\n\nReview: https://example.test/queue",
+            client=client, dedup_key="review_queue:2026-10-22:morning",
+            throttle_minutes=720, coalesce_existing=True, coalesce_event_id="event-b",
+        )
+        third = notify_mod.notify(
+            "review_queue", "Yishun Again — auto-publish report (morning SGT window)",
+            "Second pass merged: Incident B\n\nReview: https://example.test/queue",
+            client=client, dedup_key="review_queue:2026-10-22:morning",
+            throttle_minutes=720, coalesce_existing=True, coalesce_event_id="event-b",
+        )
+    check("first window report sends one Telegram message", first["status"] == "sent")
+    check("later pass edits the existing Telegram message", second["status"] == "updated")
+    check("coalescing uses editMessageText, not a second sendMessage",
+          post.call_count == 2 and post.call_args.args[0].endswith("/editMessageText"))
+    master = next(row for row in client.store["notifications"] if row["status"] == "sent")
+    check("one sent ledger report retains both distinct pass results",
+          len([row for row in client.store["notifications"] if row["status"] == "sent"]) == 1
+          and "Incident A" in master["body"] and "Incident B" in master["body"])
+    event_rows = [row for row in client.store["notifications"]
+                  if ":event:" in row["dedup_key"] and row["status"] == "suppressed"]
+    check("unique pass-event fingerprints make retries idempotent",
+          len(event_rows) == 2
+          and any(row["dedup_key"].endswith(":event:event-a") for row in event_rows)
+          and any(row["dedup_key"].endswith(":event:event-b") for row in event_rows))
+    check("an identical repeat does not edit or send again", third["status"] == "suppressed"
+          and post.call_count == 2)
+
+with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT_ID": "999"}):
+    client = FakeClient()
+    same_title = "Auto-merged updates: 1.\nMerged updates:\n  • Cat rescued from Yishun void deck"
+    with mock.patch("httpx.post", side_effect=[
+        _fake_response(200, message_id=557), _fake_response(200, message_id=557),
+    ]) as post:
+        notify_mod.notify(
+            "review_queue", "Yishun Again — auto-publish report (morning SGT window)",
+            same_title, client=client, dedup_key="review_queue:2026-10-22:morning",
+            throttle_minutes=720, coalesce_existing=True, coalesce_event_id="queue-a",
+        )
+        result = notify_mod.notify(
+            "review_queue", "Yishun Again — auto-publish report (morning SGT window)",
+            same_title, client=client, dedup_key="review_queue:2026-10-22:morning",
+            throttle_minutes=720, coalesce_existing=True, coalesce_event_id="queue-b",
+        )
+    master = next(row for row in client.store["notifications"] if row["status"] == "sent")
+    check("distinct identical-headline updates are both kept in one report",
+          result["status"] == "updated"
+          and master["body"].count("Cat rescued from Yishun void deck") == 2
+          and post.call_count == 2)
+
+with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT_ID": "999"}):
+    client = FakeClient()
+    client.store["notifications"].append({
+        "id": "inflight", "kind": "review_queue", "dedup_key": "review_queue:2026-10-22:morning",
+        "recipient": "999", "subject": "report", "body": "first result",
+        "status": "pending", "provider_id": None,
+    })
+    with mock.patch("httpx.post") as post:
+        result = notify_mod.notify(
+            "review_queue", "report", "second result", client=client,
+            dedup_key="review_queue:2026-10-22:morning",
+            throttle_minutes=720, coalesce_existing=True, coalesce_event_id="event-pending",
+        )
+    check("an in-flight report cannot trigger a second Telegram bubble",
+          result["status"] == "pending" and not post.called)
+
+with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT_ID": "999",
+                                  "NOTIFY_ENABLED": "false"}):
+    client = FakeClient()
+    client.store["notifications"].append({
+        "id": "sent-report", "kind": "review_queue",
+        "dedup_key": "review_queue:2026-10-22:morning", "recipient": "999",
+        "subject": "report", "body": "first result", "status": "sent", "provider_id": "558",
+    })
+    with mock.patch("httpx.post") as post:
+        result = notify_mod.notify(
+            "review_queue", "report", "second result", client=client,
+            dedup_key="review_queue:2026-10-22:morning",
+            throttle_minutes=720, coalesce_existing=True, coalesce_event_id="event-disabled",
+        )
+    check("NOTIFY_ENABLED=false also blocks report edits", result["status"] == "disabled"
+          and not post.called)
+
+# HTTPX includes request URLs in INFO logs; bot credentials must never reach logs.
+record = logging.LogRecord(
+    "httpx", logging.INFO, "test", 1,
+    "HTTP Request: POST https://api.telegram.org/botsecret-token/sendMessage 200",
+    (), None,
+)
+notify_mod._TelegramUrlRedactionFilter().filter(record)
+check("Telegram bot token is redacted from request logs",
+      "secret-token" not in record.getMessage()
+      and "https://api.telegram.org/bot[redacted]/sendMessage" in record.getMessage())
 
 # ── readability: body is HTML-escaped, HTML failure falls back to plain text ──
 with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok123", "TELEGRAM_CHAT_ID": "999"}):

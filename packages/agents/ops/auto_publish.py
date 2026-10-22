@@ -6,8 +6,8 @@ Runs immediately after the ingestion pass. Two jobs:
   1. Every `pending` queue row that clears the confidence threshold and the
      source, date, factual-integrity and duplicate checks can publish without a
      human — with the decision recorded as a training signal.
-  2. Held rows trigger ONE concise alert based on a refreshed War Room queue;
-     successful publishes are counted and reviewable holds include reasons.
+  2. Held rows and successful autonomous actions are reported from a refreshed
+     War Room queue; one Telegram report is maintained per SGT pass window.
 
 ## Why this is a faithful port and not a second implementation
 
@@ -1137,7 +1137,7 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
         if not dry_run:
             if review_rows is None:
                 _notify_review_queue_unverified(
-                    client, len(published_queue_ids), len(merged_queue_ids),
+                    client, published_queue_ids, merged_queue_ids,
                 )
             else:
                 _notify_review_queue(
@@ -1149,9 +1149,10 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
 
 def _notify_schema_blocked(why: str, client) -> None:
     """Loud, because the symptom otherwise is 'autonomy silently did nothing'."""
+    dedup_key, window = _review_report_window()
     notify(
         "maintenance",
-        "Yishun Again — auto-publish is OFF (migration 011 not applied)",
+        f"Yishun Again — auto-publish report ({window} SGT window)",
         ("Autonomous publishing did not run this pass.\n\n"
          f"Reason: {why}\n\n"
          "Nothing is lost: drafts are queueing normally and are waiting for you in\n"
@@ -1160,7 +1161,10 @@ def _notify_schema_blocked(why: str, client) -> None:
          "Supabase SQL Editor (there is no migration runner — QA M15), then the next\n"
          "scheduled pass (03:58 or 15:58 SGT) will pick it up with no redeploy needed."
          + footer()),
-        dedup_key="schema_blocked:auto_publish",
+        dedup_key=dedup_key,
+        throttle_minutes=720,
+        coalesce_existing=True,
+        coalesce_event_id="schema:" + hashlib.sha256(why.encode()).hexdigest()[:16],
         client=client,
     )
 
@@ -1187,27 +1191,45 @@ def _reviewable_cards(rows) -> list[dict]:
     return list(cards.values())
 
 
-def _notify_review_queue_unverified(client, published_count: int, merged_count: int) -> None:
+def _notify_review_queue_unverified(client, published_queue_ids, merged_queue_ids) -> None:
     """Report the refresh failure explicitly instead of sending stale counts."""
+    dedup_key, window = _review_report_window()
+    event_ids = sorted(
+        [f"published:{queue_id}" for queue_id in published_queue_ids]
+        + [f"merged:{queue_id}" for queue_id in merged_queue_ids]
+        + ["queue_unverified"]
+    )
     notify(
         "anomaly",
-        "Yishun Again — War Room queue could not be verified",
-        (f"Auto-publish finished: {published_count} published, {merged_count} updates merged. "
+        f"Yishun Again — auto-publish report ({window} SGT window)",
+        (f"Pass window: {window} SGT.\n"
+         f"Auto-publish finished: {len(published_queue_ids)} published, "
+         f"{len(merged_queue_ids)} updates merged. "
          "I could not refresh the current review queue. "
          "No queue count is reported; open the War Room to check the current state."
          + footer()),
-        dedup_key="review_queue_refresh_failed:auto_publish",
-        throttle_minutes=1440,
+        dedup_key=dedup_key,
+        throttle_minutes=720,
+        coalesce_existing=True,
+        coalesce_event_id=hashlib.sha256("|".join(event_ids).encode()).hexdigest()[:20],
         client=client,
     )
+
+
+def _review_report_window() -> tuple[str, str]:
+    """Stable identity for the morning or afternoon SGT auto-publish report."""
+    from ops.daily import SGT
+
+    now = datetime.now(timezone.utc).astimezone(SGT)
+    window = "morning" if now.hour < 12 else "afternoon"
+    return f"review_queue:{now.date().isoformat()}:{window}", window
 
 
 def _notify_review_queue(rows, merged_titles, client,
                          published_queue_ids=None, merged_queue_ids=None) -> None:
     """
-    Send one concise pass summary from the refreshed War Room queue. Dedup on
-    stable queue ids and current card state so unchanged cards do not re-alert,
-    while new cards and auto-actions still surface immediately.
+    Send one rolling summary per SGT scheduler window. Later auto-publish runs
+    in the same window edit this Telegram message and append their results.
     """
     pending_for_review = _reviewable_cards(rows)
     published_queue_ids = published_queue_ids or []
@@ -1238,8 +1260,8 @@ def _notify_review_queue(rows, merged_titles, client,
 
     if pending_for_review:
         # Group repeated headlines so duplicate queue rows are visible as a
-        # count, not repeated Telegram lines. Queue ids still drive the count
-        # and dedup key, so distinct cards are never silently collapsed.
+        # count, not repeated Telegram lines. Queue ids still drive the count;
+        # grouping is only a display choice.
         groups = {}
         for row in sorted(pending_for_review,
                           key=lambda x: -(float(x.get("agent_confidence") or 0))):
@@ -1271,27 +1293,22 @@ def _notify_review_queue(rows, merged_titles, client,
 
     lines.append(f"\nReview: {war_room_url('/queue')}")
 
-    # Key the report by current card state and stable queue ids for actions.
-    # An unchanged queue stays quiet for a day; a new card, changed hold reason,
-    # publication, or merge changes the signature and alerts immediately.
+    dedup_key, window = _review_report_window()
     state = [
-        f"review:{r.get('id')}:{r.get('status')}:{r.get('_hold_reason')}:{r.get('proposed_title')}"
+        f"review:{r.get('id')}:{r.get('status')}:{r.get('_hold_reason')}:{r.get('proposed_title')}:{r.get('agent_confidence')}"
         for r in pending_for_review
     ]
     state += [f"published:{queue_id}" for queue_id in published_queue_ids]
     state += [f"merged:{queue_id}" for queue_id in merged_queue_ids]
-    sig = hashlib.sha1("|".join(sorted(state)).encode()).hexdigest()[:16]
-
-    if pending_for_review:
-        title = f"Yishun Again — {len(pending_for_review)} card(s) need review"
-    else:
-        title = "Yishun Again — auto-publish pass complete"
+    event_id = hashlib.sha256("|".join(sorted(state)).encode()).hexdigest()[:20]
 
     notify(
         "review_queue",
-        title,
-        "\n".join(lines) + footer(),
-        dedup_key=f"review_queue:{sig}",
-        throttle_minutes=1440,
+        f"Yishun Again — auto-publish report ({window} SGT window)",
+        f"Pass window: {window} SGT.\n" + "\n".join(lines) + footer(),
+        dedup_key=dedup_key,
+        throttle_minutes=720,
+        coalesce_existing=True,
+        coalesce_event_id=event_id,
         client=client,
     )

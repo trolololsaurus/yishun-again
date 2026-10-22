@@ -239,12 +239,12 @@ Safety properties mirror auto-publish:
   waiting sent **no Telegram message at all** — silent live-incident mutation,
   the exact thing the undo net exists to make visible. Fixed 2026-09-21: the
   function now fires whenever there is something pending, merged, *or*
-  published, with a title that reflects which ("auto-merged N update(s), queue
-  clear" when nothing else is waiting). The dedup signature was fixed at the
-  same time — it hashed only pending-card ids, so two different merge-only
-  passes could dedupe against each other under the 1440-min throttle; it now
-  also hashes the merged/published titles. Guard:
-  `test_notify_review_queue.py`.
+  published. Reports use one stable key per SGT morning or afternoon window;
+  additional auto-publish results in that window edit the existing Telegram
+  message and append their details, so the operator gets one bubble with the
+  whole window's outcomes. The current review count and hold reasons remain in
+  each appended result. Identical repeat results are suppressed. Guards:
+  `test_notify_review_queue.py`, `test_notify_telegram.py`.
 - **Summary refresh is separately gated.** By default the auto path only does the
   mechanical merge and leaves the prose alone. When `AUTO_ENRICH_SUMMARY` is on
   (its own flag, off by default), it *also* applies the ingestion-time enriched
@@ -286,19 +286,17 @@ gets filtered with the rest. Every alert is therefore deduped and throttled, and
 
 Two mechanisms do the work, and they are not the same thing. The **window** is
 per kind (`notify.DEFAULT_THROTTLE_MINUTES`, overridable per call); the **dedup
-key** is what the window is measured against. A calendar-date key only makes an
-alert once-a-day if the window is *at least* a day: `review_queue` used a
-`<date>` key on the 180-min default window and re-alerted the same waiting card
-on the second daily pass (~12h later, outside the window), so it now keys on a
-hash of the waiting card ids plus the successful publishes/merges with an
-explicit 1440-min window — an unchanged state stays quiet, while a changed
-queue or new autonomous action changes the key and alerts at once. The report
-counts every queue row still held for review, including high-confidence rows
-blocked by a guardrail.
+key** is what the window is measured against. Auto-publish summaries use a
+stable SGT date plus morning/afternoon key and a 720-minute window. A later
+summary in the same window edits the existing Telegram message and appends its
+result; an identical result stays quiet. Each scheduled window therefore has
+one auto-publish message containing its outcomes. The report counts every
+queue row still held for review, including high-confidence rows blocked by a
+guardrail.
 
 | Kind | Sent when | Window | Dedup key |
 |---|---|---|---|
-| `review_queue` | Queue rows remain held for review, or the pass published/merged cards (req #4) | 1440 min | `review_queue:<hash of waiting ids and successful publish/merge titles>` — one alert per distinct outcome; unchanged state stays quiet (see below) |
+| `review_queue` | Queue rows remain held for review, or the pass published/merged cards (req #4) | 720 min | `review_queue:<SGT date>:<morning-or-afternoon>` — one Telegram message per scheduled window, edited with later results |
 | `anomaly` | Supervisor finds a *serious* fleet problem (req #9); integrity finds something needing a human (req #10); guardrail #4 flags political content | 60 min default — supervisor overrides to 1440 | `supervisor:<broken sources signature>` — sent only when that signature differs from the last one actually alerted (see below), `integrity:<date>`, `political:<url>` |
 | `maintenance` | Something broke, with a plain-English suggested fix (req #11) | 1440 min | `maintenance:<date>` |
 | `health` | A backend component is down, or the cost guard tripped (req #12) | 60 min | `health:<components down>` |
