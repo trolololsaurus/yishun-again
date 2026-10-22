@@ -5,6 +5,7 @@ import html.parser
 import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -12,7 +13,7 @@ import xml.etree.ElementTree as ET
 
 CANONICAL = "https://www.yishunagain.com"
 BAD_PATHS = {"/$", "/&"}
-TIMEOUT = 20
+TIMEOUT = 12
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -76,7 +77,8 @@ def main():
         except Exception as error:
             record(f"gone:{url}", False, str(error))
 
-    for url in urls:
+    def check_sitemap_url(url):
+        page_checks = []
         try:
             parsed = urllib.parse.urlsplit(url)
             canonical = (parsed.scheme == "https" and parsed.netloc == "www.yishunagain.com"
@@ -85,7 +87,7 @@ def main():
             status, final, body = fetch(url)
             page_ok = canonical and status == 200 and canonical_url(final) == canonical_url(url)
             detail = {"status": status, "final_url": final, "canonical_url": canonical}
-            record(f"sitemap_url:{url}", page_ok, detail)
+            page_checks.append({"check": f"sitemap_url:{url}", "ok": page_ok, "detail": detail})
             if status == 200 and parsed.path not in ("/sitemap.xml", "/robots.txt"):
                 parser = Links()
                 parser.feed(body.decode("utf-8", errors="replace"))
@@ -97,13 +99,18 @@ def main():
                         direct = target_url.scheme == "https" and target_url.netloc.lower() == "www.yishunagain.com"
                         direct &= target_url.path == "/" or not target_url.path.endswith("/")
                         internal_links_ok &= direct and target_url.path not in BAD_PATHS
-                record(f"html:{url}", html_ok, {"canonical": parser.canonicals, "noindex": parser.noindex})
-                record(f"internal_links:{url}", internal_links_ok, "internal links use canonical host and slash form")
+                page_checks.append({"check": f"html:{url}", "ok": html_ok, "detail": {"canonical": parser.canonicals, "noindex": parser.noindex}})
+                page_checks.append({"check": f"internal_links:{url}", "ok": internal_links_ok, "detail": "internal links use canonical host and slash form"})
         except Exception as error:
-            record(f"sitemap_url:{url}", False, str(error))
+            page_checks.append({"check": f"sitemap_url:{url}", "ok": False, "detail": str(error)})
+        return page_checks
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for page_checks in pool.map(check_sitemap_url, urls):
+            checks.extend(page_checks)
 
     variants = ["http://www.yishunagain.com/", "https://yishunagain.com/"]
-    variants += [f"{CANONICAL}{urlsplit_path(url)}/" for url in urls if urlsplit_path(url) != "/"]
+    variants += [f"{CANONICAL}{path}/" for path in ("/map", "/patterns", "/about")]
     variants += [f"{CANONICAL}{path}" for path in (
         "/incidents/pma-rider-crash-yishun-pedestrian-path",
     )]

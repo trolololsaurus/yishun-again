@@ -1,6 +1,6 @@
 {
   "site": "https://www.yishunagain.com",
-  "passed": false,
+  "passed": true,
   "checks": [
     {
       "check": "sitemap",
@@ -19,7 +19,7 @@
       "check": "gone:https://www.yishunagain.com/$",
       "ok": true,
       "detail": {
-        "status": 404,
+        "status": 410,
         "final_url": "https://www.yishunagain.com/$"
       }
     },
@@ -27,22 +27,22 @@
       "check": "gone:https://www.yishunagain.com/&",
       "ok": true,
       "detail": {
-        "status": 404,
+        "status": 410,
         "final_url": "https://www.yishunagain.com/&"
       }
     },
     {
-      "check": "sitemap_url:https://www.yishunagain.com/",
+      "check": "sitemap_url:https://www.yishunagain.com",
       "ok": true,
       "detail": {
         "status": 200,
-        "final_url": "https://www.yishunagain.com/",
+        "final_url": "https://www.yishunagain.com",
         "canonical_url": true
       }
     },
     {
-      "check": "html:https://www.yishunagain.com/",
-      "ok": false,
+      "check": "html:https://www.yishunagain.com",
+      "ok": true,
       "detail": {
         "canonical": [
           "https://www.yishunagain.com"
@@ -51,7 +51,7 @@
       }
     },
     {
-      "check": "internal_links:https://www.yishunagain.com/",
+      "check": "internal_links:https://www.yishunagain.com",
       "ok": true,
       "detail": "internal links use canonical host and slash form"
     },
@@ -1833,8 +1833,27 @@
     },
     {
       "check": "sitemap_url:https://www.yishunagain.com/incidents/yishun-fatal-fall-covered-walkway-block107-jun-2026",
-      "ok": false,
-      "detail": "The read operation timed out"
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "final_url": "https://www.yishunagain.com/incidents/yishun-fatal-fall-covered-walkway-block107-jun-2026",
+        "canonical_url": true
+      }
+    },
+    {
+      "check": "html:https://www.yishunagain.com/incidents/yishun-fatal-fall-covered-walkway-block107-jun-2026",
+      "ok": true,
+      "detail": {
+        "canonical": [
+          "https://www.yishunagain.com/incidents/yishun-fatal-fall-covered-walkway-block107-jun-2026"
+        ],
+        "noindex": false
+      }
+    },
+    {
+      "check": "internal_links:https://www.yishunagain.com/incidents/yishun-fatal-fall-covered-walkway-block107-jun-2026",
+      "ok": true,
+      "detail": "internal links use canonical host and slash form"
     },
     {
       "check": "sitemap_url:https://www.yishunagain.com/incidents/hsa-vaping-smoking-enforcement-yishun-jun-2026",
@@ -2150,8 +2169,27 @@
     },
     {
       "check": "sitemap_url:https://www.yishunagain.com/incidents/yishun-multi-vehicle-collision-child-hospitalised",
-      "ok": false,
-      "detail": "The read operation timed out"
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "final_url": "https://www.yishunagain.com/incidents/yishun-multi-vehicle-collision-child-hospitalised",
+        "canonical_url": true
+      }
+    },
+    {
+      "check": "html:https://www.yishunagain.com/incidents/yishun-multi-vehicle-collision-child-hospitalised",
+      "ok": true,
+      "detail": {
+        "canonical": [
+          "https://www.yishunagain.com/incidents/yishun-multi-vehicle-collision-child-hospitalised"
+        ],
+        "noindex": false
+      }
+    },
+    {
+      "check": "internal_links:https://www.yishunagain.com/incidents/yishun-multi-vehicle-collision-child-hospitalised",
+      "ok": true,
+      "detail": "internal links use canonical host and slash form"
     },
     {
       "check": "sitemap_url:https://www.yishunagain.com/incidents/tribecar-skid-centre-railing-yishun-road",
@@ -2419,8 +2457,27 @@
     },
     {
       "check": "sitemap_url:https://www.yishunagain.com/incidents/crow-culling-resumes-yishun-first-district",
-      "ok": false,
-      "detail": "Remote end closed connection without response"
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "final_url": "https://www.yishunagain.com/incidents/crow-culling-resumes-yishun-first-district",
+        "canonical_url": true
+      }
+    },
+    {
+      "check": "html:https://www.yishunagain.com/incidents/crow-culling-resumes-yishun-first-district",
+      "ok": true,
+      "detail": {
+        "canonical": [
+          "https://www.yishunagain.com/incidents/crow-culling-resumes-yishun-first-district"
+        ],
+        "noindex": false
+      }
+    },
+    {
+      "check": "internal_links:https://www.yishunagain.com/incidents/crow-culling-resumes-yishun-first-district",
+      "ok": true,
+      "detail": "internal links use canonical host and slash form"
     },
     {
       "check": "sitemap_url:https://www.yishunagain.com/incidents/car-fire-yishun-carpark-2025",
@@ -2448,8 +2505,27 @@
     },
     {
       "check": "sitemap_url:https://www.yishunagain.com/incidents/missing-elderly-woman-found-safe-yishun",
-      "ok": false,
-      "detail": "The read operation timed out"
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "final_url": "https://www.yishunagain.com/incidents/missing-elderly-woman-found-safe-yishun",
+        "canonical_url": true
+      }
+    },
+    {
+      "check": "html:https://www.yishunagain.com/incidents/missing-elderly-woman-found-safe-yishun",
+      "ok": true,
+      "detail": {
+        "canonical": [
+          "https://www.yishunagain.com/incidents/missing-elderly-woman-found-safe-yishun"
+        ],
+        "noindex": false
+      }
+    },
+    {
+      "check": "internal_links:https://www.yishunagain.com/incidents/missing-elderly-woman-found-safe-yishun",
+      "ok": true,
+      "detail": "internal links use canonical host and slash form"
     },
     {
       "check": "sitemap_url:https://www.yishunagain.com/incidents/yishun-man-singing-banging-cans-protection-order-aug-2026",
@@ -2645,8 +2721,27 @@
     },
     {
       "check": "sitemap_url:https://www.yishunagain.com/incidents/boys-throw-food-burn-chopsticks-family-mookata-yishun-nov-2025",
-      "ok": false,
-      "detail": "<urlopen error _ssl.c:989: The handshake operation timed out>"
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "final_url": "https://www.yishunagain.com/incidents/boys-throw-food-burn-chopsticks-family-mookata-yishun-nov-2025",
+        "canonical_url": true
+      }
+    },
+    {
+      "check": "html:https://www.yishunagain.com/incidents/boys-throw-food-burn-chopsticks-family-mookata-yishun-nov-2025",
+      "ok": true,
+      "detail": {
+        "canonical": [
+          "https://www.yishunagain.com/incidents/boys-throw-food-burn-chopsticks-family-mookata-yishun-nov-2025"
+        ],
+        "noindex": false
+      }
+    },
+    {
+      "check": "internal_links:https://www.yishunagain.com/incidents/boys-throw-food-burn-chopsticks-family-mookata-yishun-nov-2025",
+      "ok": true,
+      "detail": "internal links use canonical host and slash form"
     },
     {
       "check": "sitemap_url:https://www.yishunagain.com/incidents/yishun-loan-shark-doxxing-god-of-fortune-poster-nov-2025",
@@ -3058,8 +3153,27 @@
     },
     {
       "check": "sitemap_url:https://www.yishunagain.com/incidents/yishun-first-kpod-conviction-2024",
-      "ok": false,
-      "detail": "The read operation timed out"
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "final_url": "https://www.yishunagain.com/incidents/yishun-first-kpod-conviction-2024",
+        "canonical_url": true
+      }
+    },
+    {
+      "check": "html:https://www.yishunagain.com/incidents/yishun-first-kpod-conviction-2024",
+      "ok": true,
+      "detail": {
+        "canonical": [
+          "https://www.yishunagain.com/incidents/yishun-first-kpod-conviction-2024"
+        ],
+        "noindex": false
+      }
+    },
+    {
+      "check": "internal_links:https://www.yishunagain.com/incidents/yishun-first-kpod-conviction-2024",
+      "ok": true,
+      "detail": "internal links use canonical host and slash form"
     },
     {
       "check": "sitemap_url:https://www.yishunagain.com/incidents/yishun-recycling-bin-fire-bucket-brigade-nov-2024",
@@ -5855,1985 +5969,41 @@
     },
     {
       "check": "redirect:https://yishunagain.com/",
-      "ok": false,
+      "ok": true,
       "detail": {
-        "status": 308,
+        "status": 301,
         "final_url": "https://www.yishunagain.com/"
       }
     },
     {
       "check": "redirect:https://www.yishunagain.com/map/",
-      "ok": false,
+      "ok": true,
       "detail": {
-        "status": 308,
+        "status": 301,
         "final_url": "https://www.yishunagain.com/map"
       }
     },
     {
       "check": "redirect:https://www.yishunagain.com/patterns/",
-      "ok": false,
+      "ok": true,
       "detail": {
-        "status": 308,
+        "status": 301,
         "final_url": "https://www.yishunagain.com/patterns"
       }
     },
     {
       "check": "redirect:https://www.yishunagain.com/about/",
-      "ok": false,
+      "ok": true,
       "detail": {
-        "status": 308,
+        "status": 301,
         "final_url": "https://www.yishunagain.com/about"
       }
     },
     {
-      "check": "redirect:https://www.yishunagain.com/patterns/devils-ring-yishun-ring-road/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/patterns/devils-ring-yishun-ring-road"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/patterns/yishun-street-81/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/patterns/yishun-street-81"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/patterns/yishun-street-51/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/patterns/yishun-street-51"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/patterns/kurt-tay-superstar/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/patterns/kurt-tay-superstar"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/patterns/yishun-avenue-4/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/patterns/yishun-avenue-4"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/patterns/yishun-cat-killings/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/patterns/yishun-cat-killings"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-kitchen-fire-block-472b-yishun-st-42-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-kitchen-fire-block-472b-yishun-st-42-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-pma-fire-block-438-staircase-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-pma-fire-block-438-staircase-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-lightsaber-duel-chong-pang-city-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-lightsaber-duel-chong-pang-city-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-chain-collision-3-buses-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-chain-collision-3-buses-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-man-found-dead-staircase-block-703-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-man-found-dead-staircase-block-703-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-fall-death-carpark-block-431-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-fall-death-carpark-block-431-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-missing-girl-14-block-437-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-missing-girl-14-block-437-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-motorcycle-theft-teens-arrested-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-motorcycle-theft-teens-arrested-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-girl-hit-car-carpark-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-girl-hit-car-carpark-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-elderly-pma-red-man-crossing-avenue-4-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-elderly-pma-red-man-crossing-avenue-4-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-mrt-filming-women-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-mrt-filming-women-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-pmd-battery-fire-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-pmd-battery-fire-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-heritage-trail-community-walking-tour-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-heritage-trail-community-walking-tour-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-woman-found-dead-block-755-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-woman-found-dead-block-755-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-mysterious-parcels-dried-leaves-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-mysterious-parcels-dried-leaves-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-eevee-mascot-carpark-wave-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-eevee-mascot-carpark-wave-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-karaoke-noise-complaint-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-karaoke-noise-complaint-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-boys-trapped-ledge-electronic-lock-battery-sept-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-boys-trapped-ledge-electronic-lock-battery-sept-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-honda-odyssey-no-parking-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-honda-odyssey-no-parking-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-phone-theft-durian-stall-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-phone-theft-durian-stall-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-mushroom-poisoning-gardener-recovery-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-mushroom-poisoning-gardener-recovery-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-chong-pang-masks-haze-support-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-chong-pang-masks-haze-support-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-car-rear-ended-ring-road-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-car-rear-ended-ring-road-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cab-fare-dodge-lost-phone-oct-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-cab-fare-dodge-lost-phone-oct-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cyclist-elderly-pedestrian-fatal-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-cyclist-elderly-pedestrian-fatal-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-crow-nest-falls-attacks-sept-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-crow-nest-falls-attacks-sept-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-anonymous-affair-letter-sept-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-anonymous-affair-letter-sept-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-pmd-collision-unconscious-woman-sept-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-pmd-collision-unconscious-woman-sept-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-getai-noise-complaint-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-getai-noise-complaint-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-motorcyclist-van-collision-sept-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-motorcyclist-van-collision-sept-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-dam-body-recovered-sept-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-dam-body-recovered-sept-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-motorcyclist-lorry-collision-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-motorcyclist-lorry-collision-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/water-bottle-coffee-shop-dispute-sembawang-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/water-bottle-coffee-shop-dispute-sembawang-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-silent-calls-police-npc-prank-aug-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-silent-calls-police-npc-prank-aug-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-taxi-pcn-lost-driver-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-taxi-pcn-lost-driver-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-bicycle-basket-passenger-aug-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-bicycle-basket-passenger-aug-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-escalator-fall-shopping-trolley-aug-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-escalator-fall-shopping-trolley-aug-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-teen-bullied-beaten-group-ave-6-aug-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-teen-bullied-beaten-group-ave-6-aug-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-ceiling-collapse-renovation-aug-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-ceiling-collapse-renovation-aug-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-man-arrested-van-drugs-weapons-aug-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-man-arrested-van-drugs-weapons-aug-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-nurses-save-cardiac-arrest-basketball-aug-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-nurses-save-cardiac-arrest-basketball-aug-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-taoist-funeral-cultural-bridge-aug-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-taoist-funeral-cultural-bridge-aug-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-coffee-shop-fire-free-buffet-aug-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-coffee-shop-fire-free-buffet-aug-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-pmd-impound-speeding-northpoint-aug-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-pmd-impound-speeding-northpoint-aug-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-man-pliers-teen-dispute-aug-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-man-pliers-teen-dispute-aug-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-high-beam-chase-motorcyclist-aug-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-high-beam-chase-motorcyclist-aug-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-python-escapes-drain-worksite-aug-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-python-escapes-drain-worksite-aug-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/car-fire-orchid-park-condo-carpark-yishun-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/car-fire-orchid-park-condo-carpark-yishun-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-lift-renovation-elderly-stairs-complaint-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-lift-renovation-elderly-stairs-complaint-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-flat-fire-hero-father-son-blk461a-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-flat-fire-hero-father-son-blk461a-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-mattress-fire-brothers-hose-reel-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-mattress-fire-brothers-hose-reel-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-ring-road-rioting-carpark-brawl-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-ring-road-rioting-carpark-brawl-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-wild-chicken-chase-boardwalk-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-wild-chicken-chase-boardwalk-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-repeat-visitor-rp-student-claim-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-repeat-visitor-rp-student-claim-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-woman-fall-from-height-death-blk257-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-woman-fall-from-height-death-blk257-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-moth-eggs-window-horror-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-moth-eggs-window-horror-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-corridor-peeper-void-deck-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-corridor-peeper-void-deck-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-man-found-dead-void-deck-block-128-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-man-found-dead-void-deck-block-128-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-hdb-rooftop-beehive-helmet-resident-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-hdb-rooftop-beehive-helmet-resident-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/man-found-dead-yishun-block-285-unnatural-death-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/man-found-dead-yishun-block-285-unnatural-death-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-remote-gambling-bust-17-arrested-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-remote-gambling-bust-17-arrested-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/man-found-dead-fall-block-800-yishun-ring-road-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/man-found-dead-fall-block-800-yishun-ring-road-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/garbage-truck-flips-yishun-ave-7-junction-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/garbage-truck-flips-yishun-ave-7-junction-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-public-nuisance-spitting-police-firefighting-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-public-nuisance-spitting-police-firefighting-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-hdb-flat-fire-child-hospitalised-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-hdb-flat-fire-child-hospitalised-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-fatal-fall-covered-walkway-block107-jun-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-fatal-fall-covered-walkway-block107-jun-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/hsa-vaping-smoking-enforcement-yishun-jun-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/hsa-vaping-smoking-enforcement-yishun-jun-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-laundry-smell-tv-retaliation-neighbour-dispute-jun-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-laundry-smell-tv-retaliation-neighbour-dispute-jun-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-counterfeit-goods-tiktok-arrest-jun-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-counterfeit-goods-tiktok-arrest-jun-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/white-car-mounts-divider-yishun-st81-jun-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/white-car-mounts-divider-yishun-st81-jun-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-hdb-bedroom-fire-block-844-jun-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-hdb-bedroom-fire-block-844-jun-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-10-heritage-redevelopment-debate-jan-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-10-heritage-redevelopment-debate-jan-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/pma-rider-overturn-yishun-park-connector/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/pma-rider-overturn-yishun-park-connector"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/resident-tackles-car-park-fire-yishun-apartment-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/resident-tackles-car-park-fire-yishun-apartment-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-meth-driving-car-crash-rubbish-chute-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-meth-driving-car-crash-rubbish-chute-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-motorcyclist-fatal-accident-bystander-first-aid/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-motorcyclist-fatal-accident-bystander-first-aid"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-void-deck-stabbing-girlfriend-husband-jailed-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-void-deck-stabbing-girlfriend-husband-jailed-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-flat-housebreaking-bank-cards-cash-stolen-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-flat-housebreaking-bank-cards-cash-stolen-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-hdb-bedroom-fire-window-panel-broken/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-hdb-bedroom-fire-window-panel-broken"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-multi-vehicle-collision-child-hospitalised/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-multi-vehicle-collision-child-hospitalised"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/tribecar-skid-centre-railing-yishun-road/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/tribecar-skid-centre-railing-yishun-road"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/elderly-woman-hit-by-car-yishun-ring-road/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/elderly-woman-hit-by-car-yishun-ring-road"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-void-deck-private-kitchen-storeroom-clown/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-void-deck-private-kitchen-storeroom-clown"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/cat-strangled-cable-tie-yishun-rubbish-chute/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/cat-strangled-cable-tie-yishun-rubbish-chute"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/burst-pipe-floods-25-shops-yishun/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/burst-pipe-floods-25-shops-yishun"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-coffee-shop-estate-sisters-win-appeal-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-coffee-shop-estate-sisters-win-appeal-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/metal-beam-falls-chong-pang-worksite-yishun-hdb-roof/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/metal-beam-falls-chong-pang-worksite-yishun-hdb-roof"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-car-cat-mansion-block-347-may-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-car-cat-mansion-block-347-may-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/saf-regular-found-dead-yishun-hdb-block-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/saf-regular-found-dead-yishun-hdb-block-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-hdb-flat-fire-evacuation-hospitalised/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-hdb-flat-fire-evacuation-hospitalised"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/woman-found-motionless-foot-yishun-hdb-pronounced-dead/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/woman-found-motionless-foot-yishun-hdb-pronounced-dead"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/crow-culling-resumes-yishun-first-district/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/crow-culling-resumes-yishun-first-district"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/car-fire-yishun-carpark-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/car-fire-yishun-carpark-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/missing-elderly-woman-found-safe-yishun/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/missing-elderly-woman-found-safe-yishun"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-man-singing-banging-cans-protection-order-aug-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-man-singing-banging-cans-protection-order-aug-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/missing-elderly-man-found-safe-yishun-feb-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/missing-elderly-man-found-safe-yishun-feb-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-kitten-rescue-drain-pipe-jan-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-kitten-rescue-drain-pipe-jan-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-jewellery-store-taobao-gold-theft-aug-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-jewellery-store-taobao-gold-theft-aug-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/tower-transit-staff-restrain-fire-extinguisher-man-yishun-jan-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/tower-transit-staff-restrain-fire-extinguisher-man-yishun-jan-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/north-view-primary-gastroenteritis-outbreak-yishun-jan-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/north-view-primary-gastroenteritis-outbreak-yishun-jan-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-pmd-boys-hit-by-car-junction-dec-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-pmd-boys-hit-by-car-junction-dec-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-woman-charged-wildlife-act-bird-feeding/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-woman-charged-wildlife-act-bird-feeding"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/boys-throw-food-burn-chopsticks-family-mookata-yishun-nov-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/boys-throw-food-burn-chopsticks-family-mookata-yishun-nov-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-loan-shark-doxxing-god-of-fortune-poster-nov-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-loan-shark-doxxing-god-of-fortune-poster-nov-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/kitchen-fire-block-839-yishun-street-81-nov-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/kitchen-fire-block-839-yishun-street-81-nov-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-pmd-fire-evacuation-nov-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-pmd-fire-evacuation-nov-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-shop-illegal-pmd-modification-charges-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-shop-illegal-pmd-modification-charges-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/pmd-fire-block-756-yishun-street-72-oct-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/pmd-fire-block-756-yishun-street-72-oct-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/honda-civic-crash-lentor-avenue-yishun-oct-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/honda-civic-crash-lentor-avenue-yishun-oct-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/sg60-voucher-fraud-spent-yishun-nov-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/sg60-voucher-fraud-spent-yishun-nov-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-noise-murder-koh-ah-hwee-block-323-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-noise-murder-koh-ah-hwee-block-323-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-fatal-phv-bus-crash-aug-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-fatal-phv-bus-crash-aug-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-dead-cat-street-51-vehicle-accident-jun-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-dead-cat-street-51-vehicle-accident-jun-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cat-cottages-chong-pang-resident-may-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-cat-cottages-chong-pang-resident-may-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cat-king-kong-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-cat-king-kong-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-domestic-helper-abuse-charges-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-domestic-helper-abuse-charges-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-swimming-complex-molestation-autistic-boy-dec-2025/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-swimming-complex-molestation-autistic-boy-dec-2025"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-jaywalker-hit-by-car-ave2-dec-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-jaywalker-hit-by-car-ave2-dec-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-kitchen-fire-unattended-oil-pot-block-263-dec-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-kitchen-fire-unattended-oil-pot-block-263-dec-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-chain-collision-ave2-disqualified-driver-dec-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-chain-collision-ave2-disqualified-driver-dec-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-first-kpod-conviction-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-first-kpod-conviction-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-recycling-bin-fire-bucket-brigade-nov-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-recycling-bin-fire-bucket-brigade-nov-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/pregnant-driver-car-overturn-yishun-ave2-nov-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/pregnant-driver-car-overturn-yishun-ave2-nov-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-loansharks-harassment-teen-arrested-nov-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-loansharks-harassment-teen-arrested-nov-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-close-north-gaia-arson-fires-nov-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-close-north-gaia-arson-fires-nov-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-loansharking-harassment-bicycle-lock-nov-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-loansharking-harassment-bicycle-lock-nov-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-construction-worker-death-steel-gate-oct-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-construction-worker-death-steel-gate-oct-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-loanshark-harassment-arrests-sept-sep-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-loanshark-harassment-arrests-sept-sep-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-electrical-fire-block-431c-sep-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-electrical-fire-block-431c-sep-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-pmd-ebike-fires-dual-evacuation-aug-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-pmd-ebike-fires-dual-evacuation-aug-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-mrt-cardiac-arrest-doctor-saves-commuter-aug-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-mrt-cardiac-arrest-doctor-saves-commuter-aug-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-ring-road-murder-fiqri-choo-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-ring-road-murder-fiqri-choo-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-crocodile-dam-sighting-jul-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-crocodile-dam-sighting-jul-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-kurt-tay-intimate-image-conviction-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-kurt-tay-intimate-image-conviction-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-canteen-hygiene-downgrade-food-poisoning-dec-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-canteen-hygiene-downgrade-food-poisoning-dec-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-naked-woman-correction-2023/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-naked-woman-correction-2023"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-motorcyclist-coma-car-collision-yishun-ave1-jul-2023/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-motorcyclist-coma-car-collision-yishun-ave1-jul-2023"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-doctor-molestation-charge-ktph-sep-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-doctor-molestation-charge-ktph-sep-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-bus-driver-kills-cyclist-pedestrian-crossing-jul-2023/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-bus-driver-kills-cyclist-pedestrian-crossing-jul-2023"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-teen-dies-flat-fire-block-783-jun-2023/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-teen-dies-flat-fire-block-783-jun-2023"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-toy-gun-prank-cashier-arrested-apr-2023/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-toy-gun-prank-cashier-arrested-apr-2023"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-knifepoint-abduction-2023/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-knifepoint-abduction-2023"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-mcdonalds-bomb-hoax-2023/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-mcdonalds-bomb-hoax-2023"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-upright-falling-tv-2022/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-upright-falling-tv-2022"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-carpark-accident-pedestrians-pinned-nov-2022/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-carpark-accident-pedestrians-pinned-nov-2022"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-murder-son-father-block-653-oct-2022/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-murder-son-father-block-653-oct-2022"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-hdb-fire-block-451-ring-road-oct-2022/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-hdb-fire-block-451-ring-road-oct-2022"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/kurt-tay-void-deck-fight-yishun-2022/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/kurt-tay-void-deck-fight-yishun-2022"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-ebike-theft-confrontation-private-settlement-jun-2022/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-ebike-theft-confrontation-private-settlement-jun-2022"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/man-jumps-window-fire-yishun-street-51-dec-2021/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/man-jumps-window-fire-yishun-street-51-dec-2021"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/bus-shelter-collapse-yishun-mrt-taxi-stand-nov-2021/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/bus-shelter-collapse-yishun-mrt-taxi-stand-nov-2021"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-dog-walking-hind-legs-2021/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-dog-walking-hind-legs-2021"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-police-post-vandalism-chong-pang-sep-2021/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-police-post-vandalism-chong-pang-sep-2021"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-park-predator-grooming-statutory-rape-aug-2021/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-park-predator-grooming-statutory-rape-aug-2021"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-tree-falls-parked-cars-blk645-jul-2021/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-tree-falls-parked-cars-blk645-jul-2021"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-bus-captain-sleep-crash-injuries-aug-2022/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-bus-captain-sleep-crash-injuries-aug-2022"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-dead-kittens-thrown-block-671a-apr-2021/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-dead-kittens-thrown-block-671a-apr-2021"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/safra-yishun-student-death-jethro-puah-2021/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/safra-yishun-student-death-jethro-puah-2021"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cockroach-laksa-2021/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-cockroach-laksa-2021"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-grease-trap-manhole-2020/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-grease-trap-manhole-2020"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-ebike-fire-charging-flat-nov-2020/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-ebike-fire-charging-flat-nov-2020"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-new-york-post-cursed-town-2020/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-new-york-post-cursed-town-2020"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/riot-police-shirtless-man-locked-toilet-yishun-sep-2020/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/riot-police-shirtless-man-locked-toilet-yishun-sep-2020"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-the-force-fake-fall-2020/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-the-force-fake-fall-2020"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-bun-bun-bunny-sendoff-2020/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-bun-bun-bunny-sendoff-2020"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-jogger-molest-assault-delivery-driver-aug-2020/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-jogger-molest-assault-delivery-driver-aug-2020"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-decomposing-body-flat-daughter-unaware-may-2020/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-decomposing-body-flat-daughter-unaware-may-2020"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/cnb-drug-raid-weapons-seized-yishun-ave4-apr-2020/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/cnb-drug-raid-weapons-seized-yishun-ave4-apr-2020"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cat-death-block-714-feb-2020/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-cat-death-block-714-feb-2020"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-mynah-culling-saga-2020/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-mynah-culling-saga-2020"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-ghib-ojisan-japanese-youtuber-2019/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-ghib-ojisan-japanese-youtuber-2019"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-kurt-tay-fake-mediacorp-prank-dec-2019/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-kurt-tay-fake-mediacorp-prank-dec-2019"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-infant-murder-mohamed-aliff-2019/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-infant-murder-mohamed-aliff-2019"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-fatal-bus-pedestrian-accident-ave5-nov-2019/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-fatal-bus-pedestrian-accident-ave5-nov-2019"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cannabis-greenhouse-flat-yishun-st31-sep-2019/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-cannabis-greenhouse-flat-yishun-st31-sep-2019"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-integrated-transport-hub-opens-sep-2019/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-integrated-transport-hub-opens-sep-2019"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-residents-rescue-cats-block-257-fire-jul-2019/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-residents-rescue-cats-block-257-fire-jul-2019"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-kurt-tay-bank-fired-jun-2019/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-kurt-tay-bank-fired-jun-2019"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-police-officer-gunshot-death-npc-jun-2024/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-police-officer-gunshot-death-npc-jun-2024"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cat-found-dead-abused-void-deck-blk430b/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-cat-found-dead-abused-void-deck-blk430b"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-burglar-fatal-fall-block-512c-yishun-st51/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-burglar-fatal-fall-block-512c-yishun-st51"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cat-poisoned-milk-block-356-nov-2018/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-cat-poisoned-milk-block-356-nov-2018"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/kurt-tay-yishun-character-hub/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/kurt-tay-yishun-character-hub"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-empty-bullet-cartridge-orchid-park-sep-2018/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-empty-bullet-cartridge-orchid-park-sep-2018"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-fatal-car-crash-lentor-avenue-aug-2018/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-fatal-car-crash-lentor-avenue-aug-2018"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-block-663-fire-evacuation-jun-2018/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-block-663-fire-evacuation-jun-2018"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-overhead-bridge-attempted-suicide-rescue-jun-2018/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-overhead-bridge-attempted-suicide-rescue-jun-2018"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-stray-dogs-poisoned-culling-apr-2018/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-stray-dogs-poisoned-culling-apr-2018"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/pmd-rider-knocks-down-boy-yishun-st81-nov-2019/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/pmd-rider-knocks-down-boy-yishun-st81-nov-2019"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/car-rams-eps-gantry-yishun-carpark-jul-2026/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/car-rams-eps-gantry-yishun-carpark-jul-2026"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cat-abuse-block-147-feb-2018/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-cat-abuse-block-147-feb-2018"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-hailstones-2018/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-hailstones-2018"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-sentek-mariners-nfl-challenge-cup-champions/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-sentek-mariners-nfl-challenge-cup-champions"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-budot-dance-2017/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-budot-dance-2017"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-break-in-three-attempts-one-night-oct-2017/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-break-in-three-attempts-one-night-oct-2017"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-mclaren-taxi-crash-ave-1-oct-2017/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-mclaren-taxi-crash-ave-1-oct-2017"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-illegal-deepavali-fireworks-carpark-oct-2017/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-illegal-deepavali-fireworks-carpark-oct-2017"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-trusted-friend-theft-cat-sitting-sep-2018/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-trusted-friend-theft-cat-sitting-sep-2018"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-jinxed-think-piece-2017/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-jinxed-think-piece-2017"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-halimah-yacob-jumbo-flat-2017/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-halimah-yacob-jumbo-flat-2017"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-teenager-theft-arrests-yishun-ring-road-sep-2017/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-teenager-theft-arrests-yishun-ring-road-sep-2017"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-neighbour-dispute-caller-arrested-aug-2023/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-neighbour-dispute-caller-arrested-aug-2023"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-7-eleven-armed-robbery-teen-knife-jun-2017/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-7-eleven-armed-robbery-teen-knife-jun-2017"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-corridor-wall-urine-harassment-neighbour-jun-2017/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-corridor-wall-urine-harassment-neighbour-jun-2017"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-stranger-things-netflix-2017/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-stranger-things-netflix-2017"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cats-mutilated-mrt-hospital-feb-2017/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-cats-mutilated-mrt-hospital-feb-2017"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/concrete-slab-falls-yishun-flat-elderly-injured-jan-2017/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/concrete-slab-falls-yishun-flat-elderly-injured-jan-2017"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/northpoint-city-yishun-largest-north-mall-history/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/northpoint-city-yishun-largest-north-mall-history"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-family-violence-suicide-jump-blk737-nov-2016/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-family-violence-suicide-jump-blk737-nov-2016"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-ring-road-killing-sri-idayu-2016/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-ring-road-killing-sri-idayu-2016"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-fatal-assault-shawn-rodrigues-2016/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-fatal-assault-shawn-rodrigues-2016"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-fatal-assault-block-279-yishun-street-22-jul-2016/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-fatal-assault-block-279-yishun-street-22-jul-2016"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-heroin-trafficking-bust-void-deck-may-2016/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-heroin-trafficking-bust-void-deck-may-2016"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cat-hoarding-filthy-flat-animal-cruelty-feb-2016/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-cat-hoarding-filthy-flat-animal-cruelty-feb-2016"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cat-thrown-13th-floor-jan-2016/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-cat-thrown-13th-floor-jan-2016"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-dead-cat-pond-khoo-teck-puat-dec-2015/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-dead-cat-pond-khoo-teck-puat-dec-2015"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-kurt-tay-lewd-flyers-harassment-2015/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-kurt-tay-lewd-flyers-harassment-2015"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cat-killing-spree-dashcam-appeal-dec-2020/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-cat-killing-spree-dashcam-appeal-dec-2020"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-paper-cutter-landlord-death-yishun-ring-road-nov-2015/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-paper-cutter-landlord-death-yishun-ring-road-nov-2015"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/cat-thrown-yishun-hdb-block-probation-jun-2016/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/cat-thrown-yishun-hdb-block-probation-jun-2016"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cat-killings-serial-mutilation-2015-2016/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-cat-killings-serial-mutilation-2015-2016"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cosplay-replica-gun-panic-mar-2017/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-cosplay-replica-gun-panic-mar-2017"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-hospital-shooting-detainee-revolver-jun-2015/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-hospital-shooting-detainee-revolver-jun-2015"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-heroin-trafficking-cnb-raid-yishun-ave6-apr-2013/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-heroin-trafficking-cnb-raid-yishun-ave6-apr-2013"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/khoo-teck-puat-hospital-opens-yishun-2010/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/khoo-teck-puat-hospital-opens-yishun-2010"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-triple-murder-wang-zhijian-block-349-2008/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-triple-murder-wang-zhijian-block-349-2008"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-public-library-northpoint-community-spaces/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-public-library-northpoint-community-spaces"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/chung-cheng-high-school-yishun-renamed-established-jan-2006/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/chung-cheng-high-school-yishun-renamed-established-jan-2006"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-mrt-ji-alqaeda-plot-2001/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-mrt-ji-alqaeda-plot-2001"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-terror-sex-offender-mujumdar-1999-jan-1999/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-terror-sex-offender-mujumdar-1999-jan-1999"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-north-south-line-woodlands-extension-opens-feb-1996/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-north-south-line-woodlands-extension-opens-feb-1996"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/gv-yishun-first-multiplex-singapore-history/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/gv-yishun-first-multiplex-singapore-history"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-taxi-driver-murders-1992/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-taxi-driver-murders-1992"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-schoolgirl-murder-industrial-park-oct-1989/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-schoolgirl-murder-industrial-park-oct-1989"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-coffeeshop-murder-wrongful-conviction-feb-1989/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-coffeeshop-murder-wrongful-conviction-feb-1989"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-mrt-station-opened-ahead-of-schedule-dec-1988/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-mrt-station-opened-ahead-of-schedule-dec-1988"
-      }
-    },
-    {
-      "check": "redirect:https://www.yishunagain.com/incidents/yishun-etymology-lim-nee-soon-history/",
-      "ok": false,
-      "detail": {
-        "status": 308,
-        "final_url": "https://www.yishunagain.com/incidents/yishun-etymology-lim-nee-soon-history"
-      }
-    },
-    {
       "check": "redirect:https://www.yishunagain.com/incidents/pma-rider-crash-yishun-pedestrian-path",
-      "ok": false,
+      "ok": true,
       "detail": {
-        "status": 308,
+        "status": 301,
         "final_url": "https://www.yishunagain.com/incidents/pma-rider-overturn-yishun-park-connector"
       }
     }
