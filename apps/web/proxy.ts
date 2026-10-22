@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 const CANONICAL_HOST = 'www.yishunagain.com'
 
 export function proxy(request: NextRequest) {
-  const url = request.nextUrl.clone()
+  const url = new URL(request.url)
   const path = url.pathname
 
   if (path === '/$' || path === '/&') return new NextResponse(null, { status: 410 })
