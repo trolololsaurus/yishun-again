@@ -13,6 +13,11 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(url, 301)
   }
 
+  if (path === '/incidents/yishun-cat-abuse-feb-2017') {
+    url.pathname = '/incidents/yishun-cats-mutilated-mrt-hospital-feb-2017'
+    return NextResponse.redirect(url, 301)
+  }
+
   if (url.host.toLowerCase() !== CANONICAL_HOST || url.protocol !== 'https:' || (path !== '/' && path.endsWith('/'))) {
     url.protocol = 'https:'
     url.hostname = CANONICAL_HOST

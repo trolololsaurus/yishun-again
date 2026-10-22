@@ -113,6 +113,7 @@ def main():
     variants += [f"{CANONICAL}{path}/" for path in ("/map", "/patterns", "/about")]
     variants += [f"{CANONICAL}{path}" for path in (
         "/incidents/pma-rider-crash-yishun-pedestrian-path",
+        "/incidents/yishun-cat-abuse-feb-2017",
     )]
     variants += [value.strip() for value in os.environ.get("AUDIT_REDIRECT_URLS", "").split(",") if value.strip()]
     for url in dict.fromkeys(variants):
@@ -123,6 +124,12 @@ def main():
             good = status == 301 and destination.netloc == "www.yishunagain.com" and destination.scheme == "https"
             if original.path != "/":
                 good &= destination.path != "/"
+            expected = {
+                "/incidents/pma-rider-crash-yishun-pedestrian-path": "/incidents/pma-rider-overturn-yishun-park-connector",
+                "/incidents/yishun-cat-abuse-feb-2017": "/incidents/yishun-cats-mutilated-mrt-hospital-feb-2017",
+            }.get(original.path)
+            if expected:
+                good &= destination.path == expected
             if good:
                 final_status, final_url, _ = fetch(final)
                 good = final_status == 200 and final_url == final
