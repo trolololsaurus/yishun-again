@@ -6014,6 +6014,14 @@
         "status": 301,
         "final_url": "https://www.yishunagain.com/incidents/yishun-cats-mutilated-mrt-hospital-feb-2017"
       }
+    },
+    {
+      "check": "redirect:https://www.yishunagain.com/incidents/yishun-murder-block-803-yishun-ring-road-jul-2024",
+      "ok": true,
+      "detail": {
+        "status": 301,
+        "final_url": "https://www.yishunagain.com/incidents/yishun-ring-road-murder-fiqri-choo-2024"
+      }
     }
   ]
 }
