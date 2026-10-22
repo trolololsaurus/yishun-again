@@ -114,6 +114,7 @@ def main():
     variants += [f"{CANONICAL}{path}" for path in (
         "/incidents/pma-rider-crash-yishun-pedestrian-path",
         "/incidents/yishun-cat-abuse-feb-2017",
+        "/incidents/yishun-murder-block-803-yishun-ring-road-jul-2024",
     )]
     variants += [value.strip() for value in os.environ.get("AUDIT_REDIRECT_URLS", "").split(",") if value.strip()]
     for url in dict.fromkeys(variants):
@@ -127,6 +128,7 @@ def main():
             expected = {
                 "/incidents/pma-rider-crash-yishun-pedestrian-path": "/incidents/pma-rider-overturn-yishun-park-connector",
                 "/incidents/yishun-cat-abuse-feb-2017": "/incidents/yishun-cats-mutilated-mrt-hospital-feb-2017",
+                "/incidents/yishun-murder-block-803-yishun-ring-road-jul-2024": "/incidents/yishun-ring-road-murder-fiqri-choo-2024",
             }.get(original.path)
             if expected:
                 good &= destination.path == expected

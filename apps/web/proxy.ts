@@ -18,6 +18,11 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(url, 301)
   }
 
+  if (path === '/incidents/yishun-murder-block-803-yishun-ring-road-jul-2024') {
+    url.pathname = '/incidents/yishun-ring-road-murder-fiqri-choo-2024'
+    return NextResponse.redirect(url, 301)
+  }
+
   if (url.host.toLowerCase() !== CANONICAL_HOST || url.protocol !== 'https:' || (path !== '/' && path.endsWith('/'))) {
     url.protocol = 'https:'
     url.hostname = CANONICAL_HOST
