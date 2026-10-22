@@ -63,6 +63,8 @@ const nextConfig = {
   // is self-contained with its own package-lock.json, but the repo root has
   // one too, so inference reached outside the app and warned. Pin it.
   turbopack: { root: __dirname },
+  // Let proxy.ts canonicalize trailing slashes with a single 301.
+  skipTrailingSlashRedirect: true,
   async headers() {
     return [{ source: '/(.*)', headers: securityHeaders }]
   },
@@ -97,11 +99,6 @@ const nextConfig = {
       {
         source: '/incidents/acsi-student-death-high-element-safra-yishun-feb-2021',
         destination: '/incidents/safra-yishun-student-death-jethro-puah-2021',
-        permanent: true,
-      },
-      {
-        source: '/incidents/pma-rider-crash-yishun-pedestrian-path',
-        destination: '/incidents/pma-rider-overturn-yishun-park-connector',
         permanent: true,
       },
       // /timeline (HISTORY) was replaced by /patterns. Preserve the indexed URL.

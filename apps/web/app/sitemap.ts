@@ -35,7 +35,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   return [
     {
-      url:             `${SITE_URL}/`,  // trailing slash — matches the Feed canonical
+      url:             SITE_URL,
       lastModified:    new Date(),
       changeFrequency: 'hourly',
       priority:        1.0,

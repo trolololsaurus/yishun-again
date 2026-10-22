@@ -17,11 +17,11 @@ export const metadata: Metadata = {
   // title already carries the brand.
   title:       { absolute: FEED_TITLE },
   description: FEED_DESCRIPTION,
-  alternates:  { canonical: `${SITE_URL}/`, types: { 'application/rss+xml': `${SITE_URL}/feed.xml` } },
+  alternates:  { canonical: SITE_URL, types: { 'application/rss+xml': `${SITE_URL}/feed.xml` } },
   openGraph: {
     title:       FEED_TITLE,
     description: FEED_DESCRIPTION,
-    url:         `${SITE_URL}/`,
+    url:         SITE_URL,
     images:      [{ url: `${SITE_URL}/og-default.jpg`, width: 1200, height: 630 }],
     type:        'website',
   },
@@ -35,7 +35,7 @@ const siteJsonLd = [
     '@context':  'https://schema.org',
     '@type':     'WebSite',
     name:        'Yishun Again',
-    url:         `${SITE_URL}/`,
+    url:         SITE_URL,
     description:
       'Satirical live incident feed and archive for Yishun (Nee Soon), Singapore, scored on the Chaos Index.',
     inLanguage:  'en-SG',
@@ -44,7 +44,7 @@ const siteJsonLd = [
     '@context': 'https://schema.org',
     '@type':    'Organization',
     name:       'Yishun Again',
-    url:        `${SITE_URL}/`,
+    url:        SITE_URL,
     logo:       `${SITE_URL}/og-default.jpg`,
   },
 ]
