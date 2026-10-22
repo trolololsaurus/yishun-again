@@ -6006,6 +6006,14 @@
         "status": 301,
         "final_url": "https://www.yishunagain.com/incidents/pma-rider-overturn-yishun-park-connector"
       }
+    },
+    {
+      "check": "redirect:https://www.yishunagain.com/incidents/yishun-cat-abuse-feb-2017",
+      "ok": true,
+      "detail": {
+        "status": 301,
+        "final_url": "https://www.yishunagain.com/incidents/yishun-cats-mutilated-mrt-hospital-feb-2017"
+      }
     }
   ]
 }
