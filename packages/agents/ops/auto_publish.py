@@ -1269,21 +1269,46 @@ def _notify_review_queue(rows, merged_titles, client,
             title = (row.get("proposed_title") or "(untitled)")[:70]
             reason = row.get("_hold_reason") or "not_processed_this_pass"
             key = (kind, title, _human_hold_reason(reason))
-            group = groups.setdefault(key, {"count": 0, "confidences": []})
+            group = groups.setdefault(key, {
+                "count": 0, "draft_confidences": [], "match_confidences": [],
+                "match_confidence_missing": 0,
+            })
             group["count"] += 1
             confidence = row.get("agent_confidence")
             if confidence is not None:
-                group["confidences"].append(float(confidence))
+                group["draft_confidences"].append(float(confidence))
+            if kind == "UPDATE":
+                match_confidence = (row.get("raw_content") or {}).get("_match_confidence")
+                if match_confidence is None:
+                    group["match_confidence_missing"] += 1
+                else:
+                    group["match_confidences"].append(float(match_confidence))
         lines += ["", "Waiting for review:"]
         displayed = 0
         for (kind, title, reason), group in list(groups.items())[:5]:
-            confidences = group["confidences"]
-            if not confidences:
-                confidence_text = "?"
-            else:
+            confidences = group["draft_confidences"]
+            if confidences:
                 low, high = min(confidences), max(confidences)
-                confidence_text = (f"{low:.0%}" if low == high
-                                   else f"{low * 100:.0f}–{high:.0%}")
+                draft_text = (f"{low:.0%}" if low == high
+                              else f"{low * 100:.0f}–{high:.0%}")
+            else:
+                draft_text = "unknown"
+            confidence_text = f"draft {draft_text}"
+            if kind == "UPDATE":
+                confidence_text += f" (needs ≥{_merge_threshold():.1%})"
+                matches = group["match_confidences"]
+                if matches:
+                    low, high = min(matches), max(matches)
+                    match_text = (f"{low:.1%}" if low == high
+                                  else f"{low * 100:.1f}–{high * 100:.1f}%")
+                else:
+                    match_text = "missing"
+                confidence_text += (
+                    f"; same-event {match_text} (needs ≥{_merge_match_threshold():.1%})"
+                )
+                missing = group["match_confidence_missing"]
+                if missing and matches:
+                    confidence_text += f" ({missing} missing)"
             count = group["count"]
             suffix = f" ({count} cards)" if count > 1 else ""
             lines.append(f"  • [{confidence_text}] {kind}: {title}{suffix} — {reason}")
@@ -1295,7 +1320,7 @@ def _notify_review_queue(rows, merged_titles, client,
 
     dedup_key, window = _review_report_window()
     state = [
-        f"review:{r.get('id')}:{r.get('status')}:{r.get('_hold_reason')}:{r.get('proposed_title')}:{r.get('agent_confidence')}"
+        f"review:{r.get('id')}:{r.get('status')}:{r.get('_hold_reason')}:{r.get('proposed_title')}:{r.get('agent_confidence')}:{(r.get('raw_content') or {}).get('_match_confidence')}"
         for r in pending_for_review
     ]
     state += [f"published:{queue_id}" for queue_id in published_queue_ids]

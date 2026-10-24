@@ -292,7 +292,8 @@ summary in the same window edits the existing Telegram message and appends its
 result; an identical result stays quiet. Each scheduled window therefore has
 one auto-publish message containing its outcomes. The report counts every
 queue row still held for review, including high-confidence rows blocked by a
-guardrail.
+guardrail. Waiting-card percentages are labeled as draft confidence; UPDATE
+rows also show the independent same-event confidence and the required threshold.
 
 | Kind | Sent when | Window | Dedup key |
 |---|---|---|---|

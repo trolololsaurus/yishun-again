@@ -69,7 +69,8 @@ if m.called:
     check("subject labels the consolidated report", "auto-publish report" in subject)
     check("body counts current queue cards", "Needs review now: 1 card" in body)
     check("specific hold reason is readable", "possible duplicate of a published incident" in body)
-    check("waiting card displays confidence as a percentage", "[97%] NEW: High confidence draft" in body)
+    check("new-card metric is clearly labeled as draft confidence",
+          "[draft 97%] NEW: High confidence draft" in body)
     check("summary does not include historical eligibility totals", "eligible:" not in body)
 
 m_same = run(rows=[pending])
@@ -90,6 +91,37 @@ check("report edits the existing Telegram message instead of sending another",
 check("one morning/afternoon window is retained for 12 hours",
       m_new.call_args.kwargs["throttle_minutes"] == 720)
 
+update = {
+    "id": "q-update", "status": "update",
+    "raw_content": {"_match_confidence": 0.84},
+    "agent_confidence": 0.95,
+    "proposed_title": "Yishun kitchen fire update",
+    "_hold_reason": "match_below_threshold",
+}
+m_update = run(rows=[update])
+update_body = m_update.call_args.args[2]
+check("update report labels 95% as draft confidence",
+      (f"[draft 95% (needs ≥{ap._merge_threshold():.1%}); "
+       "same-event 84.0%") in update_body)
+check("update report shows both required confidence thresholds",
+      f"needs ≥{ap._merge_threshold():.1%}" in update_body
+      and f"needs ≥{ap._merge_match_threshold():.1%}" in update_body)
+check("update report explains why the high draft score did not auto-merge",
+      "same-event confidence below threshold" in update_body)
+
+missing_match_body = run(rows=[{
+    **update, "raw_content": {}, "_hold_reason": "no_match_confidence",
+}]).call_args.args[2]
+check("missing match confidence is reported as missing, not inferred",
+      "same-event missing" in missing_match_body)
+
+update_event_id = m_update.call_args.kwargs["coalesce_event_id"]
+changed_match_event_id = run(rows=[{
+    **update, "raw_content": {"_match_confidence": 0.85},
+}]).call_args.kwargs["coalesce_event_id"]
+check("a changed same-event score produces a new report event",
+      update_event_id != changed_match_event_id)
+
 duplicates = [
     {"id": "q1", "status": "pending", "raw_content": {},
      "agent_confidence": 0.97, "proposed_title": "Cat rescued from Yishun void deck",
@@ -104,7 +136,7 @@ check("repeated card titles are grouped into one human-readable line",
       body.count("Cat rescued from Yishun void deck") == 1 and "(2 cards)" in body)
 check("grouped line retains the hold reason", "per-pass auto-publish limit reached" in body)
 check("grouped duplicate line retains its confidence percentage",
-      "[96–97%] NEW: Cat rescued from Yishun void deck (2 cards)" in body)
+      "[draft 96–97%] NEW: Cat rescued from Yishun void deck (2 cards)" in body)
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
