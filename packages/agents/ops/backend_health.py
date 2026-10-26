@@ -52,8 +52,13 @@ R2_ENDPOINT_TEMPLATE = "https://{account}.r2.cloudflarestorage.com"
 # table rather than a single per-call number so the arithmetic below is
 # auditable when prices move.
 _USD_PER_MTOK: dict[str, tuple[float, float]] = {
-    "claude-haiku-5-5":  (0.10, 0.50),    # Stage 2 classify (prompts up to 100K tokens)
+    "claude-haiku-5-5":      (0.10, 0.50),   # Stage 2 classify (prompts up to 100K tokens)
+    "gemini-3.1-flash-lite": (0.25, 1.50),   # Stage 1 paid-tier rate (free tier active by default)
 }
+
+# Assumed token shape of one Stage 1 call (system prompt + article body, short
+# JSON out). Generous — a cost guard that under-estimates is a guard that never fires.
+_STAGE1_SHAPE: tuple[str, int, int] = ("gemini-3.1-flash-lite", 1_500, 200)
 
 # Assumed token shape of one Stage 2 call, (input, output). Input is system
 # prompt + article body; output is bounded by the max_tokens set in
@@ -70,6 +75,11 @@ def _call_usd(model: str, tokens_in: int, tokens_out: int) -> float:
     price_in, price_out = _USD_PER_MTOK[model]
     return (tokens_in * price_in + tokens_out * price_out) / 1_000_000
 
+
+# What one Stage 1 call costs on a billing key — for operators switching off
+# the free tier. The effective rate is STAGE1_USD_PER_CALL (below), which
+# defaults to $0 while the free tier is active.
+STAGE1_USD_PER_CALL_IF_BILLED = round(_call_usd(*_STAGE1_SHAPE), 5)
 
 # One queued draft = one classify call + one write call. At current Haiku 5.5
 # rates and the generous token shapes above, this is approximately $0.0013.

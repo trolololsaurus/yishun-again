@@ -415,7 +415,13 @@ _expected_per_draft = round(sum(
 ), 5)
 check("Stage 2 draft estimate matches the configured call shapes",
       bh.STAGE2_USD_PER_DRAFT == _expected_per_draft)
-check("Stage 1 is free-tier -> $0 by default", bh.STAGE1_USD_PER_CALL == 0.0)
+_expected_stage1_billed = round(
+    (bh._STAGE1_SHAPE[1] * bh._USD_PER_MTOK[bh._STAGE1_SHAPE[0]][0]
+     + bh._STAGE1_SHAPE[2] * bh._USD_PER_MTOK[bh._STAGE1_SHAPE[0]][1]) / 1e6, 5)
+check("Stage 1 billed rate matches the configured call shape",
+      bh.STAGE1_USD_PER_CALL_IF_BILLED == _expected_stage1_billed)
+check("Stage 1 is free-tier -> $0 by default",
+      bh.STAGE1_USD_PER_CALL == 0.0)
 check("default daily budget is $2.00", bh.COST_ALERT_USD_PER_DAY == 2.00)
 
 history = [{"ran_at": NOW.isoformat(), "dry_run": False, "total_queued": 4,
