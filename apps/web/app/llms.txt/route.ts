@@ -62,8 +62,6 @@ ${patternLines}
 - [Map](${SITE_URL}/map): Interactive map of incident locations.
 - [Patterns](${SITE_URL}/patterns): Recurring narrative patterns extracted
   from the archive (e.g. Devil's Ring, recurring locations, repeat subjects).
-- [History/Timeline](${SITE_URL}/timeline): Chronological history view of
-  incidents over time.
 - [About](${SITE_URL}/about): Project explanation, methodology, and editorial
   standards.
 

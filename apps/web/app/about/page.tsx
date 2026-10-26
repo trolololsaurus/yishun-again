@@ -58,9 +58,11 @@ export default function AboutPage() {
         </h2>
         <div className="space-y-3" style={{ fontSize: '16px' }}>
           {[
-            { icon: '❤️', label: 'GOOD VIBES',  desc: 'Good news, community wins, feel-good moments.' },
-            { icon: '🤡', label: 'ABSURDITIES', desc: 'Absurd, baffling, or inexplicably stupid behaviour. No serious harm.' },
-            { icon: '💀', label: 'DARK EVENTS', desc: 'Crime, violence, serious incidents. Reported facts only.' },
+            { icon: '❤️', label: 'GOOD VIBES',    desc: 'Good news, community wins, feel-good moments.' },
+            { icon: '🤡', label: 'ABSURDITIES',   desc: 'Absurd, baffling, or inexplicably stupid behaviour. No serious harm.' },
+            { icon: '💀', label: 'DARK EVENTS',   desc: 'Crime, violence, serious incidents. Reported facts only.' },
+            { icon: '❓', label: 'UNSOLVED CRIME', desc: 'Cold case — perpetrator never identified or convicted.' },
+            { icon: '🌐', label: 'YISHUN ON THE MAP', desc: 'Positive recognition — Yishun featured in national or regional coverage.' },
           ].map(({ icon, label, desc }) => (
             <div key={label} className="flex gap-3">
               <span className="text-xl flex-none">{icon}</span>

@@ -38,7 +38,6 @@ const ROLE_LABEL: Record<string, string> = {
  * card owns its own open state, so several can be open at once.
  *
  * The classification lives in the meta row, not on the image (no overlay box).
- * The timeline keeps the compact `IncidentCard`; this is feed-only.
  */
 export function NewsCard({ incident }: { incident: Row }) {
   const {
