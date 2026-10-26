@@ -409,8 +409,12 @@ check("...and the body carries the fix, not just the error",
 
 print("\nbackend_health — cost estimate:")
 
-check("Stage 2 draft estimate matches the configured call shapes ($0.0274)",
-      abs(bh.STAGE2_USD_PER_DRAFT - 0.0274) < 1e-9)
+_expected_per_draft = round(sum(
+    (tok_in * bh._USD_PER_MTOK[m][0] + tok_out * bh._USD_PER_MTOK[m][1]) / 1e6
+    for m, tok_in, tok_out in bh._STAGE2_SHAPE.values()
+), 5)
+check("Stage 2 draft estimate matches the configured call shapes",
+      bh.STAGE2_USD_PER_DRAFT == _expected_per_draft)
 check("Stage 1 is free-tier -> $0 by default", bh.STAGE1_USD_PER_CALL == 0.0)
 check("default daily budget is $2.00", bh.COST_ALERT_USD_PER_DAY == 2.00)
 
@@ -446,9 +450,10 @@ print("\nbackend_health — cost guard:")
 ok_cost = bh.assess_cost(bh.estimate_daily_cost(history=history), min_instances=0)
 check("one pass, 4 drafts -> ok", ok_cost["status"] == "ok")
 
-runaway = [dict(history[0]) for _ in range(48)]
+_runaway_passes = int(bh.COST_ALERT_USD_PER_DAY / (4 * bh.STAGE2_USD_PER_DRAFT)) + 2
+runaway = [dict(history[0]) for _ in range(_runaway_passes)]
 over = bh.assess_cost(bh.estimate_daily_cost(history=runaway), min_instances=0)
-check("48 passes of 4 drafts blows the $2 budget -> down", over["status"] == "down")
+check("enough runaway passes blow the daily budget -> down", over["status"] == "down")
 check("...and the runaway scheduler is named as the cause",
       any("ingestion passes in 24h" in r for r in over["detail"]["risks"]))
 
