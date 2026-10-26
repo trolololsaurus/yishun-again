@@ -237,54 +237,6 @@ def _check_death_streak(
                     logger.info("Herald: streak_milestone queued — %d days", threshold)
 
 
-def _check_chaos_record(
-    client,
-    draft: dict,
-    source_url: str,
-    incident_title: str,
-    today_str: str,
-    triggered: list,
-) -> None:
-    """Check whether the current chaos index is an all-time high."""
-    try:
-        snapshots = (
-            client.table("chaos_index_snapshots")
-            .select("score_alltime, snapshot_at")
-            .order("snapshot_at", desc=True)
-            .limit(100)
-            .execute()
-        )
-        rows = snapshots.data or []
-        if len(rows) < 2:
-            return  # Need at least 2 snapshots to establish a record
-
-        latest_score = float(rows[0]["score_alltime"] or 0)
-        prev_max     = max(float(r["score_alltime"] or 0) for r in rows[1:])
-
-        if latest_score <= prev_max:
-            return
-
-        score_int = int(latest_score)
-        if _already_logged(client, "chaos_record", value=score_int):
-            return
-
-        title = f"Yishun Chaos Index reaches {score_int} — highest ever recorded."
-        summary = (
-            f"The Yishun Again Chaos Index has hit {score_int}, a new all-time high since tracking began. "
-            f"The index weights incident severity across classifications: Dagger ×3.0, Clown ×1.5, Heart −1.0. "
-            f"New record. The bar was already low. "
-            f"Triggered by: {incident_title}. Source: {source_url}."
-        )
-        _queue_milestone_post(
-            client, title, summary, "dagger", 3,
-            "chaos_record", score_int, f"CHAOS RECORD — {score_int}",
-            source_url, incident_title, today_str,
-        )
-        _log_milestone(client, "chaos_record", score_int, source_url, today_str)
-        triggered.append(f"chaos_record (score={score_int})")
-    except Exception as exc:
-        logger.warning("Herald: chaos record check failed: %s", exc)
-
 
 def _check_incident_count(
     client,
@@ -394,9 +346,6 @@ def check_milestones(
     try:
         _check_death_streak(
             supabase_client, deaths, queue_id, source_url, incident_title, today_str, triggered
-        )
-        _check_chaos_record(
-            supabase_client, draft, source_url, incident_title, today_str, triggered
         )
         _check_incident_count(
             supabase_client, source_url, incident_title, today_str, triggered

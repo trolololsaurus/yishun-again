@@ -95,11 +95,8 @@ check("threshold is high enough to catch a standfirst", MIN_BODY_CHARS > 200)
 # ── The adapters must actually call it, or none of the above matters ────────
 import inspect
 from ingestion.sources import legacy
-from ingestion.sources.msm import cna
-check("LegacyScraperSource enriches (covers 11 scrapers)",
+check("LegacyScraperSource enriches (covers all 12 MSM scrapers including CNA)",
       "enrich_thin_content" in inspect.getsource(legacy))
-check("CNASource enriches (the 12th)",
-      "enrich_thin_content" in inspect.getsource(cna))
 
 print()
 print(f"{passed} passed, {failed} failed")

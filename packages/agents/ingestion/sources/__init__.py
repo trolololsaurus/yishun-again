@@ -3,6 +3,7 @@
 from scrapers import (
     scrape_asiaone,
     scrape_beritaharian,
+    scrape_cna,
     scrape_edmw,
     scrape_mothership,
     scrape_mustsharenews,
@@ -17,7 +18,6 @@ from scrapers import (
 )
 
 from ingestion.sources.legacy import LegacyScraperSource
-from ingestion.sources.msm.cna import CNASource
 from ingestion.sources.news_sitemap import news_sitemap_sources
 from ingestion.sources.wp_search import wp_search_sources
 
@@ -74,7 +74,10 @@ def get_enabled_sources() -> list:
     """
     return [
         s for s in (
-            CNASource(),
+            LegacyScraperSource(
+                "cna", scrape_cna.scrape,
+                source_name="Channel NewsAsia", source_type="msm",
+            ),
             LegacyScraperSource(
                 "mothership", scrape_mothership.scrape,
                 source_name="Mothership", source_type="msm",
