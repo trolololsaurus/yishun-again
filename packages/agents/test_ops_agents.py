@@ -2,7 +2,7 @@
 Self-contained tests for the three ops agents. No pytest, no DB, no network.
 Run: .venv/Scripts/python.exe test_ops_agents.py
 
-These agents run unattended twice daily (03:58/15:58 SGT) and alert a human via Telegram, so
+These agents run unattended twice daily (07:53/18:53 SGT) and alert a human via Telegram, so
 the two things
 worth pinning down are the two things that are expensive to get wrong:
 

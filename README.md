@@ -38,7 +38,7 @@ docs/              Spec, autonomy runbook, pipeline change records
 | Stage 1 filter | Gemini `gemini-3.1-flash-lite` |
 | Stage 2 classify + write | Anthropic `claude-haiku-5-5` |
 | Image gen | Gemini `gemini-3.1-flash-lite-image` |
-| Scheduling | Cloud Scheduler → `POST /orchestrator/daily` at 03:58 & 15:58 SGT |
+| Scheduling | Cloud Scheduler → `POST /orchestrator/daily` at 07:53 & 18:53 SGT |
 
 Orchestration is hand-rolled (`ops/daily.py`, `ingestion/orchestrator.py`). There is
 no in-process scheduler — Cloud Run scales to zero, so one would never fire; the

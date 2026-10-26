@@ -98,8 +98,8 @@ recommended fix was:
 > Cloud Run wakes, serves one ingestion pass, and scales back to zero. This is the standard
 > serverless-cron pattern, costs negligibly, and resolves the `min-instances 0` contradiction.
 
-**What was built:** one Cloud Scheduler job at **03:58 and 15:58 SGT daily**
-(changed from 02:58/14:58 on 2026-09-08) POSTs `/orchestrator/daily`
+**What was built:** one Cloud Scheduler job at **07:53 and 18:53 SGT daily**
+(changed from 03:58/15:58 on 2026-10-26) POSTs `/orchestrator/daily`
 (`main.py`), which runs the whole agent chain in `ops/daily.py`; its ingestion step is the call to
 `run_ingestion_pass(get_enabled_sources(), …)`. A single pass can also be triggered on its own via
 `POST /pipeline/run?dry_run=…`. Both endpoints require the ops token. There is no
