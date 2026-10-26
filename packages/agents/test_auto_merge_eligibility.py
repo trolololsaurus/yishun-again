@@ -46,8 +46,8 @@ print("auto-merge eligibility tests:")
 
 with mock.patch.dict(ap.os.environ, {}, clear=True):
     check("new-story auto-publish threshold stays at 95%", ap._threshold() == 0.95)
-    check("both auto-update thresholds default to 90%",
-          ap._merge_threshold() == 0.90 and ap._merge_match_threshold() == 0.90)
+    check("draft threshold defaults to 85%, match threshold defaults to 90%",
+          ap._merge_threshold() == 0.85 and ap._merge_match_threshold() == 0.90)
 
 ok, r = ap.check_update_eligibility(item(), DRAFT_T, MATCH_T)
 check("both confidences high + approved source -> eligible", ok and r == "eligible")

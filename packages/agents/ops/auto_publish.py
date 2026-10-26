@@ -87,7 +87,7 @@ MAX_AUTO_PUBLISH_PER_RUN = int(os.getenv("AUTO_PUBLISH_MAX_PER_RUN", "25"))
 # code review rather than buried as unexplained literals.
 DUPLICATE_GUARD_ARCHIVE_LIMIT = 2000
 DUPLICATE_GUARD_DATE_WINDOW_DAYS = 2
-DUPLICATE_GUARD_MIN_KEYWORD_OVERLAP = 3
+DUPLICATE_GUARD_MIN_KEYWORD_OVERLAP = 5
 DUPLICATE_GUARD_MAX_LOCALITY_TOKENS = 2
 
 # ── Autonomous merge (auto-apply an UPDATE row) ──────────────────────────────
@@ -105,9 +105,9 @@ AUTO_MERGE_ENABLED = os.getenv("AUTO_MERGE_ENABLED", "false").strip().lower() in
 
 def _merge_threshold() -> float:
     try:
-        return float(os.getenv("AUTO_MERGE_CONFIDENCE", "0.90"))
+        return float(os.getenv("AUTO_MERGE_CONFIDENCE", "0.85"))
     except ValueError:
-        return 0.90
+        return 0.85
 
 
 def _merge_match_threshold() -> float:
@@ -255,13 +255,19 @@ def _possible_published_duplicate(item: dict, incidents: list[dict]) -> dict | N
     if not matches:
         return None
     matches.sort(key=lambda pair: pair[0], reverse=True)
-    return matches[0][1]
+    best = matches[0][1]
+    # Annotate the item so the Telegram report can show which published incident
+    # matched, letting the operator decide without opening the War Room.
+    item["_hold_match_title"] = (best.get("title") or "")[:80]
+    item["_hold_match_date"] = best.get("incident_date")   # lets operator judge whether it's the same event
+    item["_hold_match_slug"] = best.get("slug")            # direct link to the published story
+    return best
 
 
 def _fetch_duplicate_guard_incidents(client) -> list[dict]:
     """Read the published archive once per pass; caller holds if unavailable."""
     result = (client.table("incidents")
-              .select("id,title,summary,incident_date")
+              .select("id,slug,title,summary,incident_date")
               .eq("is_published", True)
               .order("published_at", desc=True)
               .limit(DUPLICATE_GUARD_ARCHIVE_LIMIT).execute())
@@ -1225,6 +1231,53 @@ def _review_report_window() -> tuple[str, str]:
     return f"review_queue:{now.date().isoformat()}:{window}", window
 
 
+def _hold_label(row: dict) -> str:
+    """One plain-English sentence the operator can act on immediately."""
+    reason = row.get("_hold_reason") or "not_processed_this_pass"
+    rc = row.get("raw_content") or {}
+    conf = row.get("agent_confidence")
+    conf_pct = f"{conf:.0%}" if conf is not None else None
+    match_conf = rc.get("_match_confidence")
+    match_pct = f"{match_conf:.0%}" if match_conf is not None else None
+
+    if reason == "possible_published_duplicate":
+        matched = row.get("_hold_match_title")
+        matched_date = row.get("_hold_match_date")
+        date_str = f" ({matched_date})" if matched_date else ""
+        return (f"Keyword match with: {matched}{date_str}"
+                if matched else "Keyword match with a published story — check before approving")
+    if reason == "below_threshold":
+        return f"Confidence too low ({conf_pct or '?'}) — likely not a Yishun story"
+    if reason == "match_below_threshold":
+        return f"Update match uncertain ({match_pct or '?'}) — confirm it belongs to that incident"
+    if reason in ("no_approved_source_after_filter", "no_source_url"):
+        return "No verifiable source — attach one before approving"
+    if reason == "unapproved_source_domain":
+        return "Source domain not yet approved — check the publisher"
+    if reason == "ungrounded_specifics":
+        return "Draft contains details that couldn't be verified against the source"
+    if reason == "casualty_mismatch":
+        return "Death or injury count disputed — verify figures before approving"
+    if reason == "date_fallback":
+        return "Event date was inferred, not confirmed — check the article"
+    if reason == "oversized_cluster_unproven":
+        return "Large multi-source merge — needs your sign-off"
+    if reason == "no_real_date":
+        return "Article date is missing — set it before approving"
+    if reason == "not_processed_this_pass":
+        return "Carried over from a previous pass"
+    # Fallback: readable version of the internal code
+    return _human_hold_reason(reason)
+
+
+def _fmt_title(title: str, maxlen: int = 80) -> str:
+    """Truncate at the nearest word boundary, not mid-character."""
+    if len(title) <= maxlen:
+        return title
+    cut = title[:maxlen].rsplit(" ", 1)[0].rstrip(",;:")
+    return cut + "…"
+
+
 def _notify_review_queue(rows, merged_titles, client,
                          published_queue_ids=None, merged_queue_ids=None) -> None:
     """
@@ -1238,83 +1291,46 @@ def _notify_review_queue(rows, merged_titles, client,
             and not merged_titles and not published_queue_ids):
         return
 
+    # ── Header: one-line stats ────────────────────────────────────────────────
     lines = [
-        f"Published this pass: {len(published_queue_ids)}.",
-        f"Auto-merged updates: {len(merged_queue_ids)}.",
-        f"Needs review now: {len(pending_for_review)} card(s) in the current War Room queue.",
+        f"Published: {len(published_queue_ids)}  ·  "
+        f"Merged: {len(merged_queue_ids)}  ·  "
+        f"Waiting for review: {len(pending_for_review)}",
     ]
 
-    # Merges mutate a LIVE incident, so surface them for a look — each is
-    # undoable from the "Recently merged updates" panel in the War Room queue.
+    # ── Merged updates — mutate live incidents, surface them for a quick look ─
     if merged_titles:
-        merge_counts = {}
+        merge_counts: dict[str, int] = {}
         for title in merged_titles:
             merge_counts[title] = merge_counts.get(title, 0) + 1
-        lines += ["", "Merged updates:"]
+        lines += ["", "Merged into live incidents (undo from War Room → Recently merged):"]
         for title, count in list(merge_counts.items())[:5]:
-            suffix = f" ({count} updates)" if count > 1 else ""
-            lines.append(f"  • {title}{suffix}")
+            suffix = f" ×{count}" if count > 1 else ""
+            lines.append(f"  • {_fmt_title(title)}{suffix}")
         if len(merge_counts) > 5:
-            lines.append(f"  • and {len(merge_counts) - 5} more title(s)")
-        lines.append("Undo these from the War Room queue's Recently-merged panel.")
+            lines.append(f"  • … and {len(merge_counts) - 5} more")
 
+    # ── Queue cards awaiting review ───────────────────────────────────────────
     if pending_for_review:
-        # Group repeated headlines so duplicate queue rows are visible as a
-        # count, not repeated Telegram lines. Queue ids still drive the count;
-        # grouping is only a display choice.
-        groups = {}
-        for row in sorted(pending_for_review,
-                          key=lambda x: -(float(x.get("agent_confidence") or 0))):
+        lines += ["", f"{len(pending_for_review)} card(s) waiting for review:"]
+        sorted_cards = sorted(
+            pending_for_review,
+            key=lambda x: -(float(x.get("agent_confidence") or 0)),
+        )
+        site_base = os.getenv("NEXT_PUBLIC_SITE_URL", "https://yishunagain.com").rstrip("/")
+        for i, row in enumerate(sorted_cards[:5], 1):
             kind = "UPDATE" if row.get("status") == "update" else "NEW"
-            title = (row.get("proposed_title") or "(untitled)")[:70]
-            reason = row.get("_hold_reason") or "not_processed_this_pass"
-            key = (kind, title, _human_hold_reason(reason))
-            group = groups.setdefault(key, {
-                "count": 0, "draft_confidences": [], "match_confidences": [],
-                "match_confidence_missing": 0,
-            })
-            group["count"] += 1
-            confidence = row.get("agent_confidence")
-            if confidence is not None:
-                group["draft_confidences"].append(float(confidence))
-            if kind == "UPDATE":
-                match_confidence = (row.get("raw_content") or {}).get("_match_confidence")
-                if match_confidence is None:
-                    group["match_confidence_missing"] += 1
-                else:
-                    group["match_confidences"].append(float(match_confidence))
-        lines += ["", "Waiting for review:"]
-        displayed = 0
-        for (kind, title, reason), group in list(groups.items())[:5]:
-            confidences = group["draft_confidences"]
-            if confidences:
-                low, high = min(confidences), max(confidences)
-                draft_text = (f"{low:.0%}" if low == high
-                              else f"{low * 100:.0f}–{high:.0%}")
-            else:
-                draft_text = "unknown"
-            confidence_text = f"draft {draft_text}"
-            if kind == "UPDATE":
-                confidence_text += f" (needs ≥{_merge_threshold():.1%})"
-                matches = group["match_confidences"]
-                if matches:
-                    low, high = min(matches), max(matches)
-                    match_text = (f"{low:.1%}" if low == high
-                                  else f"{low * 100:.1f}–{high * 100:.1f}%")
-                else:
-                    match_text = "missing"
-                confidence_text += (
-                    f"; same-event {match_text} (needs ≥{_merge_match_threshold():.1%})"
-                )
-                missing = group["match_confidence_missing"]
-                if missing and matches:
-                    confidence_text += f" ({missing} missing)"
-            count = group["count"]
-            suffix = f" ({count} cards)" if count > 1 else ""
-            lines.append(f"  • [{confidence_text}] {kind}: {title}{suffix} — {reason}")
-            displayed += count
-        if len(pending_for_review) > displayed:
-            lines.append(f"  • and {len(pending_for_review) - displayed} more card(s)")
+            title = _fmt_title(row.get("proposed_title") or "(untitled)")
+            label = _hold_label(row)
+            lines.append(f"\n{i}. {kind}  {title}")
+            lines.append(f"   → {label}")
+            # For duplicate holds, add a direct link to the matched story so the
+            # operator can open it and compare without touching the War Room.
+            match_slug = row.get("_hold_match_slug")
+            if row.get("_hold_reason") == "possible_published_duplicate" and match_slug:
+                lines.append(f"   Compare: {site_base}/incidents/{match_slug}")
+        if len(pending_for_review) > 5:
+            lines.append(f"\n   … and {len(pending_for_review) - 5} more card(s)")
 
     lines.append(f"\nReview: {war_room_url('/queue')}")
 
@@ -1329,8 +1345,8 @@ def _notify_review_queue(rows, merged_titles, client,
 
     notify(
         "review_queue",
-        f"Yishun Again — auto-publish report ({window} SGT window)",
-        f"Pass window: {window} SGT.\n" + "\n".join(lines) + footer(),
+        f"Yishun Again — {window} pass",
+        "\n".join(lines) + footer(),
         dedup_key=dedup_key,
         throttle_minutes=720,
         coalesce_existing=True,

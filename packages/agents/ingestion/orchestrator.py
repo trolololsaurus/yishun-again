@@ -66,6 +66,13 @@ from orchestrator.herald_agent import check_milestones
 
 logger = logging.getLogger(__name__)
 
+# Stage 2 can score a candidate far below Stage 1's 0.40 pass threshold once it
+# reads the full article (e.g. a story that mentions "Yishun" once but is actually
+# a Sembawang incident). Items below this floor are discarded rather than queued —
+# same semantics as a Stage 1 rejection. Only applies to NEW rows; UPDATE rows
+# are always queued for operator review regardless of draft confidence.
+QUEUE_CONFIDENCE_FLOOR = float(os.getenv("QUEUE_CONFIDENCE_FLOOR", "0.35"))
+
 
 def _log(activity, level: str, event: str, message: str,
          source_name: str | None = None, **detail) -> None:
@@ -266,6 +273,18 @@ def _emit(stage2_input, item, is_dateless, edmw_signal_count, primary_candidate,
     if learning_flag:
         item["learning_flag"] = learning_flag
         notes.append(f"{primary_candidate.url}: {learning_flag}")
+
+    # Discard NEW candidates Stage 2 rates below the queue floor. UPDATE rows are
+    # always queued — the operator needs to decide if a low-confidence update
+    # belongs to the target incident, and discarding it silently would lose the
+    # source link.
+    if consolidation_result.action == "new" and draft.get("confidence", 0) < QUEUE_CONFIDENCE_FLOOR:
+        logger.info(
+            "_emit: confidence %.2f below floor %.2f for '%s' — discarding (not queued)",
+            draft.get("confidence", 0), QUEUE_CONFIDENCE_FLOOR,
+            (draft.get("title") or "")[:60],
+        )
+        return (False, False)
 
     # write_stage2 does not pass source_articles through to its return value,
     # so build_queue_row's timeline synthesis never sees the per-article dates
