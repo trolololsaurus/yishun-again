@@ -252,11 +252,13 @@ the complete gate list. These holds leave the row pending; they do not reject it
 | `oversized_cluster_unproven` | A grouping call merged > `CLUSTER_MAX_SIZE` articles | **Automatically**, once the grouper earns it (`AUTONOMY.md` §5b) |
 | `unapproved_source_domain` | `source_allowlist` | Operator approves the domain |
 
-**Auto-MERGE of `update` rows uses a separate 0.90 confidence threshold**
+**Auto-MERGE of `update` rows uses two separate confidence thresholds**
 (`AUTONOMY.md` §2b), enabled in production through `AUTO_MERGE_ENABLED`. An `update` row applies a new source to an
 already-published incident; when enabled it auto-applies only when BOTH the draft
-confidence AND the consolidation `_match_confidence` clear 0.90 and the appended
-source survives the allowlist. It snapshots the pre-merge state
+confidence clears 0.85 (`AUTO_MERGE_CONFIDENCE`) AND the consolidation
+`_match_confidence` clears 0.90 (`AUTO_MERGE_MATCH_CONFIDENCE`) and the appended
+source survives the allowlist. (Draft threshold was 0.90 until 2026-10; lowered
+because legitimate updates land in the 0.70–0.90 band and the undo net covers a wrong merge.) It snapshots the pre-merge state
 (`raw_content._undo_snapshot`) so the operator can undo it from the War Room
 queue's "Recently merged updates" panel (`/api/queue/[id]/revert-update`).
 Migration 018 is required. `check_update_eligibility` / `_apply_merge` in

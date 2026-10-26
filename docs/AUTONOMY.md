@@ -102,11 +102,22 @@ The War Room displays these reports alongside the unchanged original proposal so
 the operator can compare conflicting details before approval. Supplemental
 reports do not overwrite the queued title or summary.
 
+**Queue floor (ingestion time, before `check_eligibility`).** Stage 2 can score
+a candidate far below Stage 1's 0.40 pass threshold once it reads the full
+article — a story that mentions "Yishun" once but whose incident is actually in
+Sembawang might clear Stage 1 at 0.45 and then land at 0.20 from Stage 2.
+Before 2026-10, these were queued as operator homework. `_emit()` now discards
+`action='new'` candidates whose Stage 2 confidence is below `QUEUE_CONFIDENCE_FLOOR`
+(default **0.35**, env-overridable), treating them the same as a Stage 1 rejection
+— watermark advances, no queue row written. UPDATE rows are never discarded at
+this stage; the operator must decide whether a low-confidence update belongs to
+the linked incident.
+
 The full set, in the order `check_eligibility` applies them:
 
 | Gate | Skip reason logged | Why |
 |---|---|---|
-| `status = 'pending'` | `not_pending` | `update` rows merge into a live incident through the separate update policy in §2b (both confidence values must be at least 0.90) |
+| `status = 'pending'` | `not_pending` | `update` rows merge into a live incident through the separate update policy in §2b (draft confidence ≥ 0.85, same-event confidence ≥ 0.90) |
 | Not a sentinel row | `notification_row` | Pattern alerts and lifecycle notices are operator prompts, not incidents |
 | A confidence, at or above the bar | `no_confidence`, `below_threshold` | The threshold itself |
 | Title and summary present | `missing_title`, `missing_summary` | The human approve route's own 422 preconditions |
@@ -123,8 +134,9 @@ The full set, in the order `check_eligibility` applies them:
 | Cluster not oversized, or the grouper has earned it | `oversized_cluster_unproven` | §5b — the one hold that lifts itself |
 
 The duplicate hold compares a pending draft's title and summary with published
-incident titles and summaries dated within two days. Three or more shared
-keywords are required. Before treating a lexical match as a duplicate, the guard
+incident titles and summaries dated within two days. Five or more shared
+keywords are required (raised from 3 in 2026-10 to reduce false positives on
+serial-offender stories where every sentencing shares the same keyword set). Before treating a lexical match as a duplicate, the guard
 compares numeric block/street tokens from each title, falling back to its summary
 only when the title has no numeric locality. When both sides have at most two
 selected locality tokens and have disjoint values in the same namespace (for
@@ -193,8 +205,10 @@ homework — see §4.
 ### 2b. Auto-merge: applying an update unattended (`AUTO_MERGE_ENABLED`)
 
 **Enabled in production since 2026-09-21.** The operator policy is to apply an
-update when both draft confidence and same-event confidence are ≥0.90, without
-waiting for a War Room click. Production sets `AUTO_MERGE_ENABLED=true`;
+update when draft confidence is ≥0.85 and same-event confidence is ≥0.90,
+without waiting for a War Room click. (Draft threshold lowered from 0.90 in
+2026-10 — legitimate updates from consolidation land in the 0.70–0.90 band;
+the undo net covers a wrong merge.) Production sets `AUTO_MERGE_ENABLED=true`;
 unconfigured environments default off. Set the flag to `false` to pause this
 path; see §7.
 
@@ -212,7 +226,7 @@ direction — a miss is *held*, never rejected):
 | Gate | Skip reason | Why |
 |---|---|---|
 | It is an update row with a target | `not_update`, `no_update_target` | Nothing to merge into otherwise |
-| Draft confidence ≥ `AUTO_MERGE_CONFIDENCE` (0.90) | `below_threshold` | Write quality |
+| Draft confidence ≥ `AUTO_MERGE_CONFIDENCE` (0.85) | `below_threshold` | Write quality |
 | Same-event confidence ≥ `AUTO_MERGE_MATCH_CONFIDENCE` (0.90) | `no_match_confidence`, `match_below_threshold` | `_match_confidence` is the consolidation grouper's certainty this candidate updates *that* incident, persisted by `consolidation/queue_row.py`. Missing ⇒ held: a row written before it was persisted is never merged blind |
 | Appended source survives the allowlist | `source_not_verifiable`, `unapproved_source_domain`, `allowlist_check_failed` | `confirm-update` trusts the operator here; the autonomous path has no operator, so it **re-runs** the guard. A signal/redirect URL disqualifies the merge; an unapproved domain holds it |
 
@@ -999,7 +1013,7 @@ you is caught here, not on the live incident.
 **Enable:**
 ```bash
 gcloud run services update yishun-agents --region asia-southeast1 \
-  --update-env-vars AUTO_MERGE_ENABLED=true,AUTO_MERGE_CONFIDENCE=0.90,AUTO_MERGE_MATCH_CONFIDENCE=0.90
+  --update-env-vars AUTO_MERGE_ENABLED=true,AUTO_MERGE_CONFIDENCE=0.85,AUTO_MERGE_MATCH_CONFIDENCE=0.90
 # AUTO_MERGE_MAX_PER_RUN=25 bounds the blast radius per pass.
 ```
 Takes effect on the next scheduled pass (03:58 / 15:58 SGT) — no redeploy.
