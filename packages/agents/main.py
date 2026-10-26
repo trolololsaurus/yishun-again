@@ -155,6 +155,59 @@ async def agents_status(
     return await loop.run_in_executor(None, _gather)
 
 
+@app.post("/telegram/webhook", tags=["ops"])
+async def telegram_webhook(
+    request_body: dict,
+    x_telegram_bot_api_secret_token: str = Header("", alias="X-Telegram-Bot-Api-Secret-Token"),
+):
+    """
+    Inbound webhook from the Telegram Bot API. Called when the operator taps an
+    action button (Approve / Reject / Keep) on a per-card notification message.
+
+    Auth: Telegram sends the secret set at webhook registration time in
+    X-Telegram-Bot-Api-Secret-Token. We verify it via constant-time compare
+    against TELEGRAM_WEBHOOK_SECRET. No OPS_TOKEN — this endpoint is called by
+    Telegram's servers, not by our own callers.
+
+    Must return 200 quickly. Telegram retries any non-200 response, so the
+    handler catches all exceptions and always returns 200.
+
+    One-time setup (after deploy):
+        curl "https://api.telegram.org/bot{TOKEN}/setWebhook" \\
+          --data "url=https://yishun-agents-348005784139.asia-southeast1.run.app/telegram/webhook" \\
+          --data "secret_token={TELEGRAM_WEBHOOK_SECRET}"
+    """
+    import asyncio
+
+    from ops.activity import _client
+    from ops.telegram_actions import handle_callback
+
+    # Verify the webhook secret. Telegram sends it verbatim; we configured it
+    # at registration. Constant-time compare prevents timing-based forgeries.
+    expected = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
+    if not expected:
+        # Fail closed: an unconfigured secret means anyone who knows the Cloud
+        # Run URL can forge approve/reject actions. Log loudly but return 200 so
+        # Telegram does not spam-retry a permanently-broken webhook.
+        logger.error("telegram_webhook: TELEGRAM_WEBHOOK_SECRET not configured — refusing all requests")
+        return {}
+    if not hmac.compare_digest(x_telegram_bot_api_secret_token.strip(), expected):
+        # Return 200 to avoid Telegram spam-retrying; log for alerting.
+        logger.warning("telegram_webhook: bad secret token — ignoring request")
+        return {}
+
+    def _dispatch():
+        try:
+            client = _client()
+            handle_callback(request_body, client)
+        except Exception as exc:                    # noqa: BLE001
+            logger.error("telegram_webhook: dispatch failed: %s", exc)
+
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _dispatch)
+    return {}
+
+
 @app.post("/notify/test", tags=["ops"])
 async def trigger_notify_test(_: None = Depends(_require_ops_token)):
     """

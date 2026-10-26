@@ -236,14 +236,23 @@ def build_queue_row(
     }
     row["raw_content"]["agent_role_proposed"] = agent_role
 
-    # The consolidation same-event confidence. This is the axis the autonomous
-    # auto-merge (ops/auto_publish.py) gates on — how sure the grouper is that
-    # this candidate updates `matched_incident_id`, distinct from the Stage 2
-    # draft confidence (`agent_confidence`) which is about write quality. Without
-    # persisting it here the auto-merge has nothing to gate on and always holds.
+    # The consolidation same-event confidence.
+    #
+    # For UPDATE rows: the axis the autonomous auto-merge gates on — how sure the
+    # grouper is that this candidate updates `matched_incident_id`. Without
+    # persisting it the auto-merge has nothing to gate on and always holds.
+    #
+    # For NEW rows: when the model found a candidate match but still decided
+    # "different event" (confidence < UPDATE_MATCH_THRESHOLD), record that
+    # confidence as `_consolidation_new_match_confidence`. The auto-publish
+    # duplicate guard reads this to decide whether to trust the model's verdict
+    # over its own lexical check: if the model specifically evaluated a similar
+    # story and still said "new", the lexical guard would produce a false positive.
     if consolidation is not None and consolidation.action == "update":
         row["raw_content"]["_match_confidence"] = consolidation.match_confidence
         row["raw_content"]["_match_reason"] = consolidation.match_reason
+    elif consolidation is not None and consolidation.match_confidence > 0:
+        row["raw_content"]["_consolidation_new_match_confidence"] = consolidation.match_confidence
 
     if update_target_id:
         row["update_target_incident_id"] = update_target_id

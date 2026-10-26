@@ -441,6 +441,226 @@ def _update(client, row_id, patch: dict) -> None:
         logger.warning("notify: could not update notification %s: %s", row_id, exc)
 
 
+# ── Per-card Telegram messages with inline action buttons ──────────────────
+#
+# Each pending War Room card gets its own Telegram message with three buttons:
+# Approve / Reject / Keep. These messages coalesce on `card:{queue_id}` in the
+# notifications table — the same card is not re-sent between passes unless its
+# hold reason changes. The webhook handler (`/telegram/webhook` in main.py) calls
+# `edit_card()` to update the message once the operator acts.
+
+_CARD_BUTTONS = [
+    [{"text": "✅ Approve",  "callback_data": "approve:{id}"}],
+    [{"text": "❌ Reject",   "callback_data": "reject:{id}"},
+     {"text": "📋 Keep",     "callback_data": "keep:{id}"}],
+]
+
+_REJECT_REASON_BUTTONS = [
+    [{"text": "🔇 Noise",       "callback_data": "reject_reason:{id}:noise"},
+     {"text": "📋 Duplicate",   "callback_data": "reject_reason:{id}:duplicate"},
+     {"text": "🌏 Not Yishun",  "callback_data": "reject_reason:{id}:not_yishun"}],
+    [{"text": "❓ Unverified",  "callback_data": "reject_reason:{id}:unverified"},
+     {"text": "⚖️ Legal risk",  "callback_data": "reject_reason:{id}:legal_risk"},
+     {"text": "← Back",         "callback_data": "reject_back:{id}"}],
+]
+
+
+def _inline_keyboard(template_rows: list[list[dict]], queue_id: str) -> dict:
+    """Substitute `{id}` in callback_data and return a reply_markup dict."""
+    rows = [
+        [{"text": b["text"], "callback_data": b["callback_data"].replace("{id}", str(queue_id))}
+         for b in row]
+        for row in template_rows
+    ]
+    return {"inline_keyboard": rows}
+
+
+def _send_telegram_with_keyboard(to: str, text: str, keyboard: dict) -> str | None:
+    """Send a plain-text message with an inline keyboard. Returns message_id."""
+    import httpx
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        return None
+    url = f"{TELEGRAM_API}/bot{token}/sendMessage"
+    max_text = TELEGRAM_MAX_CHARS - 10
+    if len(text) > max_text:
+        text = text[:max_text - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER
+    # No parse_mode: plain text only — titles are untrusted LLM output.
+    payload = {"chat_id": to, "text": text, "reply_markup": keyboard}
+    resp = httpx.post(url, json=payload, timeout=20.0)
+    if resp.status_code >= 300:
+        raise RuntimeError(_redact_telegram_token(
+            f"Telegram HTTP {resp.status_code}: {resp.text[:500]}"
+        ))
+    try:
+        return str(resp.json()["result"]["message_id"])
+    except Exception:                               # noqa: BLE001
+        return None
+
+
+def _edit_telegram_text(to: str, message_id: str, text: str,
+                        keyboard: dict | None = None) -> None:
+    """Edit an existing message's text and optionally replace its keyboard."""
+    import httpx
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        return
+    max_text = TELEGRAM_MAX_CHARS - 10
+    if len(text) > max_text:
+        text = text[:max_text - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER
+    payload: dict = {"chat_id": to, "message_id": int(message_id), "text": text}
+    if keyboard is not None:
+        payload["reply_markup"] = keyboard
+    url = f"{TELEGRAM_API}/bot{token}/editMessageText"
+    httpx.post(url, json=payload, timeout=20.0)   # best-effort; don't raise
+
+
+def send_card(queue_id: str, text: str, client=None) -> dict:
+    """
+    Send or update the per-card Telegram message for a pending queue item.
+
+    Coalesces on `card:{queue_id}`: if a message was already sent for this card
+    and the text hasn't changed, it is not re-sent. If the text changed (hold
+    reason updated), the existing message is edited. Returns a notify()-style
+    status dict.
+
+    Never raises — an alerting failure must not block the pass.
+    """
+    enabled, why = _sending_enabled()
+    to = operator_chat_id()
+    c = _client(client)
+    dedup_key = f"card:{queue_id}"
+    keyboard = _inline_keyboard(_CARD_BUTTONS, queue_id)
+    subject = f"card:{queue_id}"   # internal key; not shown in the message
+
+    if not enabled:
+        _record(c, "review_queue", dedup_key, to or "(unset)", subject, text,
+                "disabled", error=why)
+        return {"status": "disabled", "error": why}
+
+    # Look for an existing notification for this card (no throttle window — cards
+    # can stay in the queue for days, so we always want the latest state).
+    try:
+        existing = (c.table("notifications")
+                    .select("id,provider_id,body,status")
+                    .eq("dedup_key", dedup_key)
+                    .in_("status", ["sent", "pending"])
+                    .order("created_at", desc=True)
+                    .limit(1).execute())
+        prior = existing.data[0] if (existing and existing.data) else None
+    except Exception as exc:                        # noqa: BLE001
+        logger.warning("send_card: lookup failed for %s (%s) — sending fresh", queue_id, exc)
+        prior = None
+
+    if prior:
+        # Same text → do not re-notify (operator already saw this card unchanged).
+        if (prior.get("body") or "").strip() == text.strip():
+            return {"status": "suppressed", "id": prior["id"], "error": None}
+        # Text changed (hold reason updated) → edit.
+        if prior.get("provider_id"):
+            try:
+                _edit_telegram_text(to, prior["provider_id"], text, keyboard)
+                _update(c, prior["id"], {"body": text[:50000],
+                                         "sent_at": datetime.now(timezone.utc).isoformat()})
+                return {"status": "updated", "id": prior["id"], "error": None}
+            except Exception as exc:                # noqa: BLE001
+                logger.warning("send_card: edit failed for %s (%s) — sending fresh", queue_id, exc)
+
+    # No prior → send new.
+    row_id = _record(c, "review_queue", dedup_key, to, subject, text, "pending")
+    try:
+        msg_id = _send_telegram_with_keyboard(to, text, keyboard)
+    except Exception as exc:                        # noqa: BLE001
+        safe = _redact_telegram_token(str(exc))
+        _update(c, row_id, {"status": "failed", "error": safe[:1000]})
+        logger.warning("send_card: send failed for %s: %s", queue_id, safe)
+        return {"status": "failed", "id": row_id, "error": safe}
+
+    _update(c, row_id, {"status": "sent", "provider_id": msg_id,
+                         "sent_at": datetime.now(timezone.utc).isoformat()})
+    return {"status": "sent", "id": row_id, "error": None}
+
+
+def edit_card(queue_id: str, final_text: str, client=None) -> None:
+    """
+    Edit a card message to its final state (approved/rejected/kept) and remove
+    the inline keyboard. Called by the webhook action handlers after they write
+    to the DB. Best-effort — never raises.
+    """
+    c = _client(client)
+    to = operator_chat_id()
+    try:
+        existing = (c.table("notifications")
+                    .select("provider_id")
+                    .eq("dedup_key", f"card:{queue_id}")
+                    .in_("status", ["sent", "pending"])
+                    .order("created_at", desc=True)
+                    .limit(1).execute())
+        row = existing.data[0] if (existing and existing.data) else None
+    except Exception as exc:                        # noqa: BLE001
+        logger.warning("edit_card: lookup failed for %s: %s", queue_id, exc)
+        return
+
+    if not row or not row.get("provider_id"):
+        return
+
+    # Empty reply_markup removes the keyboard.
+    try:
+        _edit_telegram_text(to, row["provider_id"], final_text, keyboard={"inline_keyboard": []})
+    except Exception as exc:                        # noqa: BLE001
+        logger.warning("edit_card: edit failed for %s: %s", queue_id, exc)
+
+
+def answer_callback(callback_query_id: str, text: str = "") -> None:
+    """
+    Dismiss the Telegram loading spinner on an inline button tap. Must be called
+    before any slow work — Telegram shows a loading indicator until this fires or
+    times out (~30s). Best-effort; never raises.
+    """
+    import httpx
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        return
+    url = f"{TELEGRAM_API}/bot{token}/answerCallbackQuery"
+    try:
+        httpx.post(url, json={"callback_query_id": callback_query_id,
+                              "text": text[:200]}, timeout=10.0)
+    except Exception as exc:                        # noqa: BLE001
+        logger.warning("answer_callback: failed for %s: %s", callback_query_id, exc)
+
+
+def _card_body(queue_id: str, c) -> str:
+    """Fetch the original card text from the notifications ledger."""
+    try:
+        res = (c.table("notifications")
+               .select("body")
+               .eq("dedup_key", f"card:{queue_id}")
+               .in_("status", ["sent", "pending"])
+               .order("created_at", desc=True)
+               .limit(1).execute())
+        return (res.data[0].get("body") or "") if (res and res.data) else ""
+    except Exception:                               # noqa: BLE001
+        return ""
+
+
+def reject_reason_menu(queue_id: str, message_id: str, client=None) -> None:
+    """Edit a card to show the reject-reason sub-keyboard."""
+    c = _client(client)
+    original = _card_body(queue_id, c)
+    text = (original.rstrip() + "\n\nChoose a reason to reject:") if original else "Choose a reason:"
+    _edit_telegram_text(operator_chat_id(), message_id, text,
+                        _inline_keyboard(_REJECT_REASON_BUTTONS, queue_id))
+
+
+def restore_card_buttons(queue_id: str, message_id: str, client=None) -> None:
+    """Restore the original three-button keyboard (Back from reject reason menu)."""
+    c = _client(client)
+    original = _card_body(queue_id, c)
+    text = original.split("\n\nChoose a reason")[0].rstrip() or original
+    _edit_telegram_text(operator_chat_id(), message_id, text,
+                        _inline_keyboard(_CARD_BUTTONS, queue_id))
+
+
 # ── shared formatting ──────────────────────────────────────────────────────
 
 def war_room_url(path: str = "/queue") -> str:

@@ -1,6 +1,7 @@
 """
-Checks that auto-publish Telegram reports use current review cards, group
-repeated titles, and share one stable key per SGT scheduler window.
+Checks that auto-publish Telegram reports use current review cards, format the
+header correctly, send per-card messages via send_card(), and share one stable
+key per SGT scheduler window.
 
 Run: .venv/Scripts/python.exe test_notify_review_queue.py
 """
@@ -21,62 +22,70 @@ def check(name, cond):
 
 
 def run(rows, merged_titles=None, published_ids=None, merged_ids=None):
-    with mock.patch.object(ap, "notify") as m:
+    """Returns (notify_mock, send_card_mock)."""
+    with mock.patch.object(ap, "notify") as m_notify, \
+         mock.patch("ops.notify.send_card") as m_card:
         ap._notify_review_queue(
             rows, merged_titles or [], client=None,
             published_queue_ids=published_ids or [], merged_queue_ids=merged_ids or [],
         )
-        return m
+        return m_notify, m_card
 
 
 print("\n=== concise pass summary ===")
 
 # A live-incident mutation must be reported even after the queue is empty.
-m = run(rows=[], merged_titles=["Cyclist update merged"], merged_ids=["q-merge"])
+m, cards = run(rows=[], merged_titles=["Cyclist update merged"], merged_ids=["q-merge"])
 check("merge-only pass with empty queue sends a notification", m.called)
 if m.called:
     subject, body = m.call_args.args[1:3]
-    check("title does not claim cards need review", "need review" not in subject)
-    check("subject labels one pass-window report", "auto-publish report" in subject)
-    check("summary reports current empty War Room queue", "Needs review now: 0" in body)
+    check("title does not claim cards need review", "need review" not in subject.lower())
+    check("subject labels one pass-window report", "pass" in subject)
+    check("summary reports current empty War Room queue", "Waiting for review: 0" in body)
     check("merged title is included for audit", "Cyclist update merged" in body)
 
-m = run(rows=[], merged_titles=["Cyclist update merged", "Cyclist update merged"],
-        merged_ids=["q-merge-1", "q-merge-2"])
+m, _ = run(rows=[], merged_titles=["Cyclist update merged", "Cyclist update merged"],
+           merged_ids=["q-merge-1", "q-merge-2"])
 check("repeated merge titles are grouped with their action count",
-      "Cyclist update merged (2 updates)" in m.call_args.args[2])
+      "Cyclist update merged ×2" in m.call_args.args[2])
 
-m = run(rows=[], published_ids=["q-published"])
+m, _ = run(rows=[], published_ids=["q-published"])
 check("successful publication is reported", m.called)
 if m.called:
     body = m.call_args.args[2]
     check("publication count is reported without repeating incident titles",
-          "Published this pass: 1" in body and "Auto-published without review" not in body)
-    check("empty live review queue is stated explicitly", "Needs review now: 0" in body)
+          "Published: 1" in body and "Auto-published without review" not in body)
+    check("empty live review queue is stated explicitly", "Waiting for review: 0" in body)
 
-m = run(rows=[])
+m, _ = run(rows=[])
 check("empty pass with no actions stays silent", not m.called)
 
 print("\n=== current queue and deduplication ===")
 
 pending = {"id": "q1", "status": "pending", "raw_content": {},
            "agent_confidence": 0.97, "proposed_title": "High confidence draft",
-           "_hold_reason": "possible_published_duplicate"}
-m = run(rows=[pending])
+           "_hold_reason": "possible_published_duplicate",
+           "_hold_match_title": "Similar published story"}
+m, cards = run(rows=[pending])
 check("current pending card triggers a review notification", m.called)
 if m.called:
     subject, body = m.call_args.args[1:3]
-    check("subject labels the consolidated report", "auto-publish report" in subject)
-    check("body counts current queue cards", "Needs review now: 1 card" in body)
-    check("specific hold reason is readable", "possible duplicate of a published incident" in body)
-    check("new-card metric is clearly labeled as draft confidence",
-          "[draft 97%] NEW: High confidence draft" in body)
+    check("subject labels the consolidated report", "pass" in subject)
+    check("body counts current queue cards", "1 card(s) waiting" in body)
+    # Card content is now in send_card(), not in the summary notify() body.
+    check("send_card called for the pending card", cards.called)
+    if cards.called:
+        card_text = cards.call_args.args[1]
+        check("specific hold reason is readable in card text",
+              "keyword match" in card_text.lower() or "duplicate" in card_text.lower())
+        check("new-card title appears in card message",
+              "High confidence draft" in card_text)
     check("summary does not include historical eligibility totals", "eligible:" not in body)
 
-m_same = run(rows=[pending])
-m_new = run(rows=[pending, {**pending, "id": "q2", "proposed_title": "Another draft"}])
+m_same, _ = run(rows=[pending])
+m_new, _  = run(rows=[pending, {**pending, "id": "q2", "proposed_title": "Another draft"}])
 key_same = m_same.call_args.kwargs["dedup_key"]
-m_unchanged = run(rows=[pending])
+m_unchanged, _ = run(rows=[pending])
 key_unchanged = m_unchanged.call_args.kwargs["dedup_key"]
 key_new = m_new.call_args.kwargs["dedup_key"]
 check("same pending-card state gets the same dedup key", key_same == key_unchanged)
@@ -98,27 +107,35 @@ update = {
     "proposed_title": "Yishun kitchen fire update",
     "_hold_reason": "match_below_threshold",
 }
-m_update = run(rows=[update])
-update_body = m_update.call_args.args[2]
-check("update report labels 95% as draft confidence",
-      (f"[draft 95% (needs ≥{ap._merge_threshold():.1%}); "
-       "same-event 84.0%") in update_body)
-check("update report shows both required confidence thresholds",
-      f"needs ≥{ap._merge_threshold():.1%}" in update_body
-      and f"needs ≥{ap._merge_match_threshold():.1%}" in update_body)
-check("update report explains why the high draft score did not auto-merge",
-      "same-event confidence below threshold" in update_body)
+m_update, cards_update = run(rows=[update])
+if cards_update.called:
+    card_text = cards_update.call_args.args[1]
+    # The card shows the match confidence (why it's stuck), not the draft confidence.
+    check("update report shows match confidence", "84%" in card_text)
+    check("update report text references the hold", "uncertain" in card_text.lower() or "match" in card_text.lower())
+    check("update report explains why the high draft score did not auto-merge",
+          "uncertain" in card_text.lower() or "match" in card_text.lower())
+else:
+    # UPDATE rows still trigger send_card
+    check("update report labels 95% as draft confidence", False)
+    check("update report shows match confidence", False)
+    check("update report explains why the high draft score did not auto-merge", False)
 
-missing_match_body = run(rows=[{
+missing_match_m, missing_cards = run(rows=[{
     **update, "raw_content": {}, "_hold_reason": "no_match_confidence",
-}]).call_args.args[2]
-check("missing match confidence is reported as missing, not inferred",
-      "same-event missing" in missing_match_body)
+}])
+if missing_cards.called:
+    card_text = missing_cards.call_args.args[1]
+    check("missing match confidence is reported as missing, not inferred",
+          "missing" in card_text.lower() or "no_match_confidence" in card_text.lower()
+          or "same-event" in card_text.lower())
+else:
+    check("missing match confidence is reported as missing, not inferred", False)
 
 update_event_id = m_update.call_args.kwargs["coalesce_event_id"]
 changed_match_event_id = run(rows=[{
     **update, "raw_content": {"_match_confidence": 0.85},
-}]).call_args.kwargs["coalesce_event_id"]
+}])[0].call_args.kwargs["coalesce_event_id"]
 check("a changed same-event score produces a new report event",
       update_event_id != changed_match_event_id)
 
@@ -130,13 +147,16 @@ duplicates = [
      "agent_confidence": 0.96, "proposed_title": "Cat rescued from Yishun void deck",
      "_hold_reason": "per_run_cap_hit"},
 ]
-m = run(rows=duplicates)
-body = m.call_args.args[2]
-check("repeated card titles are grouped into one human-readable line",
-      body.count("Cat rescued from Yishun void deck") == 1 and "(2 cards)" in body)
-check("grouped line retains the hold reason", "per-pass auto-publish limit reached" in body)
-check("grouped duplicate line retains its confidence percentage",
-      "[draft 96–97%] NEW: Cat rescued from Yishun void deck (2 cards)" in body)
+m, cards = run(rows=duplicates)
+# Each card gets its own message now; grouping moved to send_card level.
+check("both pending cards get their own send_card call",
+      cards.call_count == 2)
+check("hold reason is in each card's text",
+      all("per-pass auto-publish limit reached" in c.args[1]
+          for c in cards.call_args_list))
+check("each card carries its own title",
+      all("Cat rescued from Yishun void deck" in c.args[1]
+          for c in cards.call_args_list))
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

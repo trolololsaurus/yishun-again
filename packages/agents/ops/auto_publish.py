@@ -454,11 +454,28 @@ def check_eligibility(item: dict, threshold: float,
     if duplicate_guard_available is False:
         return False, "duplicate_check_unavailable"
     if duplicate_guard_incidents is not None:
-        match = _possible_published_duplicate(item, duplicate_guard_incidents)
-        if match:
-            logger.info("auto_publish: possible published duplicate for queue %s -> %s",
-                        item.get("id"), match.get("id"))
-            return False, "possible_published_duplicate"
+        # Option A — trust the consolidation model when it already evaluated this
+        # candidate against the published archive and still returned action='new'.
+        # `_consolidation_new_match_confidence` is written by queue_row.py when
+        # the model found a below-threshold match (0 < conf < UPDATE_MATCH_THRESHOLD).
+        # A floor of 0.3 means "the model actually considered a similar story and
+        # decided different event" — which is a more informed judgment than the
+        # lexical guard's word-count check. Below 0.3 the model was barely
+        # uncertain and the guard's independent net still has value.
+        consolidation_new_match = rc.get("_consolidation_new_match_confidence")
+        if (consolidation_new_match is not None
+                and consolidation_new_match >= 0.3):
+            logger.info(
+                "auto_publish: skipping duplicate guard for queue %s — "
+                "consolidation already evaluated (new-match conf=%.2f) and returned new",
+                item.get("id"), consolidation_new_match,
+            )
+        else:
+            match = _possible_published_duplicate(item, duplicate_guard_incidents)
+            if match:
+                logger.info("auto_publish: possible published duplicate for queue %s -> %s",
+                            item.get("id"), match.get("id"))
+                return False, "possible_published_duplicate"
 
     # Stage 2's deterministic groundedness check found a number or a proper noun
     # in the summary that appears in no source, and a regeneration did not clear
@@ -1310,27 +1327,11 @@ def _notify_review_queue(rows, merged_titles, client,
         if len(merge_counts) > 5:
             lines.append(f"  • … and {len(merge_counts) - 5} more")
 
-    # ── Queue cards awaiting review ───────────────────────────────────────────
+    # ── Queue cards — per-card Telegram messages with action buttons ─────────
+    # Each pending card gets its own message (via send_card) with Approve /
+    # Reject / Keep buttons. The header summary above just shows the count.
     if pending_for_review:
-        lines += ["", f"{len(pending_for_review)} card(s) waiting for review:"]
-        sorted_cards = sorted(
-            pending_for_review,
-            key=lambda x: -(float(x.get("agent_confidence") or 0)),
-        )
-        site_base = os.getenv("NEXT_PUBLIC_SITE_URL", "https://yishunagain.com").rstrip("/")
-        for i, row in enumerate(sorted_cards[:5], 1):
-            kind = "UPDATE" if row.get("status") == "update" else "NEW"
-            title = _fmt_title(row.get("proposed_title") or "(untitled)")
-            label = _hold_label(row)
-            lines.append(f"\n{i}. {kind}  {title}")
-            lines.append(f"   → {label}")
-            # For duplicate holds, add a direct link to the matched story so the
-            # operator can open it and compare without touching the War Room.
-            match_slug = row.get("_hold_match_slug")
-            if row.get("_hold_reason") == "possible_published_duplicate" and match_slug:
-                lines.append(f"   Compare: {site_base}/incidents/{match_slug}")
-        if len(pending_for_review) > 5:
-            lines.append(f"\n   … and {len(pending_for_review) - 5} more card(s)")
+        lines += ["", f"{len(pending_for_review)} card(s) waiting — see messages below."]
 
     lines.append(f"\nReview: {war_room_url('/queue')}")
 
@@ -1353,3 +1354,28 @@ def _notify_review_queue(rows, merged_titles, client,
         coalesce_event_id=event_id,
         client=client,
     )
+
+    # Send one Telegram message per pending card with Approve/Reject/Keep buttons.
+    # UPDATE rows are shown too — operator can keep them for War Room review since
+    # the approve path only handles NEW (pending) rows.
+    if pending_for_review:
+        from ops.notify import send_card
+        site_base = os.getenv("NEXT_PUBLIC_SITE_URL", "https://yishunagain.com").rstrip("/")
+        sorted_cards = sorted(
+            pending_for_review,
+            key=lambda x: -(float(x.get("agent_confidence") or 0)),
+        )
+        for row in sorted_cards:
+            queue_id = str(row.get("id") or "")
+            if not queue_id:
+                continue
+            kind = "UPDATE" if row.get("status") == "update" else "NEW"
+            title = _fmt_title(row.get("proposed_title") or "(untitled)")
+            label = _hold_label(row)
+            card_text = f"{kind}  {title}\n→ {label}"
+            match_slug = row.get("_hold_match_slug")
+            if row.get("_hold_reason") == "possible_published_duplicate" and match_slug:
+                card_text += f"\nCompare: {site_base}/incidents/{match_slug}"
+            if row.get("status") == "update":
+                card_text += "\n\n(UPDATE rows can only be actioned in the War Room — use Keep or open the link)"
+            send_card(queue_id, card_text, client)

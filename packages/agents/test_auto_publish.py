@@ -355,7 +355,7 @@ with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlis
     check("reported review count comes from the refreshed queue", stats["needs_review"] == 0)
     check("refreshed queue is explicitly marked verified", stats["review_queue_verified"] is True)
     body = telegram.call_args.args[2]
-    check("Telegram says the current War Room queue is empty", "Needs review now: 0" in body)
+    check("Telegram says the current War Room queue is empty", "Waiting for review: 0" in body)
     check("Telegram does not list the pass-start queue row as still waiting",
           "Cat rescued from Yishun void deck" not in body)
 
@@ -429,17 +429,60 @@ with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlis
           stats["reasons"].get("per_run_cap_hit") == 60 - ap.MAX_AUTO_PUBLISH_PER_RUN)
 
 print("\n=== same-pass duplicate guard ===")
+# Title + summary must share >=5 non-stop-word keywords for the guard to trigger
+# (DUPLICATE_GUARD_MIN_KEYWORD_OVERLAP=5; raised from 3 in 2026-10).
+_DUP_TITLE   = "Teenager injured falling scaffolding construction Yishun building site"
+_DUP_SUMMARY = "Teenager lost balance falling scaffolding construction building site."
 with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlist), \
      mock.patch("classifiers.geocoding.geocode_incident", lambda *a, **kw: None), \
      mock.patch("ops.activity._client", lambda *_a, **_kw: None), \
-     mock.patch.object(ap, "notify", lambda *a, **kw: {"status": "disabled"}):
-    duplicates = [_row(id="q-1"), _row(id="q-2", proposed_slug="cat-rescued-jul-2026-copy")]
+     mock.patch.object(ap, "notify", lambda *a, **kw: {"status": "disabled"}), \
+     mock.patch("ops.notify.send_card", lambda *a, **kw: {"status": "disabled"}):
+    duplicates = [
+        _row(id="q-1", proposed_title=_DUP_TITLE, proposed_summary=_DUP_SUMMARY),
+        _row(id="q-2", proposed_title=_DUP_TITLE, proposed_summary=_DUP_SUMMARY,
+             proposed_slug="dup-incident-jul-2026-copy"),
+    ]
     client = FakeClient({"war_room_queue": duplicates})
     stats = ap.run(supabase_client=client, dry_run=False, trigger="manual")
     check("duplicate queue rows cannot both auto-publish in one pass",
           stats["published"] == 1 and stats["skipped"] == 1)
     check("the second duplicate is held with a stable reason",
           stats["reasons"].get("possible_published_duplicate") == 1)
+
+print("\n=== Option A: trust consolidation model verdict ===")
+# A row whose consolidation already evaluated a similar published story and
+# returned action='new' (match_confidence >= 0.3) skips the lexical guard.
+# This prevents false positives on serial-offender stories that share many
+# keywords but are genuinely different events (different court dates).
+with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlist), \
+     mock.patch("classifiers.geocoding.geocode_incident", lambda *a, **kw: None), \
+     mock.patch("ops.activity._client", lambda *_a, **_kw: None), \
+     mock.patch.object(ap, "notify", lambda *a, **kw: {"status": "disabled"}), \
+     mock.patch("ops.notify.send_card", lambda *a, **kw: {"status": "disabled"}):
+    # Two rows with identical high-overlap titles — normally the second gets held.
+    # But the second carries _consolidation_new_match_confidence=0.65, meaning the
+    # model already looked at similar stories and decided "new event".
+    row_no_flag  = _row(id="q-trust-1", proposed_title=_DUP_TITLE, proposed_summary=_DUP_SUMMARY)
+    row_with_flag = _row(id="q-trust-2", proposed_title=_DUP_TITLE, proposed_summary=_DUP_SUMMARY,
+                         proposed_slug="dup-incident-trust-copy")
+    row_with_flag["raw_content"]["_consolidation_new_match_confidence"] = 0.65
+    trust_client = FakeClient({"war_room_queue": [row_no_flag, row_with_flag]})
+    trust_stats = ap.run(supabase_client=trust_client, dry_run=False, trigger="manual")
+    check("row with consolidation verdict >= 0.3 is not held as duplicate",
+          trust_stats["published"] == 2 and trust_stats["reasons"].get("possible_published_duplicate", 0) == 0)
+
+    # A row with _consolidation_new_match_confidence below 0.3 still runs the guard.
+    # Use fresh row objects — the first run mutates status in-place.
+    row_base2   = _row(id="q-trust-4", proposed_title=_DUP_TITLE, proposed_summary=_DUP_SUMMARY,
+                       proposed_slug="dup-base-2")
+    row_low_flag = _row(id="q-trust-5", proposed_title=_DUP_TITLE, proposed_summary=_DUP_SUMMARY,
+                        proposed_slug="dup-incident-low-trust")
+    row_low_flag["raw_content"]["_consolidation_new_match_confidence"] = 0.15
+    low_client = FakeClient({"war_room_queue": [row_base2, row_low_flag]})
+    low_stats = ap.run(supabase_client=low_client, dry_run=False, trigger="manual")
+    check("row with consolidation verdict < 0.3 still runs the lexical guard",
+          low_stats["reasons"].get("possible_published_duplicate", 0) == 1)
 
 print("\n=== oversized-merge trust (the exit condition) ===")
 

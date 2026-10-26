@@ -954,6 +954,48 @@ replaced, which needed a YAML file to dodge gcloud's `@`-as-delimiter parsing.
 `NOTIFY_ENABLED=false` mutes sending without removing the token — alerts are
 still recorded.
 
+### Telegram inline actions (Approve / Reject / Keep)
+
+Since 2026-10, each pending queue card gets its own Telegram message with three
+inline buttons. The operator can action from their phone without opening the War
+Room.
+
+**How it works:** The daily pass sends a brief header summary message (counts
+only), then one message per pending card via `ops/notify.py::send_card()`. Each
+card has **✅ Approve / ❌ Reject / 📋 Keep** buttons. Tapping Reject shows a
+reason sub-keyboard. Actions are handled by `POST /telegram/webhook` (FastAPI) →
+`ops/telegram_actions.py::handle_callback()`.
+
+- **Approve** — publishes the draft as-is (no editing; use War Room for that).
+  Art generates via `ART_GENERATION_ENABLED` same as auto-publish. Writes a
+  training signal with `decided_by='operator'`.
+- **Reject** — requires selecting a reason from the allowlist. Status set to
+  `'rejected'`. Writes training signal.
+- **Keep** — no DB change; removes buttons so the card is not re-notified until
+  the hold reason changes.
+
+**One-time webhook registration (after deploy):**
+```bash
+# Generate a strong random secret and add to Cloud Run first:
+gcloud run services update yishun-agents --region asia-southeast1 \
+  --update-env-vars TELEGRAM_WEBHOOK_SECRET=<strong-random-string>
+
+# Then register the webhook with Telegram:
+curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+  --data "url=https://yishun-agents-348005784139.asia-southeast1.run.app/telegram/webhook" \
+  --data "secret_token=${TELEGRAM_WEBHOOK_SECRET}"
+```
+
+**Security:** The webhook verifies `X-Telegram-Bot-Api-Secret-Token` against
+`TELEGRAM_WEBHOOK_SECRET` (constant-time compare). An unset secret causes the
+endpoint to refuse all requests. Queue IDs from `callback_data` are validated as
+UUIDs before any DB query. Approve uses a CAS claim (`status='pending'`) before
+writing to prevent double-approve from rapid button taps.
+
+**Approve is "as-is" only.** The telegram approve uses the draft title, summary,
+classification, and severity exactly as Stage 2 wrote them. If the operator wants
+to edit any field or write a custom art prompt, they must use the War Room.
+
 ### Operate
 
 ```bash

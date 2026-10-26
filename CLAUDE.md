@@ -49,7 +49,8 @@ yishun-again/
 │   │   └── ops/            # Autonomy layer — see docs/AUTONOMY.md
 │   │       ├── daily.py            # THE daily chain (Cloud Scheduler entry)
 │   │       ├── activity.py         # agent_runs / agent_events logging
-│   │       ├── notify.py           # operator alerting (Telegram) + dedup ledger
+│   │       ├── notify.py           # operator alerting (Telegram) + dedup ledger + per-card inline buttons
+│   │       ├── telegram_actions.py # Telegram inline approve/reject/keep handlers (POST /telegram/webhook)
 │   │       ├── auto_publish.py     # >=0.95 confidence gate
 │   │       ├── learning_monitor.py # confidence/agreement deltas
 │   │       ├── supervisor.py       # scraper fleet watchdog
