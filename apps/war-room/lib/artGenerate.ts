@@ -182,3 +182,24 @@ export async function rectifyIncidentArt(args: {
     clearTimeout(timer)
   }
 }
+
+
+/**
+ * Remove the Approve/Reject/Keep buttons from a Telegram card after a War Room
+ * action. Best-effort — never throws, never blocks an operator action.
+ */
+export async function editCard(queueId: string, text: string): Promise<void> {
+  const base  = (process.env.AGENTS_API_URL ?? '').replace(/\/+$/, '')
+  const token = process.env.OPS_TOKEN ?? ''
+  if (!base || !token) return
+  try {
+    await fetch(`${base}/notify/edit-card`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Ops-Token': token },
+      body:    JSON.stringify({ queue_id: queueId, text }),
+      signal:  AbortSignal.timeout(3000),
+    })
+  } catch {
+    // best-effort — a Telegram cleanup failure must not surface to the operator
+  }
+}

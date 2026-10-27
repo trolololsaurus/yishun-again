@@ -229,6 +229,21 @@ async def trigger_notify_test(_: None = Depends(_require_ops_token)):
     ))
 
 
+@app.post("/notify/edit-card", tags=["ops"])
+async def notify_edit_card(body: dict, _: None = Depends(_require_ops_token)):
+    """Edit the Telegram keyboard on an actioned card. Called by the War Room after approve/reject."""
+    import asyncio
+    from ops.activity import _client
+    from ops.notify import edit_card
+    queue_id = str(body.get("queue_id") or "")
+    text = str(body.get("text") or "")
+    if not queue_id:
+        return {"ok": False, "error": "queue_id required"}
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, lambda: edit_card(queue_id, text, _client()))
+    return {"ok": True}
+
+
 @app.post("/pattern/run", tags=["ops"])
 async def trigger_pattern_detection(_: None = Depends(_require_ops_token)):
     """Manually trigger a full pattern detection sweep."""

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { validateUUID } from '@/lib/utils'
+import { editCard } from '@/lib/artGenerate'
 import type { RejectBody, RejectReason } from '@/lib/types'
 
 // Must match the RejectReason union in lib/types.ts AND the CHECK constraint in
@@ -88,5 +89,6 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   })
   if (signalErr) console.error('reject — training_signal insert failed (non-fatal):', signalErr)
 
+  await editCard(id, `❌ Rejected in War Room (${reason})`)
   return NextResponse.json({ ok: true })
 }

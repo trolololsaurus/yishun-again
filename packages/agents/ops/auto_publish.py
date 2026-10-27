@@ -1209,8 +1209,11 @@ def _reviewable_cards(rows) -> list[dict]:
         if (row.get("status") not in ("pending", "update")
                 or (row.get("raw_content") or {}).get("notification_type")):
             continue
-        identity = row.get("id") or row.get("proposed_slug") or row.get("proposed_title")
-        cards[str(identity)] = row
+        # ponytail: dedup by slug so N identical queue rows for the same story
+        # produce one card. Falls back to title, then id.
+        identity = row.get("proposed_slug") or row.get("proposed_title") or row.get("id")
+        if str(identity) not in cards:
+            cards[str(identity)] = row
     return list(cards.values())
 
 

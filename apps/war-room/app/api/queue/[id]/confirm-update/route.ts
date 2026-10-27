@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { validateUUID, applyUpdate, applySignalCorroboration } from '@/lib/utils'
+import { editCard } from '@/lib/artGenerate'
 
 interface ConfirmUpdateBody {
   updated_summary?: string
@@ -142,5 +143,6 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     operator_role_confirmed: 'update',   // operator confirmed the update classification
   })
 
+  await editCard(id, '✅ Update confirmed in War Room')
   return NextResponse.json({ ok: true, incident_id: targetId })
 }

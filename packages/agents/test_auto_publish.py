@@ -555,5 +555,32 @@ check("unreadable history -> trust 0.0, held for review, never raises",
 check("granting merge autonomy uses a stricter bar than a confidence nudge",
       ap.OVERSIZED_TRUST_THRESHOLD >= 0.80 and ap.OVERSIZED_MIN_SAMPLES >= 5)
 
+print("\n=== _reviewable_cards slug dedup (spam fix) ===")
+_slug = "cat-rescued-yishun-void-deck-oct-2026"
+_dupe_rows = [
+    {"id": f"q-{i}", "status": "pending", "proposed_slug": _slug,
+     "proposed_title": "Cat rescued from Yishun void deck",
+     "raw_content": {}, "agent_confidence": "0.97"}
+    for i in range(144)
+]
+_cards = ap._reviewable_cards(_dupe_rows)
+check("144 identical-slug pending rows collapse to 1 card", len(_cards) == 1)
+check("surviving card is one of the original rows (id set)", _cards[0].get("id", "").startswith("q-"))
+
+# notification_type sentinels must still be excluded
+_sentinel = {"id": "s-1", "status": "pending", "proposed_slug": "some-slug",
+             "proposed_title": "sentinel", "raw_content": {"notification_type": "digest"},
+             "agent_confidence": "0.99"}
+check("notification sentinel excluded regardless of slug", ap._reviewable_cards([_sentinel]) == [])
+
+# different slugs → different cards (no over-dedup)
+_two_slugs = [
+    {"id": "a1", "status": "pending", "proposed_slug": "slug-a",
+     "proposed_title": "Story A", "raw_content": {}, "agent_confidence": "0.9"},
+    {"id": "b1", "status": "pending", "proposed_slug": "slug-b",
+     "proposed_title": "Story B", "raw_content": {}, "agent_confidence": "0.9"},
+]
+check("two different slugs produce two cards", len(ap._reviewable_cards(_two_slugs)) == 2)
+
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

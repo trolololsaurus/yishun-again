@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { validateUUID, slugify } from '@/lib/utils'
 import { geocodeIncident, deslug } from '@/lib/geocode'
-import { generateIncidentArt } from '@/lib/artGenerate'
+import { generateIncidentArt, editCard } from '@/lib/artGenerate'
 import type { ApproveBody, Classification } from '@/lib/types'
 
 // This route renders the image BEFORE inserting the incident (ART_PIPELINE.md
@@ -239,5 +239,6 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   })
   if (signalErr) console.error('approve — training_signal insert failed (non-fatal):', signalErr)
 
+  await editCard(id, '✅ Approved in War Room')
   return NextResponse.json({ incident_id: newIncident.id, action })
 }

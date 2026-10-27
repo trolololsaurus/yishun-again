@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { validateUUID } from '@/lib/utils'
+import { editCard } from '@/lib/artGenerate'
 import type { RejectReason } from '@/lib/types'
 
 // Same set the plain reject route accepts — see migration 017.
@@ -90,5 +91,6 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   })
   if (signalErr) console.error('reject-update — training_signal insert failed (non-fatal):', signalErr)
 
+  await editCard(id, `❌ Update rejected in War Room (${reason})`)
   return NextResponse.json({ ok: true })
 }
