@@ -141,11 +141,13 @@ def _approve(queue_id: str, client) -> None:
                   "Go to the War Room to resolve this.", client)
         return
 
-    # CAS-claim the row before calling _publish to prevent a double-approve race
-    # (operator taps twice before the first handler edits the message).
+    # CAS-claim the row to prevent a double-approve race (operator taps twice
+    # before the first handler edits the message). Claim directly to 'approved'
+    # — 'approved_pending' is not in the DB CHECK constraint and would fail.
+    # _publish also writes 'approved' + incident_id on success (idempotent).
     try:
         claimed = (client.table("war_room_queue")
-                   .update({"status": "approved_pending"})
+                   .update({"status": "approved"})
                    .eq("id", queue_id).eq("status", "pending")
                    .select("id").execute())
     except Exception as exc:                        # noqa: BLE001
@@ -165,6 +167,13 @@ def _approve(queue_id: str, client) -> None:
         edit_card(queue_id, "✅ Approved via Telegram", client)
         logger.info("telegram_actions: approved queue %s → incident %s", queue_id, incident_id)
     else:
+        # Revert the row to pending so the operator can retry from the War Room.
+        try:
+            client.table("war_room_queue").update(
+                {"status": "pending", "incident_id": None}
+            ).eq("id", queue_id).execute()
+        except Exception:                           # noqa: BLE001
+            pass
         edit_card(queue_id, "⚠️ Publish failed — check the War Room logs.", client)
 
 
