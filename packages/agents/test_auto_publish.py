@@ -13,8 +13,15 @@ lies about its interface is worse than no mock.
 """
 
 import importlib
+import os
 from datetime import date, timedelta
 from unittest import mock
+
+# Importing the pipeline loads the repo .env (load_dotenv), which holds the REAL
+# Telegram credentials. A run that reaches send_card without a mock then posts
+# to the operator's chat: the 2026-10-31 "Cat rescued" spam was this file.
+# Muted before any import; test_notify_telegram.py sets its own env explicitly.
+os.environ["NOTIFY_ENABLED"] = "false"
 
 passed = failed = 0
 
@@ -412,7 +419,8 @@ print("\n=== blast radius ===")
 with mock.patch("classifiers.source_allowlist.check_source_urls", _fake_allowlist), \
      mock.patch("classifiers.geocoding.geocode_incident", lambda *a, **kw: None), \
      mock.patch("ops.activity._client", lambda *_a, **_kw: None), \
-     mock.patch.object(ap, "notify", lambda *a, **kw: {"status": "disabled"}):
+     mock.patch.object(ap, "notify", lambda *a, **kw: {"status": "disabled"}), \
+     mock.patch("ops.notify.send_card", lambda *a, **kw: {"status": "disabled"}):
     many = [
         _row(
             id=f"q-{i}", proposed_slug=f"s-{i}",
