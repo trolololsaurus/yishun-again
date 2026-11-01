@@ -56,6 +56,17 @@ def handle_callback(payload: dict, client) -> None:
     if not data:
         return
 
+    # Only the operator may act. The webhook secret proves the request came from
+    # Telegram, not WHO tapped: an Approve here publishes a draft, so require the
+    # tap to come from the operator's own chat. Fails closed if the chat id is unset.
+    from ops.notify import operator_chat_id
+    expected_chat = operator_chat_id()
+    sender_chat = str((message.get("chat") or {}).get("id", ""))
+    sender_user = str((cq.get("from") or {}).get("id", ""))
+    if not expected_chat or expected_chat not in (sender_chat, sender_user):
+        logger.warning("telegram_actions: callback from unauthorised chat/user — ignoring")
+        return
+
     parts = data.split(":", 2)
     action = parts[0]
 
@@ -144,12 +155,15 @@ def _approve(queue_id: str, client) -> None:
         return
 
     # CAS-claim the row to prevent a double-approve race (operator taps twice
-    # before the first handler edits the message). Claim directly to 'approved'
-    # — 'approved_pending' is not in the DB CHECK constraint and would fail.
-    # _publish also writes 'approved' + incident_id on success (idempotent).
+    # before the first handler edits the message). 'approved_pending' is an
+    # in-flight state, not a final one: _publish moves it to 'approved' on success,
+    # and a claim whose publish never finished is released by
+    # auto_publish.release_stale_claims (needs migration 026). processed_at is the
+    # claim time that sweep keys on.
     try:
         claimed = (client.table("war_room_queue")
-                   .update({"status": "approved"})
+                   .update({"status": "approved_pending",
+                            "processed_at": datetime.now(timezone.utc).isoformat()})
                    .eq("id", queue_id).eq("status", "pending")
                    .select("id").execute())
     except Exception as exc:                        # noqa: BLE001
@@ -169,14 +183,15 @@ def _approve(queue_id: str, client) -> None:
         edit_card(queue_id, "✅ Approved via Telegram", client)
         logger.info("telegram_actions: approved queue %s → incident %s", queue_id, incident_id)
     else:
-        # Revert the row to pending so the operator can retry from the War Room.
-        try:
-            client.table("war_room_queue").update(
-                {"status": "pending", "incident_id": None}
-            ).eq("id", queue_id).execute()
-        except Exception:                           # noqa: BLE001
-            pass
-        edit_card(queue_id, "⚠️ Publish failed — check the War Room logs.", client)
+        from ops.auto_publish import release_claim
+        if release_claim(item, client):
+            edit_card(queue_id, "⚠️ Publish failed — back in the War Room queue, retry there.", client)
+        else:
+            # An incident may already exist for this slug (or that could not be
+            # checked), so re-opening the row could publish a duplicate. Leave it
+            # claimed; the daily pass raises it as an anomaly for a human.
+            edit_card(queue_id, "⚠️ Publish failed and the row is left locked — "
+                                "check the War Room before retrying.", client)
 
 
 def _reject_reason(queue_id: str, reason: str, client) -> None:

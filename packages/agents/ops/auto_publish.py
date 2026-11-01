@@ -58,7 +58,7 @@ check_update_eligibility / _apply_merge and docs/AUTONOMY.md.
 import hashlib
 import logging
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from classifiers.source_allowlist import is_signal_source
 from ops.activity import AgentRun, _client, agent_enabled
@@ -739,6 +739,74 @@ def _publish(item: dict, client, run: AgentRun, budget=None) -> str | None:
     return incident_id
 
 
+# ── Claim release (Telegram approve) ─────────────────────────────────────────
+
+STALE_CLAIM_MINUTES = int(os.getenv("STALE_CLAIM_MINUTES", "30"))
+
+
+def _published_incident_id(item: dict, client) -> str | None:
+    """Id of a published incident already holding this row's slug, else None.
+    Raises on a read failure so callers can fail safe (treat as 'unknown')."""
+    slug = item.get("proposed_slug") or (item.get("raw_content") or {}).get("slug")
+    if not slug:
+        return None
+    res = (client.table("incidents").select("id").eq("slug", slug)
+           .eq("is_published", True).limit(1).execute())
+    return res.data[0]["id"] if res.data else None
+
+
+def release_claim(item: dict, client) -> bool:
+    """
+    Put a claimed ('approved_pending') row back to 'pending' after a failed publish.
+
+    Refuses when a published incident already exists for the slug, or when that
+    cannot be checked: _publish can fail AFTER inserting the incident (its rollback
+    is best-effort), and re-opening the row then invites a second publish. The CAS
+    on status means a row an operator already actioned is never touched.
+    Returns True only if the row was actually released. Never raises.
+    """
+    try:
+        if _published_incident_id(item, client):
+            return False
+        res = (client.table("war_room_queue")
+               .update({"status": "pending", "incident_id": None, "processed_at": None})
+               .eq("id", item["id"]).eq("status", "approved_pending")
+               .select("id").execute())
+        return bool(res.data)
+    except Exception as exc:                      # noqa: BLE001
+        logger.warning("release_claim: could not release %s: %s", item.get("id"), exc)
+        return False
+
+
+def release_stale_claims(client, run: AgentRun, minutes: int = STALE_CLAIM_MINUTES) -> int:
+    """
+    Release 'approved_pending' rows whose publish never finished (instance killed
+    between the claim and the insert). Such a row is on no pending view, so without
+    this sweep the story is silently lost. A row whose incident DID get published
+    is left alone and raised as an anomaly for a human to reconcile.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+    try:
+        stale = (client.table("war_room_queue").select("*")
+                 .eq("status", "approved_pending").lt("processed_at", cutoff)
+                 .limit(50).execute()).data or []
+    except Exception as exc:                      # noqa: BLE001
+        run.warn("stale_claim_scan_failed", str(exc))
+        return 0
+    released = 0
+    for row in stale:
+        if release_claim(row, client):
+            released += 1
+            run.warn("stale_claim_released",
+                     f"queue {row['id']} was claimed >{minutes} min ago and never published; "
+                     "returned to pending", queue_id=row["id"])
+        else:
+            run.anomaly("stale_claim_unreleased",
+                        f"queue {row['id']} is approved_pending with a published incident "
+                        "(or unreadable) — reconcile by hand", queue_id=row["id"])
+    return released
+
+
 # ── Merge (auto-apply an update) ─────────────────────────────────────────────
 
 def _compute_merge(existing: dict, new_url: str, source_name: str,
@@ -752,7 +820,8 @@ def _compute_merge(existing: dict, new_url: str, source_name: str,
     `new_date` is the EVENT date and only drives incident_date/first_reported_at.
     `report_date` is when the merged article was PUBLISHED and is what the
     timeline entry carries; without it a 2026 follow-up on a 2024 event is filed
-    under 2024 and collapses into the original REPORTED node.
+    under 2024 and collapses into the original REPORTED node. See the role rule
+    where the entry is built.
     """
     existing_urls = existing.get("source_urls") or []
     existing_timeline = existing.get("source_timeline")
@@ -774,11 +843,16 @@ def _compute_merge(existing: dict, new_url: str, source_name: str,
 
     merged_urls = existing_urls if new_url in existing_urls else [*existing_urls, new_url]
     nd = new_date or existing_date or existing.get("first_reported_at") or None
-    merged_timeline = [
-        *existing_timeline,
-        {"date": report_date or nd or existing_date, "source_url": new_url,
-         "source_name": source_name, "headline": headline, "role": "update"},
-    ]
+    entry_date = report_date or nd or existing_date
+    entry = {"date": entry_date, "source_url": new_url,
+             "source_name": source_name, "headline": headline}
+    # Tag 'update' only when this date is NEW to the timeline. The page keeps the
+    # higher-ranked role per date and ranks update (1) above initial (0), so an
+    # 'update' on a date that already has the original report would relabel that
+    # REPORTED node UPDATE. A role-less entry ties and the earlier one stays.
+    if not any(isinstance(e, dict) and e.get("date") == entry_date for e in existing_timeline):
+        entry["role"] = "update"
+    merged_timeline = [*existing_timeline, entry]
 
     updated_date = existing_date if (existing_date and nd and existing_date > nd) else (nd or existing_date)
     existing_first = existing.get("first_reported_at") or existing_date
@@ -974,6 +1048,9 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
             stats["skipped_all"] = why
             _notify_schema_blocked(why, client)
             return stats
+
+        if not dry_run:
+            release_stale_claims(client, arun)
 
         try:
             res = (client.table("war_room_queue")
@@ -1222,8 +1299,8 @@ def _reviewable_cards(rows) -> list[dict]:
         if (row.get("status") not in ("pending", "update")
                 or (row.get("raw_content") or {}).get("notification_type")):
             continue
-        # ponytail: dedup by slug so N identical queue rows for the same story
-        # produce one card. Falls back to title, then id.
+        # One card per story: rows sharing a slug (else title, else id) collapse,
+        # first row wins.
         identity = row.get("proposed_slug") or row.get("proposed_title") or row.get("id")
         if str(identity) not in cards:
             cards[str(identity)] = row
@@ -1288,7 +1365,16 @@ def _hold_label(row: dict) -> str:
     if reason == "unapproved_source_domain":
         return "Source domain not yet approved — check the publisher"
     if reason == "ungrounded_specifics":
-        return "Draft contains details that couldn't be verified against the source"
+        # Name what was flagged: Telegram Approve overrides this hold, and a tap on
+        # the title alone is not an informed override.
+        g = rc.get("_groundedness") if isinstance(rc.get("_groundedness"), dict) else {}
+        found = [str(x) for x in (g.get("numbers") or []) + (g.get("proper_nouns") or [])][:6]
+        base = "Draft contains details that couldn't be verified against the source"
+        if found:
+            return f"{base}: " + ", ".join(found)
+        if g.get("checked") is False:
+            return base + " (the check itself failed — read the draft)"
+        return base
     if reason == "casualty_mismatch":
         return "Death or injury count disputed — verify figures before approving"
     if reason == "date_fallback":

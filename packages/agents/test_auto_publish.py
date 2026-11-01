@@ -19,7 +19,7 @@ from unittest import mock
 
 # Importing the pipeline loads the repo .env (load_dotenv), which holds the REAL
 # Telegram credentials. A run that reaches send_card without a mock then posts
-# to the operator's chat: the 2026-10-31 "Cat rescued" spam was this file.
+# to the operator's chat.
 # Muted before any import; test_notify_telegram.py sets its own env explicitly.
 os.environ["NOTIFY_ENABLED"] = "false"
 
@@ -563,7 +563,7 @@ check("unreadable history -> trust 0.0, held for review, never raises",
 check("granting merge autonomy uses a stricter bar than a confidence nudge",
       ap.OVERSIZED_TRUST_THRESHOLD >= 0.80 and ap.OVERSIZED_MIN_SAMPLES >= 5)
 
-print("\n=== _reviewable_cards slug dedup (spam fix) ===")
+print("\n=== _reviewable_cards slug dedup ===")
 _slug = "cat-rescued-yishun-void-deck-oct-2026"
 _dupe_rows = [
     {"id": f"q-{i}", "status": "pending", "proposed_slug": _slug,

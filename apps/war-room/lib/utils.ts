@@ -337,10 +337,17 @@ export function applyUpdate(
   // date so a merge can never push incident_date into the future.
   const newDate = input.newDate || existingDate || existing.first_reported_at || null
 
-  const mergedTimeline = [
-    ...existingTimeline,
-    { date: input.reportDate || newDate || existingDate, source_url: input.newSourceUrl, source_name: input.sourceName, headline: input.headline, role: 'update' },
-  ]
+  // Tag 'update' only when this date is NEW to the timeline. The page keeps the
+  // higher-ranked role per date and ranks update (1) above initial (0), so an
+  // 'update' on a date that already holds the original report would relabel that
+  // REPORTED node UPDATE. A role-less entry ties and the earlier one stays.
+  const entryDate = input.reportDate || newDate || existingDate
+  const entry: Record<string, unknown> = {
+    date: entryDate, source_url: input.newSourceUrl, source_name: input.sourceName, headline: input.headline,
+  }
+  const dateIsNew = !existingTimeline.some(e => (e as { date?: string } | null)?.date === entryDate)
+  if (dateIsNew) entry.role = 'update'
+  const mergedTimeline = [...existingTimeline, entry]
 
   // incident_date = latest known date, first_reported_at = earliest known date.
   const updatedDate = existingDate && newDate && existingDate > newDate ? existingDate : (newDate ?? existingDate)

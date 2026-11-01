@@ -233,15 +233,30 @@ async def trigger_notify_test(_: None = Depends(_require_ops_token)):
 async def notify_edit_card(body: dict, _: None = Depends(_require_ops_token)):
     """Edit the Telegram keyboard on an actioned card. Called by the War Room after approve/reject."""
     import asyncio
+    import re
     from ops.activity import _client
     from ops.notify import edit_card
-    queue_id = str(body.get("queue_id") or "")
-    text = str(body.get("text") or "")
-    if not queue_id:
-        return {"ok": False, "error": "queue_id required"}
+    queue_id = body.get("queue_id")
+    text = body.get("text")
+    if not (isinstance(queue_id, str) and re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", queue_id)):
+        raise HTTPException(status_code=400, detail="queue_id must be a UUID")
+    if not (isinstance(text, str) and 0 < len(text) <= 500):
+        raise HTTPException(status_code=400, detail="text must be 1-500 characters")
+
+    def _edit() -> bool:
+        client = _client()
+        # Only a card whose queue row has actually left the pending views may have
+        # its buttons removed; otherwise a stray call would strand a live card.
+        row = (client.table("war_room_queue").select("status").eq("id", queue_id)
+               .limit(1).execute().data or [None])[0]
+        if not row or row["status"] in ("pending", "update", "approved_pending"):
+            return False
+        edit_card(queue_id, text, client)
+        return True
+
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, lambda: edit_card(queue_id, text, _client()))
-    return {"ok": True}
+    return {"ok": await loop.run_in_executor(None, _edit)}
 
 
 @app.post("/pattern/run", tags=["ops"])

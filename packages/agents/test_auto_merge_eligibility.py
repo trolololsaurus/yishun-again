@@ -137,7 +137,14 @@ check("dateless merge keeps incident_date", upd4["incident_date"] == "2026-08-01
 old_event = {**existing, "incident_date": "2024-07-27", "first_reported_at": "2024-07-27"}
 upd5, _ = ap._compute_merge(old_event, "https://www.channelnewsasia.com/late", "CNA", "late", "2024-07-27", "2026-10-29")
 check("timeline entry carries the report date", upd5["source_timeline"][-1]["date"] == "2026-10-29")
-check("timeline entry is role=update", upd5["source_timeline"][-1]["role"] == "update")
+check("a merged entry on a NEW date is role=update",
+      upd5["source_timeline"][-1]["role"] == "update")
+
+# Same-day follow-up: tagging it 'update' would outrank the original 'initial' on
+# the page and relabel REPORTED as UPDATE, so it stays role-less.
+same_day, _ = ap._compute_merge(existing, "https://www.channelnewsasia.com/same", "CNA", "same day", "2026-08-01", "2026-08-01")
+check("a same-day merged entry is role-less (cannot relabel REPORTED)",
+      "role" not in same_day["source_timeline"][-1])
 check("report date never moves incident_date", upd5["incident_date"] == "2024-07-27")
 check("report date never moves first_reported_at", upd5["first_reported_at"] == "2024-07-27")
 

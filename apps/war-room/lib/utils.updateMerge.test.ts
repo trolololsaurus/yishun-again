@@ -110,10 +110,20 @@ test('a late follow-up keeps the event dates and files the entry under its repor
   const { updates } = applyUpdate(old, input)
   const last = (updates.source_timeline as { date: string; role: string }[]).at(-1)!
   assert.equal(last.date, '2026-10-29')
+  // 'update', not absent: a role-less node renders as REPORTED on the page.
   assert.equal(last.role, 'update')
   assert.equal(updates.incident_date, '2024-07-27')
   assert.equal(updates.first_reported_at, '2024-07-27')
   roundTrip(old, input)
+})
+
+test('a same-day merged source is role-less so it cannot relabel the REPORTED node', () => {
+  const { updates } = applyUpdate(base, {
+    newSourceUrl: 'https://www.channelnewsasia.com/same', sourceName: 'CNA',
+    headline: 'same day', newDate: '2026-08-01', reportDate: '2026-08-01',
+  })
+  const last = (updates.source_timeline as { role?: string }[]).at(-1)!
+  assert.equal(last.role, undefined)
 })
 
 test('a dateless candidate never corrupts the dates, and still undoes', () => {
