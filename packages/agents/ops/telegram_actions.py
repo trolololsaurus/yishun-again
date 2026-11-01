@@ -128,11 +128,13 @@ def _approve(queue_id: str, client) -> None:
         duplicate_guard_available=True,
     )
     # Legal guardrails (#1 source, #4 political, date) are hard blocks even for
-    # an operator. Confidence, duplicate and oversized are operator overrides.
+    # an operator. Confidence, duplicate, oversized and ungrounded specifics are
+    # operator overrides (the War Room approve route applies none of them).
     # Any future new gate defaults to hard-blocked (safe) until explicitly added here.
     operator_overrides = {
         "eligible", "below_threshold", "possible_published_duplicate",
         "oversized_cluster_unproven", "not_processed_this_pass",
+        "ungrounded_specifics",
     }
     if reason not in operator_overrides:
         from ops.auto_publish import _human_hold_reason
