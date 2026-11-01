@@ -969,7 +969,21 @@ reason sub-keyboard. Actions are handled by `POST /telegram/webhook` (FastAPI) �
 
 - **Approve** — publishes the draft as-is (no editing; use War Room for that).
   Art generates via `ART_GENERATION_ENABLED` same as auto-publish. Writes a
-  training signal with `decided_by='operator'`.
+  training signal with `decided_by='operator'`. Details worth knowing:
+  - **Only the operator's chat/user id is honoured**; any other tap is ignored,
+    and every tap is ignored if `TELEGRAM_CHAT_ID` is unset.
+  - **The tap overrides** confidence, duplicate, oversized and
+    `ungrounded_specifics` holds (the War Room approve route applies none of
+    them). The card for an ungrounded hold lists the flagged numbers/names.
+    Legal guardrails (source, political, date) and `casualty_mismatch` still block.
+  - **The row is claimed `approved_pending`** (migration 026) before publishing,
+    then `approved` by `_publish`. A failed publish is released back to `pending`
+    only if no published incident holds the slug; otherwise it stays locked.
+    `release_stale_claims` at the start of each auto-publish pass returns claims
+    older than `STALE_CLAIM_MINUTES` (30) to `pending`, or raises an anomaly when
+    an incident already exists. Guard: `test_claim_release.py`.
+  - War Room actions clear the card's buttons via `POST /notify/edit-card`
+    (UUID `queue_id`, 1-500 chars, only for a row that has left the pending views).
 - **Reject** — requires selecting a reason from the allowlist. Status set to
   `'rejected'`. Writes training signal.
 - **Keep** — no DB change; removes buttons so the card is not re-notified until

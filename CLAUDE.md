@@ -731,6 +731,12 @@ status vocabulary. Without 014 the War Room rectify queue errors out — it sele
 those columns directly. Art generation runs on the operator approve path, so
 these are not optional.
 
+**026 (`approved_pending` queue status)** widens the `war_room_queue.status` CHECK.
+⚠️ Load-bearing, same failure mode as 009/011: Telegram Approve claims a row as
+`approved_pending` before publishing, and without 026 that claim is rejected by the
+CHECK, so every Telegram Approve is a silent no-op (this was the live bug until
+2026-10-31). Apply it before deploying the agents; guard `test_claim_release.py`.
+
 **025 (image revert history)** adds `incidents.image_history` (JSONB, default
 `[]`). ⚠️ Load-bearing, same failure mode as 014: `/rectify` SELECTs it, so
 without this the rectify page errors. It backs one-level-plus operator revert —
