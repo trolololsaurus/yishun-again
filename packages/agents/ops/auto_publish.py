@@ -840,9 +840,12 @@ def _apply_merge(item: dict, client, run: AgentRun) -> str | None:
     # the pre-merge summary, so revert-update restores it if this was wrong.
     if AUTO_ENRICH_SUMMARY and rc.get("_enriched_summary") and rc.get("_enriched_grounded"):
         updates["summary"] = rc["_enriched_summary"]
+        item["_summary_refreshed"] = True
         run.info("merge_summary_enriched",
                  f"applied grounded enriched summary to incident {target}",
                  queue_id=item.get("id"))
+    else:
+        item["_summary_refreshed"] = False
 
     # Claim BEFORE mutating (QA H2 reasoning): a failed status write must never
     # leave the incident merged but the row re-confirmable. CAS on status=update.
@@ -1059,7 +1062,10 @@ def run(supabase_client=None, dry_run: bool = False, trigger: str = "scheduler")
                 if merged_id:
                     item["status"] = "update_approved"
                     stats["merged"] += 1
-                    merged_titles.append((item.get("proposed_title") or "")[:80])
+                    # Say so when the card's prose was left alone: a merge that adds
+                    # a link but not the new development reads as "updated" and isn't.
+                    note = "" if item.get("_summary_refreshed") else " [summary not refreshed]"
+                    merged_titles.append(((item.get("proposed_title") or "")[:80]) + note)
                     merged_queue_ids.append(str(item.get("id")))
                     arun.success("auto_merged",
                                  f"{(item.get('proposed_title') or '')[:70]} -> {merged_id} "
@@ -1333,7 +1339,10 @@ def _notify_review_queue(rows, merged_titles, client,
         lines += ["", "Merged into live incidents (undo from War Room → Recently merged):"]
         for title, count in list(merge_counts.items())[:5]:
             suffix = f" ×{count}" if count > 1 else ""
-            lines.append(f"  • {_fmt_title(title)}{suffix}")
+            # Truncate the title, never the marker: it is the part the operator acts on.
+            title, _, flag = title.partition(" [")
+            flag = f" [{flag}" if flag else ""
+            lines.append(f"  • {_fmt_title(title)}{flag}{suffix}")
         if len(merge_counts) > 5:
             lines.append(f"  • … and {len(merge_counts) - 5} more")
 

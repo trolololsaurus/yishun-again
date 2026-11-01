@@ -49,6 +49,15 @@ m, _ = run(rows=[], merged_titles=["Cyclist update merged", "Cyclist update merg
 check("repeated merge titles are grouped with their action count",
       "Cyclist update merged ×2" in m.call_args.args[2])
 
+long_title = "Yishun Ring Road murder: " + "x" * 90
+m, _ = run(rows=[], merged_titles=[long_title + " [summary not refreshed]"], merged_ids=["q-m"])
+line = [l for l in m.call_args.args[2].splitlines() if "Yishun Ring Road" in l][0]
+check("merge line says the summary was not refreshed", "[summary not refreshed]" in line)
+check("a long title is truncated, not the marker", "…" in line and line.rstrip().endswith("]"))
+
+m, _ = run(rows=[], merged_titles=["Refreshed incident"], merged_ids=["q-m"])
+check("a refreshed merge carries no warning marker", "[summary" not in m.call_args.args[2])
+
 m, _ = run(rows=[], published_ids=["q-published"])
 check("successful publication is reported", m.called)
 if m.called:
@@ -148,15 +157,25 @@ duplicates = [
      "_hold_reason": "per_run_cap_hit"},
 ]
 m, cards = run(rows=duplicates)
-# Each card gets its own message now; grouping moved to send_card level.
-check("both pending cards get their own send_card call",
-      cards.call_count == 2)
-check("hold reason is in each card's text",
+# Rows that are the same story (same title, no slug) collapse to ONE card: one
+# card per row sent 144 identical messages for one incident.
+check("same-story rows collapse to a single send_card call",
+      cards.call_count == 1)
+check("hold reason is in the card's text",
       all("per-pass auto-publish limit reached" in c.args[1]
           for c in cards.call_args_list))
-check("each card carries its own title",
+check("the card carries the story title",
       all("Cat rescued from Yishun void deck" in c.args[1]
           for c in cards.call_args_list))
+
+distinct = [
+    {"id": "q1", "status": "pending", "raw_content": {}, "agent_confidence": 0.97,
+     "proposed_title": "Cat rescued from Yishun void deck", "proposed_slug": "cat-a"},
+    {"id": "q2", "status": "pending", "raw_content": {}, "agent_confidence": 0.96,
+     "proposed_title": "Cockroaches at Yishun coffee shop", "proposed_slug": "roach-b"},
+]
+m, cards = run(rows=distinct)
+check("different stories still get one card each", cards.call_count == 2)
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

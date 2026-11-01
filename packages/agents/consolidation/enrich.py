@@ -33,7 +33,10 @@ from filters.stage2_writer import _get_client, _parse_json, find_ungrounded
 logger = logging.getLogger(__name__)
 
 MODEL = "claude-haiku-5-5"
-ENRICH_MAX_TOKENS = int(os.getenv("ENRICH_MAX_TOKENS", "1200"))
+# A refresh is the WHOLE merged summary (up to ~3000 chars for a long case), so
+# 1200 truncated on every long incident: 3 of 3 Yishun-murder merges on 29-30 Oct
+# needed the retry and one failed it. 3000 covers the longest seen with headroom.
+ENRICH_MAX_TOKENS = int(os.getenv("ENRICH_MAX_TOKENS", "3000"))
 
 _SYSTEM = """\
 You refresh an existing incident summary with a newly-reported development.
@@ -86,7 +89,18 @@ def enrich_summary(existing_summary: str, new_source_text: str,
             system=_SYSTEM.format(budget=char_budget),
             messages=[{"role": "user", "content": user}],
         )
-        enriched = (_parse_json(extract_text(response)).get("summary") or "").strip()
+        text = extract_text(response)
+        try:
+            enriched = (_parse_json(text).get("summary") or "").strip()
+        except Exception:                         # noqa: BLE001
+            # The model sometimes returns the summary as bare prose instead of the
+            # JSON envelope (seen on the 2026-10-29 Mothership merge). The text IS
+            # the refresh; it still goes through the groundedness gate below, so
+            # accepting it is no weaker than accepting the JSON form.
+            stripped = text.strip()
+            if stripped.startswith(("{", "[")):
+                raise
+            enriched = stripped
     except Exception as exc:                      # noqa: BLE001
         logger.warning("enrich: model call failed — keeping existing (%s)", exc)
         return empty

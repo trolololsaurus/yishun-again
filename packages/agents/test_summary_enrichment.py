@@ -66,5 +66,25 @@ with mock.patch.object(enrich, "create_with_headroom", return_value=fake_call('{
     r = enrich.enrich_summary(EXISTING, NEW_DEV, client=object())
 check("empty model output -> fails safe", not r["ok"] and r["summary"] == "")
 
+# Bare prose instead of the JSON envelope (the 2026-10-29 Mothership failure):
+# the text is the refresh, and it still has to clear the groundedness gate.
+prose = ("Foo Jia Hong made 425 silent calls to Yishun NPC and was arrested in May "
+         "2026 after police traced the SIM card. On August 26, District Judge Koo Zhi "
+         "Xuan sentenced him to 23 days jail for obstructing police officers.")
+with mock.patch.object(enrich, "create_with_headroom", return_value=fake_call(prose)):
+    r = enrich.enrich_summary(EXISTING, NEW_DEV, "x", 1600, client=object())
+check("bare-prose reply is recovered, not discarded", r["ok"] and "23 days" in r["summary"])
+
+prose_bad = "Foo Jia Hong was fined 88888 dollars by Judge Imaginary Person."
+with mock.patch.object(enrich, "create_with_headroom", return_value=fake_call(prose_bad)):
+    r = enrich.enrich_summary(EXISTING, NEW_DEV, "x", 1600, client=object())
+check("bare-prose reply still fails the groundedness gate", not r["ok"] and not r["grounded"])
+
+with mock.patch.object(enrich, "create_with_headroom", return_value=fake_call('{"summary": "cut off mid')):
+    r = enrich.enrich_summary(EXISTING, NEW_DEV, client=object())
+check("broken JSON is NOT accepted as prose", not r["ok"] and r["summary"] == "")
+
+check("enrich cap sized for a full merged summary", enrich.ENRICH_MAX_TOKENS >= 3000)
+
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
