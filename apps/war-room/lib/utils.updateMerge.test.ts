@@ -101,6 +101,21 @@ test('an older source does not push incident_date backwards, and still undoes', 
   assert.equal(updates.first_reported_at, '2026-08-01')
 })
 
+test('a late follow-up keeps the event dates and files the entry under its report date', () => {
+  const old = { ...base, incident_date: '2024-07-27', first_reported_at: '2024-07-27' }
+  const input = {
+    newSourceUrl: 'https://www.channelnewsasia.com/late', sourceName: 'CNA',
+    headline: 'late', newDate: '2024-07-27', reportDate: '2026-10-29',
+  }
+  const { updates } = applyUpdate(old, input)
+  const last = (updates.source_timeline as { date: string; role: string }[]).at(-1)!
+  assert.equal(last.date, '2026-10-29')
+  assert.equal(last.role, 'update')
+  assert.equal(updates.incident_date, '2024-07-27')
+  assert.equal(updates.first_reported_at, '2024-07-27')
+  roundTrip(old, input)
+})
+
 test('a dateless candidate never corrupts the dates, and still undoes', () => {
   roundTrip(base, {
     newSourceUrl: 'https://www.channelnewsasia.com/undated',

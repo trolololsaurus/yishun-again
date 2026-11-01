@@ -132,6 +132,15 @@ check("duplicate source not re-appended", upd3["source_urls"] == existing_dup["s
 upd4, _ = ap._compute_merge(existing, "https://www.channelnewsasia.com/undated", "CNA", "no date", None)
 check("dateless merge keeps incident_date", upd4["incident_date"] == "2026-08-01")
 
+# A late follow-up on an old event: the timeline carries the REPORT date and an
+# 'update' role, while incident_date stays the event date.
+old_event = {**existing, "incident_date": "2024-07-27", "first_reported_at": "2024-07-27"}
+upd5, _ = ap._compute_merge(old_event, "https://www.channelnewsasia.com/late", "CNA", "late", "2024-07-27", "2026-10-29")
+check("timeline entry carries the report date", upd5["source_timeline"][-1]["date"] == "2026-10-29")
+check("timeline entry is role=update", upd5["source_timeline"][-1]["role"] == "update")
+check("report date never moves incident_date", upd5["incident_date"] == "2024-07-27")
+check("report date never moves first_reported_at", upd5["first_reported_at"] == "2024-07-27")
+
 # auto-merge never touches the summary.
 check("merge never writes summary", "summary" not in upd)
 

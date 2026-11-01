@@ -284,6 +284,9 @@ export interface MergeInput {
   headline:     string
   /** The candidate's REAL article date — never "today". null if unknown. */
   newDate:      string | null
+  /** When the merged article was PUBLISHED. Goes on the timeline entry only;
+   *  newDate (the event date) alone drives incident_date. Falls back to newDate. */
+  reportDate?:  string | null
   /** Operator-edited summary. Empty/undefined keeps the existing summary. */
   updatedSummary?: string
 }
@@ -336,7 +339,7 @@ export function applyUpdate(
 
   const mergedTimeline = [
     ...existingTimeline,
-    { date: newDate ?? existingDate, source_url: input.newSourceUrl, source_name: input.sourceName, headline: input.headline },
+    { date: input.reportDate || newDate || existingDate, source_url: input.newSourceUrl, source_name: input.sourceName, headline: input.headline, role: 'update' },
   ]
 
   // incident_date = latest known date, first_reported_at = earliest known date.

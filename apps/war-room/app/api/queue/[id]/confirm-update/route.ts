@@ -72,6 +72,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         sourceName,
         headline,
         newDate: (rc.date as string) || (rc.published_at as string) || null,
+        reportDate: (rc.published_date as string) || (rc.published_at as string) || null,
         updatedSummary: body.updated_summary,
       })
   const updatedSummary = (body.updated_summary ?? '').trim()

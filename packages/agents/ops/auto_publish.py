@@ -742,12 +742,17 @@ def _publish(item: dict, client, run: AgentRun, budget=None) -> str | None:
 # ── Merge (auto-apply an update) ─────────────────────────────────────────────
 
 def _compute_merge(existing: dict, new_url: str, source_name: str,
-                   headline: str, new_date):
+                   headline: str, new_date, report_date=None):
     """
     Pure mirror of applyUpdate() in apps/war-room/lib/utils.ts, with the summary
     edit omitted (auto-merge never rewrites the summary). Returns
     (updates, snapshot). If you change one, change the other — parity is asserted
     by test_auto_merge_eligibility.py against the same fixtures the TS test uses.
+
+    `new_date` is the EVENT date and only drives incident_date/first_reported_at.
+    `report_date` is when the merged article was PUBLISHED and is what the
+    timeline entry carries; without it a 2026 follow-up on a 2024 event is filed
+    under 2024 and collapses into the original REPORTED node.
     """
     existing_urls = existing.get("source_urls") or []
     existing_timeline = existing.get("source_timeline")
@@ -771,8 +776,8 @@ def _compute_merge(existing: dict, new_url: str, source_name: str,
     nd = new_date or existing_date or existing.get("first_reported_at") or None
     merged_timeline = [
         *existing_timeline,
-        {"date": nd or existing_date, "source_url": new_url,
-         "source_name": source_name, "headline": headline},
+        {"date": report_date or nd or existing_date, "source_url": new_url,
+         "source_name": source_name, "headline": headline, "role": "update"},
     ]
 
     updated_date = existing_date if (existing_date and nd and existing_date > nd) else (nd or existing_date)
@@ -818,6 +823,7 @@ def _apply_merge(item: dict, client, run: AgentRun) -> str | None:
     source_name = rc.get("source_name") or item.get("source_type") or "unknown"
     headline = (item.get("proposed_title") or rc.get("title") or "")[:200]
     new_date = rc.get("date") or rc.get("published_at") or None
+    report_date = rc.get("published_date") or rc.get("published_at") or None
 
     # Guardrail #2: a signal source's URL must never land in source_urls.
     if is_signal_source(item.get("source_type"), new_url or ""):
@@ -826,7 +832,8 @@ def _apply_merge(item: dict, client, run: AgentRun) -> str | None:
                   queue_id=item.get("id"))
         return None
 
-    updates, snapshot = _compute_merge(existing, new_url, source_name, headline, new_date)
+    updates, snapshot = _compute_merge(existing, new_url, source_name, headline, new_date,
+                                       report_date)
 
     # Autonomy path: refresh the summary too, but ONLY when explicitly enabled and
     # the ingestion-time enrichment passed groundedness. `snapshot` already holds
