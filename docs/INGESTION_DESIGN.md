@@ -473,7 +473,7 @@ then Futurist/Forward). Read §5.3 before changing first-run behaviour.
 > - **Retry floor** — only decided dates strictly *below* the earliest unresolved date advance.
 >   Without it a candidate that hit a transient error is silently dropped by its own
 >   successfully-decided siblings.
-> - **Same-day grace** — never advance onto the pass's own date. The pass runs at 03:58/15:58 SGT
+> - **Same-day grace** — never advance onto the pass's own date. The pass runs twice a day (07:53/18:53 SGT; was 03:58/15:58 until 2026-10-26)
 >   and the source publishes all day; advancing to today would drop everything published after the
 >   pass ran, unseen and unlogged. Costs at most one extra pass per article.
 >

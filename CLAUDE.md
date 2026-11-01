@@ -95,8 +95,17 @@ collection (the module-level `SystemExit` aborts the run). Run them directly:
 for f in test_*.py; do ./.venv/Scripts/python.exe "$f" || echo "FAIL $f"; done
 ```
 
-All are offline — no network, no API keys, no DB. There are **49 test files** and
-they all pass as of 2026-09-21; a red file is a real regression, not a flake.
+All are offline — no network, no API keys, no DB. There are **51 test files** and
+they all pass as of 2026-11-01; a red file is a real regression, not a flake.
+
+**Mute notifications before running them: `NOTIFY_ENABLED=false`.** Importing any
+pipeline module runs `load_dotenv`, which loads the repo `.env` and its REAL
+Telegram bot token, so a test that reaches `send_card` unmocked posts to the
+operator's chat — 35 "Cat rescued" cards on 2026-10-31 came from
+`test_auto_publish.py` this way (that file now sets it itself). The one exception
+is `test_notify_telegram.py`, which sets its own env and fails if you pre-set
+`NOTIFY_ENABLED=false`. A new test that touches the notify path must mock
+`ops.notify.send_card` AND `notify`, not rely on the env alone.
 
 The web app has tests too, added 2026-08-04 — `apps/web/lib/utils.test.ts`, run
 with `npm test` from `apps/web`. There is no test framework installed: it uses
@@ -584,7 +593,7 @@ fine. Guard: the covered/both-down cases in `test_supervisor_alerting.py`.
 (2026-09-01).** `ops/monthly_report.py::window_for()`'s default `period_end`
 used to be `datetime.now(timezone.utc).date() - 1 day` — computed fresh at
 call time. The daily chain runs the cadence-gated `monthly_report` step on
-BOTH of the day's SGT passes when `today.day == 1` (02:58 and 14:58 SGT), with
+BOTH of the day's SGT passes when `today.day == 1` (then 02:58 and 14:58 SGT), with
 no `period_end` ever passed, relying on idempotence (`monthly_reports`'
 `UNIQUE (period_start, period_end)` + `notify()`'s dedup_key) to make the
 second call a no-op. But 02:58 SGT is 18:58 UTC the PREVIOUS calendar day and

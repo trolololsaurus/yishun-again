@@ -405,7 +405,7 @@ log.
 
 > **The monthly report's default window is anchored to SGT, not UTC
 > (2026-09-01).** `ops/daily.py` runs the cadence-gated `monthly_report` step on
-> BOTH of the day's passes (02:58 and 14:58 SGT) whenever `today.day == 1`,
+> BOTH of the day's passes (then 02:58 and 14:58 SGT) whenever `today.day == 1`,
 > relying entirely on idempotence — `monthly_reports`' `UNIQUE (period_start,
 > period_end)` plus `notify()`'s dedup_key — to make the second call a no-op.
 > Neither call ever passes `period_end`, so `ops/monthly_report.py::window_for()`

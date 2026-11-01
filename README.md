@@ -22,7 +22,7 @@ read `docs/AUTONOMY.md`.
 apps/web/          Next.js — public site (Vercel)
 apps/war-room/     Next.js — private CMS (Cloudflare Access)
 packages/agents/   FastAPI agent pipeline (Cloud Run, asia-southeast1)
-packages/db/       Supabase migrations (hand-applied, 001–017)
+packages/db/       Supabase migrations (hand-applied, 001–026)
 docs/              Spec, autonomy runbook, pipeline change records
 ```
 
@@ -72,17 +72,18 @@ Copy `.env.example` → `.env` and fill in. Secrets belong in Cloud Run env vars
 **Tests are standalone scripts, not pytest:**
 
 ```bash
-# packages/agents/
-for f in test_*.py; do ./.venv/Scripts/python.exe "$f" || echo "FAIL $f"; done
+# packages/agents/  (NOTIFY_ENABLED=false stops a test posting to the real Telegram chat)
+for f in test_*.py; do NOTIFY_ENABLED=false ./.venv/Scripts/python.exe "$f" || echo "FAIL $f"; done
+# test_notify_telegram.py sets its own env: run it without NOTIFY_ENABLED.
 
 # apps/web/
 npm test
 
-# apps/war-room/
-node --test apps/war-room/lib/utils.paragraphs.test.ts apps/war-room/lib/utils.incidentRef.test.ts
+# apps/war-room/ (from the repo root)
+node --test apps/war-room/lib/*.test.ts
 ```
 
-All 108 tests are offline (no network, no API keys, no DB). A red file is a real regression.
+All 51 agents test files are offline (no network, no API keys, no DB). A red file is a real regression.
 
 ## Deploy
 
