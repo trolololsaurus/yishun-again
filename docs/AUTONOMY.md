@@ -261,7 +261,8 @@ Safety properties mirror auto-publish:
   `test_notify_review_queue.py`, `test_notify_telegram.py`.
 - **Summary refresh is separately gated.** By default the auto path only does the
   mechanical merge and leaves the prose alone. When `AUTO_ENRICH_SUMMARY` is on
-  (its own flag, off by default), it *also* applies the ingestion-time enriched
+  (its own flag, off by default in code; **on in production since 2026-11-01**),
+  it *also* applies the ingestion-time enriched
   summary — the existing summary refreshed with the new development
   (`consolidation/enrich.py`) — but ONLY when that enrichment passed the same
   deterministic groundedness check Stage 2 uses, so model-written prose that

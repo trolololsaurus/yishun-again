@@ -271,8 +271,14 @@ refreshed with the new development, generated at ingestion by
 `consolidation/enrich.py` (one Haiku call, screened by Stage 2's `find_ungrounded`).
 The War Room `UpdateCard` pre-fills its box with it for operator review; the
 autonomous merge applies it only when `AUTO_ENRICH_SUMMARY` is on AND it passed
-groundedness (both off/gated by default, `AUTONOMY.md` §2b–2c). Fails safe — any
-problem leaves the existing summary. This replaces the old blank-box behaviour: the
+groundedness (`AUTONOMY.md` §2b–2c). **`AUTO_ENRICH_SUMMARY=true` in production
+since 2026-11-01** (default in code is still off). Fails safe — any
+problem leaves the existing summary. Three things to know: the Telegram merge report
+tags a merge that left the prose alone `[summary not refreshed]`; `ENRICH_MAX_TOKENS`
+is 3000 because a refresh is the whole merged summary and 1200 truncated every long
+case (all three Yishun Ring Road merges, 29-30 Oct); and a merge's timeline entry is
+dated by `published_date` with `role: update`, never the event date — `incident_date`
+stays the event date. This replaces the old blank-box behaviour: the
 box used to pre-fill with the new source's terse *standalone* draft, which
 wholesale-replaced the full summary on confirm (`applyUpdate` only keeps-or-replaces
 prose, never merges it) — the mechanism that corrupted a live incident via a Reddit
